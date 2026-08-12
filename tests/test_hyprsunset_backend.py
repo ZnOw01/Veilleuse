@@ -39,6 +39,16 @@ class StateTests(unittest.TestCase):
             ),
         )
 
+    def test_enabled_threshold_matches_omarchy_identity_temperature(self):
+        self.assertEqual(backend.IDENTITY_TEMPERATURE, 6000)
+        self.assertFalse(backend.state_from_readings(False, 6000).active)
+        self.assertTrue(backend.state_from_readings(False, 5999).active)
+
+    def test_identity_stays_authoritative_below_the_threshold(self):
+        state = backend.state_from_readings(True, 3500)
+        self.assertFalse(state.active)
+        self.assertIs(state.identity, True)
+
     def test_state_is_unavailable_when_both_reads_fail(self):
         self.assertEqual(
             backend.state_from_readings(None, None),

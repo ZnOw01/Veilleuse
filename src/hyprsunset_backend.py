@@ -16,7 +16,10 @@ from typing import Callable, Sequence
 DEFAULT_TEMPERATURE = 3500
 NIGHT_TEMP_MIN = 2500
 NIGHT_TEMP_MAX = 5000
-DAY_TEMP_MIN = 5900
+# Matches the Omarchy nightlight identity point (shell/NightlightModel.js and
+# bin/omarchy-toggle-nightlight): temperatures strictly below this count as
+# night light.  Identity remains authoritative in state_from_readings().
+IDENTITY_TEMPERATURE = 6000
 TEMPERATURE_RANGE = (NIGHT_TEMP_MIN, 6500)
 
 COMMAND_TIMEOUT = 1.0
@@ -156,7 +159,7 @@ def state_from_readings(
         return BackendState(True, False, identity, temperature, gamma)
     if temperature is None:
         return BackendState(True, None, identity, None, gamma)
-    return BackendState(True, temperature < DAY_TEMP_MIN, identity, temperature, gamma)
+    return BackendState(True, temperature < IDENTITY_TEMPERATURE, identity, temperature, gamma)
 
 
 def read_state(*, timeout: float = READ_TIMEOUT, deadline: float | None = None) -> BackendState:
