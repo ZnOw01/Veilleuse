@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Veilleuse
+GenericName=Control de pantalla y luz nocturna
+Comment=Ajusta el brillo, el color y el horario de descanso visual
+Exec="@VEILLEUSE_EXEC@"
+Icon=io.github.ZnOw01.Veilleuse
+Terminal=false
+Categories=Settings;
+Keywords=brightness;night;light;temperature;gamma;schedule;brillo;noche;luz;horario;
+StartupNotify=true
+StartupWMClass=io.github.ZnOw01.Veilleuse
+X-GNOME-UsesNotifications=true

@@ -1,0 +1,22 @@
+#!/usr/bin/python3
+"""Single Veilleuse command for GUI and native display controls."""
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from veilleuse import build_parser, cli_main, run_gui  # noqa: E402,F401
+
+
+def main(argv=None, backends=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        return run_gui()
+    return cli_main(argv, backends=backends)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
