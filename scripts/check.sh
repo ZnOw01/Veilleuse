@@ -4,7 +4,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 printf '%s\n' '→ Python syntax'
-/usr/bin/python3 -m py_compile src/night_light_control.py src/brightness_control.py src/brightness_utils.py src/schedule_utils.py src/hyprsunset_backend.py bin/night-light-toggle bin/night-light-status bin/night-light bin/brightness-step scripts/install.py scripts/uninstall.py
+/usr/bin/python3 -m py_compile src/night_light_control.py src/brightness_control.py src/brightness_utils.py src/schedule_utils.py src/hyprsunset_backend.py src/native_backends.py bin/night-light-toggle bin/night-light-status bin/night-light bin/brightness-step scripts/install.py scripts/uninstall.py
 
 printf '%s\n' '→ Unit tests'
 /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
