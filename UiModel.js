@@ -38,11 +38,17 @@ function boundedInteger(value, minimum, maximum) {
   return number === null ? null : Math.round(number);
 }
 
-function moveCursor(cursor, key) {
+function moveCursor(cursor, key, scheduleExpanded) {
   var section = boundedInteger(cursor && cursor.section, 0, SECTION_ORDER.length - 1);
   var field = boundedInteger(cursor && cursor.field, 0, FIELD_COUNTS[section === null ? 0 : section] - 1);
   if (section === null) section = 0;
   if (field === null) field = 0;
+
+  if (scheduleExpanded === true && section === 4 && (key === 'j' || key === 'ArrowDown' || key === 'k' || key === 'ArrowUp')) {
+    if (key === 'j' || key === 'ArrowDown') field = Math.min(FIELD_COUNTS[section] - 1, field + 1);
+    if (key === 'k' || key === 'ArrowUp') field = Math.max(0, field - 1);
+    return { section: section, field: field };
+  }
 
   if (key === 'j' || key === 'ArrowDown') section = Math.min(SECTION_ORDER.length - 1, section + 1);
   if (key === 'k' || key === 'ArrowUp') section = Math.max(0, section - 1);

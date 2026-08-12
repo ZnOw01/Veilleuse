@@ -145,7 +145,23 @@ Panel {
                 queueMutation("gamma", state.gamma + dx);
         }
         var key = dy > 0 ? "j" : (dy < 0 ? "k" : (dx > 0 ? "l" : "h"));
-        cursor = Model.moveCursor(cursor, key);
+        cursor = Model.moveCursor(cursor, key, root.scheduleExpanded);
+    }
+
+    function handleCloseRequested() {
+        if (scheduleExpanded) {
+            scheduleExpanded = false;
+            keyCatcher.forceActiveFocus();
+            return ;
+        }
+        root.close();
+    }
+
+    function leaveScheduleEditor(editor, cursorField) {
+        editor.focus = false;
+        if (cursorField !== undefined)
+            cursor = { "section": 4, "field": cursorField };
+        keyCatcher.forceActiveFocus();
     }
 
     function activateCursor() {
@@ -237,7 +253,7 @@ Panel {
                 root.moveCursor(dx, dy);
             }
             onActivateRequested: root.activateCursor()
-            onCloseRequested: root.close()
+            onCloseRequested: root.handleCloseRequested()
             onTabRequested: function(direction) {
                 root.switchPanel(direction);
             }
@@ -584,8 +600,7 @@ Panel {
                                         onTextChanged: root.editStart = text
                                         onAccepted: endEditor.forceActiveFocus()
                                         Keys.onEscapePressed: {
-                                            focus = false;
-                                            keyCatcher.forceActiveFocus();
+                                            root.leaveScheduleEditor(startEditor);
                                         }
                                     }
 
@@ -615,8 +630,7 @@ Panel {
                                         onTextChanged: root.editEnd = text
                                         onAccepted: scheduleTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: {
-                                            focus = false;
-                                            keyCatcher.forceActiveFocus();
+                                            root.leaveScheduleEditor(endEditor);
                                         }
                                     }
 
@@ -647,6 +661,16 @@ Panel {
                                         to: 5000
                                         stepSize: 100
                                         onModified: value => root.editTemperature = String(value)
+                                        field.Keys.priority: Keys.BeforeItem
+                                        field.Keys.onPressed: function(event) {
+                                            if (event.key === Qt.Key_Escape) {
+                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 2);
+                                                event.accepted = true;
+                                            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 3);
+                                                event.accepted = true;
+                                            }
+                                        }
                                     }
 
                                 }

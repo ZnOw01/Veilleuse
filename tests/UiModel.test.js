@@ -27,6 +27,15 @@ test('clamps a horizontal field when vertical navigation enters a shorter sectio
   assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'k'), { section: 3, field: 1 });
 });
 
+test('keeps expanded schedule vertical navigation inside fields 0 through 3', () => {
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'j', true), { section: 4, field: 1 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 1 }, 'ArrowDown', true), { section: 4, field: 2 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 2 }, 'j', true), { section: 4, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'ArrowDown', true), { section: 4, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'k', true), { section: 4, field: 2 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'ArrowUp', true), { section: 4, field: 0 });
+});
+
 test('normalizes unavailable helper data to a fail-closed state', () => {
   assert.deepEqual(Model.normalizeState({
     available: true,

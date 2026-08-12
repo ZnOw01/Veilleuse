@@ -59,3 +59,14 @@ test('schedule summary stays a full-width left-aligned button like the reference
   assert.match(summary, /width:\s*parent\.width/);
   assert.match(summary, /leftAlign:\s*true/);
 });
+
+test('expanded schedule keeps vertical cursor movement in the schedule section', () => {
+  assert.match(qml, /cursor\s*=\s*Model\.moveCursor\(cursor, key, root\.scheduleExpanded\)/);
+});
+
+test('schedule editors return focus before Escape can close the panel', () => {
+  assert.match(qml, /function handleCloseRequested\(\)\s*\{[\s\S]*?if \(scheduleExpanded\)[\s\S]*?scheduleExpanded\s*=\s*false;[\s\S]*?keyCatcher\.forceActiveFocus\(\);[\s\S]*?return ;[\s\S]*?root\.close\(\);/);
+
+  const editor = schedule.slice(schedule.indexOf('id: scheduleTemperatureEditor'));
+  assert.match(editor, /field\.Keys\.onPressed:\s*function\(event\)\s*\{[\s\S]*?Qt\.Key_Escape[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*2\)[\s\S]*?Qt\.Key_Return[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*3\)/);
+});
