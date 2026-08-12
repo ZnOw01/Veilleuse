@@ -262,6 +262,7 @@ Panel {
                 CursorSurface {
                     id: heroSurface
 
+                    visible: !root.scheduleExpanded
                     width: parent.width
                     hasCursor: root.cursor.section === 0
                     foreground: root.foreground
@@ -309,7 +310,7 @@ Panel {
                 }
 
                 Text {
-                    visible: root.lastError !== ""
+                    visible: root.lastError !== "" && !root.scheduleExpanded
                     width: parent.width
                     text: root.lastError
                     color: Color.urgent
@@ -319,10 +320,12 @@ Panel {
                 }
 
                 PanelSeparator {
+                    visible: !root.scheduleExpanded
                     foreground: root.foreground
                 }
 
                 Column {
+                    visible: !root.scheduleExpanded
                     width: parent.width
                     spacing: Style.spacing.labelGap
 
@@ -376,10 +379,12 @@ Panel {
                 }
 
                 PanelSeparator {
+                    visible: !root.scheduleExpanded
                     foreground: root.foreground
                 }
 
                 Column {
+                    visible: !root.scheduleExpanded
                     width: parent.width
                     spacing: Style.spacing.labelGap
 
@@ -433,10 +438,12 @@ Panel {
                 }
 
                 PanelSeparator {
+                    visible: !root.scheduleExpanded
                     foreground: root.foreground
                 }
 
                 Column {
+                    visible: !root.scheduleExpanded
                     width: parent.width
                     spacing: Style.spacing.labelGap
 
@@ -490,6 +497,7 @@ Panel {
                 }
 
                 PanelSeparator {
+                    visible: !root.scheduleExpanded
                     foreground: root.foreground
                 }
 
@@ -522,6 +530,7 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             Button {
+                                visible: !root.scheduleExpanded
                                 width: parent.width
                                 text: root.stateReady ? ((root.state.schedule.start || "06:00") + "  →  " + (root.state.schedule.end || "15:30") + "  ·  " + (root.state.schedule.temperature || 2500) + " K") : Model.copy.unavailable
                                 leftAlign: true
