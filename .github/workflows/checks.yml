@@ -8,13 +8,38 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  plugin:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install validation dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate manifest
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 desktop-file-utils
-      - name: Run checks
-        run: ./scripts/check.sh
+          python -m json.tool manifest.json >/dev/null
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("manifest.json").read_text())
+          assert manifest["schemaVersion"] == 1
+          assert manifest["id"] == "io.github.ZnOw01.veilleuse"
+          assert manifest["kinds"] == ["bar-widget"]
+          assert manifest["entryPoints"]["barWidget"] == "BarWidget.qml"
+          assert Path("BarWidget.qml").is_file()
+          assert Path("Panel.qml").is_file()
+          assert Path("scripts/veilleuse-control").is_file()
+          PY
+      - name: Run model and helper tests
+        run: |
+          python -m unittest discover -s tests -p 'test_veilleuse_control.py'
+          node --test tests/UiModel.test.js tests/model.test.mjs
+      - name: Check package hygiene
+        run: |
+          test -x scripts/veilleuse-control
+          test -z "$(find . -path ./.git -prune -o -type l -print -quit)"
+          test -z "$(find . -path ./.git -prune -o \( -name __pycache__ -o -name '*.pyc' \) -print -quit)"
+          git diff --check

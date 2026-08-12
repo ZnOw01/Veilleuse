@@ -1,0 +1,883 @@
+#!/usr/bin/python3
+"""Native control helper for the Veilleuse Omarchy 4 plugin.
+
+Reads and writes display brightness and the hyprsunset night light through the
+same Omarchy surfaces the shell itself uses (``omarchy-monitor-state``,
+``omarchy-brightness-display --no-osd --monitor`` and ``hyprctl hyprsunset``),
+and atomically reads/writes the hyprsunset schedule with the conservative
+``src/schedule_utils`` parser when it ships with the plugin.
+
+This helper is deliberately stdlib-only, never uses ``shell=True`` and never
+manages services: starting, enabling or restarting hyprsunset is Omarchy's
+job, not the plugin's.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+COMMAND_TIMEOUT = 1.0
+WRITE_TIMEOUT = 2.0
+READBACK_TOLERANCE_TEMP = 50
+READBACK_TOLERANCE_GAMMA = 1
+READBACK_TOLERANCE_BRIGHTNESS = 1
+POLL_INTERVAL = 0.05
+DEADLINE_EXIT_CODE = 124
+
+BRIGHTNESS_MIN = 1
+BRIGHTNESS_MAX = 100
+TEMPERATURE_MIN = 2500
+TEMPERATURE_MAX = 6500
+GAMMA_MIN = 0
+GAMMA_MAX = 100
+IDENTITY_TEMPERATURE = 6000
+DEFAULT_TEMP = 3500
+
+PLUGIN_ID = "io.github.ZnOw01.veilleuse"
+
+MONITOR_STATE_COMMAND = ("omarchy-monitor-state",)
+BRIGHTNESS_COMMAND = ("omarchy-brightness-display", "--no-osd", "--monitor")
+HYPRSUNSET_COMMAND = ("hyprctl", "hyprsunset")
+
+_PERCENT_PATTERN = re.compile(r"\s*([0-9]{1,3})\s*")
+_INTEGER_PATTERN = re.compile(r"\s*([0-9]+)\s*")
+
+
+# --------------------------------------------------------------------------- \
+# self location
+
+def resolve_plugin_root() -> Path:
+    """Return the installed plugin directory containing this helper.
+
+    The plugin keeps its manifest at the root and the helper under
+    ``scripts/``, so the installed layout is the same whether the plugin was
+    cloned into ``~/.config/omarchy/plugins/<id>`` by ``omarchy plugin add``
+    or checked out as a development worktree.
+    """
+    helper = Path(os.path.abspath(__file__)).resolve()
+    root = helper.parent.parent
+    if not (root / "manifest.json").is_file():
+        raise RuntimeError(
+            f"No se encontró manifest.json en {root}; el helper debe vivir en scripts/ del plugin"
+        )
+    return root
+
+
+def _schedule_module():
+    """Import the shared conservative parser when it is part of the plugin."""
+    root = resolve_plugin_root()
+    source = root / "scripts"
+    if (source / "schedule_utils.py").is_file():
+        sys.path.insert(0, str(source))
+        try:
+            import schedule_utils  # type: ignore
+
+            return schedule_utils
+        except Exception:
+            sys.path.pop(0)
+    return None
+
+
+def config_path() -> Path:
+    """Path of the user hyprsunset schedule, honoring XDG_CONFIG_HOME."""
+    base = os.environ.get("XDG_CONFIG_HOME", "")
+    config_home = (
+        Path(base).expanduser()
+        if base and Path(base).expanduser().is_absolute()
+        else Path.home() / ".config"
+    )
+    return config_home / "hypr" / "hyprsunset.conf"
+
+
+# --------------------------------------------------------------------------- \
+# bounded subprocess
+
+def run_command(args, *, timeout=COMMAND_TIMEOUT):
+    """Run one command array without a shell under a bounded timeout."""
+    try:
+        return subprocess.run(
+            list(args),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=float(timeout),
+        )
+    except subprocess.TimeoutExpired as error:
+        return subprocess.CompletedProcess(
+            list(args), DEADLINE_EXIT_CODE, _text(error.stdout), _text(error.stderr) or str(error)
+        )
+    except OSError as error:
+        return subprocess.CompletedProcess(list(args), 127, "", str(error))
+
+
+def _text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _int_or_none(output) -> int | None:
+    match = _INTEGER_PATTERN.fullmatch(_text(output))
+    return int(match.group(1)) if match else None
+
+
+def _percent_or_none(output) -> int | None:
+    match = _PERCENT_PATTERN.fullmatch(_text(output))
+    if match is None:
+        return None
+    return max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, int(match.group(1))))
+
+
+# --------------------------------------------------------------------------- \
+# monitor state
+
+def read_monitor_state():
+    """Run omarchy-monitor-state and parse the shell's monitor summary.
+
+    The command prints, one per line: focused brightness, internal monitor,
+    external monitor, active internal, mirror, focused monitor, scaling and a
+    JSON array of monitors.  Lines may be empty when a value is unknown.
+    """
+    result = run_command(MONITOR_STATE_COMMAND)
+    if result.returncode != 0:
+        return {
+            "brightness": None,
+            "monitor": None,
+            "internal": None,
+            "external": None,
+            "monitors": [],
+        }
+    lines = _text(result.stdout).splitlines()
+    while len(lines) < 8:
+        lines.append("")
+    return {
+        "brightness": _percent_or_none(lines[0]),
+        "monitor": lines[5].strip() or None,
+        "internal": lines[1].strip() or None,
+        "external": lines[2].strip() or None,
+        "monitors": _parse_monitors_json(lines[7]),
+    }
+
+
+def _parse_monitors_json(text):
+    if not text.strip():
+        return []
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        result.append(
+            {
+                "name": entry.get("name"),
+                "enabled": entry.get("enabled") is not False and entry.get("disabled") is not True,
+                "focused": entry.get("focused") is True,
+            }
+        )
+    return result
+
+
+def read_brightness(monitor):
+    """Read the current brightness percentage of one monitor."""
+    if not monitor:
+        return None, "No se pudo resolver un monitor enfocado"
+    result = run_command([*BRIGHTNESS_COMMAND, monitor])
+    if result.returncode != 0:
+        return None, (result.stderr.strip() or "No se pudo leer el brillo")
+    percent = _percent_or_none(result.stdout)
+    if percent is None:
+        return None, "Salida de brillo no reconocida"
+    return percent, None
+
+
+def apply_brightness(monitor, target):
+    """Apply at most one physical percentage point toward ``target``.
+
+    The requested slider value is intent only.  The helper freshly reads the
+    real monitor, chooses exactly one allowlisted relative token, then confirms
+    a readback no farther than one point from that physical starting value.
+    """
+    target = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, int(target)))
+    if not monitor:
+        return {
+            "available": False,
+            "percent": None,
+            "monitor": None,
+            "error": "No se pudo resolver un monitor enfocado",
+        }
+    before, error = read_brightness(monitor)
+    if before is None:
+        return {"available": False, "percent": None, "monitor": monitor, "error": error}
+    if target == before:
+        return {"available": True, "percent": before, "monitor": monitor, "error": None}
+    token = "+1%" if target > before else "1%-"
+    expected = min(BRIGHTNESS_MAX, before + 1) if token == "+1%" else max(BRIGHTNESS_MIN, before - 1)
+    result = run_command([*BRIGHTNESS_COMMAND, monitor, token], timeout=WRITE_TIMEOUT)
+    if result.returncode != 0:
+        return {
+            "available": False,
+            "percent": before,
+            "monitor": monitor,
+            "error": result.stderr.strip() or "No se pudo cambiar el brillo",
+        }
+    deadline = time.monotonic() + WRITE_TIMEOUT
+    while True:
+        percent, error = read_brightness(monitor)
+        if percent is not None and percent == expected and abs(percent - before) <= 1:
+            return {"available": True, "percent": percent, "monitor": monitor, "error": None}
+        if percent is not None and abs(percent - before) > 1:
+            return {
+                "available": False,
+                "percent": percent,
+                "monitor": monitor,
+                "error": "El brillo cambió más de un punto; operación rechazada",
+            }
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                "available": percent is not None,
+                "percent": percent,
+                "monitor": monitor,
+                "error": error or "El cambio de brillo no se confirmó",
+            }
+        time.sleep(min(POLL_INTERVAL, remaining))
+
+
+# --------------------------------------------------------------------------- \
+# hyprsunset night light
+
+def read_nightlight():
+    """Read identity, temperature and gamma through the hyprsunset IPC."""
+    identity_result = run_command([*HYPRSUNSET_COMMAND, "identity", "get"])
+    temperature_result = run_command([*HYPRSUNSET_COMMAND, "temperature"])
+    gamma_result = run_command([*HYPRSUNSET_COMMAND, "gamma"])
+
+    identity_value = _text(identity_result.stdout).strip().casefold()
+    identity = None
+    if identity_result.returncode == 0 and identity_value in {"true", "false"}:
+        identity = identity_value == "true"
+    temperature = (
+        _int_or_none(temperature_result.stdout)
+        if temperature_result.returncode == 0
+        else None
+    )
+    gamma_value = _int_or_none(gamma_result.stdout) if gamma_result.returncode == 0 else None
+    gamma = None
+    if gamma_value is not None and GAMMA_MIN <= gamma_value <= GAMMA_MAX:
+        gamma = gamma_value
+
+    available = identity is not None or temperature is not None or gamma is not None
+    if identity is True:
+        enabled = False
+    elif temperature is None:
+        enabled = None
+    else:
+        enabled = temperature < IDENTITY_TEMPERATURE
+    return {
+        "available": available,
+        "enabled": enabled,
+        "temperature": temperature,
+        "identity": identity,
+        "gamma": gamma,
+        "error": None,
+    }
+
+
+def _wait_readback(predicate, deadline):
+    """Poll a readback predicate until it holds or the deadline expires."""
+    while True:
+        if predicate():
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(POLL_INTERVAL, remaining))
+
+
+def _apply_temperature(kelvin):
+    target = max(TEMPERATURE_MIN, min(TEMPERATURE_MAX, int(kelvin)))
+    deadline = time.monotonic() + WRITE_TIMEOUT
+    while True:
+        result = run_command([*HYPRSUNSET_COMMAND, "temperature", str(target)], timeout=WRITE_TIMEOUT)
+        if result.returncode != 0:
+            return _nightlight_failure(
+                result.stderr.strip() or "No se pudo aplicar la temperatura"
+            )
+        if _wait_readback(
+            lambda: (
+                read_nightlight()["temperature"] is not None
+                and abs(read_nightlight()["temperature"] - target) <= READBACK_TOLERANCE_TEMP
+            ),
+            deadline,
+        ):
+            return read_nightlight()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _nightlight_failure("La temperatura aplicada no coincide con la solicitud")
+        time.sleep(min(POLL_INTERVAL, remaining))
+
+
+def _apply_natural():
+    deadline = time.monotonic() + WRITE_TIMEOUT
+    while True:
+        result = run_command([*HYPRSUNSET_COMMAND, "identity"], timeout=WRITE_TIMEOUT)
+        if result.returncode != 0:
+            return _nightlight_failure(
+                result.stderr.strip() or "No se pudo aplicar el color natural"
+            )
+        if _wait_readback(lambda: read_nightlight()["identity"] is True, deadline):
+            return read_nightlight()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _nightlight_failure("El color natural no se confirmó")
+        time.sleep(min(POLL_INTERVAL, remaining))
+
+
+def _apply_gamma(percent):
+    target = max(GAMMA_MIN, min(GAMMA_MAX, int(percent)))
+    deadline = time.monotonic() + WRITE_TIMEOUT
+    while True:
+        result = run_command([*HYPRSUNSET_COMMAND, "gamma", str(target)], timeout=WRITE_TIMEOUT)
+        if result.returncode != 0:
+            return _nightlight_failure(
+                result.stderr.strip() or "No se pudo aplicar el brillo percibido"
+            )
+        if _wait_readback(
+            lambda: (
+                read_nightlight()["gamma"] is not None
+                and abs(read_nightlight()["gamma"] - target) <= READBACK_TOLERANCE_GAMMA
+            ),
+            deadline,
+        ):
+            return read_nightlight()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _nightlight_failure("El brillo percibido aplicado no coincide con la solicitud")
+        time.sleep(min(POLL_INTERVAL, remaining))
+
+
+def _nightlight_failure(message):
+    state = read_nightlight()
+    state["error"] = message
+    return state
+
+
+def toggle_nightlight():
+    """Toggle between warm light and natural color using observed state."""
+    current = read_nightlight()
+    if not current["available"]:
+        return _nightlight_failure("La luz nocturna no está disponible")
+    if current["enabled"] is True and not current["identity"]:
+        return _apply_natural()
+    # Currently natural or reading stale: apply a warm temperature.  A
+    # temperature register that still holds a non-warm value is unreliable
+    # while identity was active, so fall back to the default warm selection.
+    temperature = current["temperature"] or DEFAULT_TEMP
+    if not (TEMPERATURE_MIN <= temperature <= TEMPERATURE_MAX and temperature < IDENTITY_TEMPERATURE):
+        temperature = DEFAULT_TEMP
+    return _apply_temperature(temperature)
+
+
+# --------------------------------------------------------------------------- \
+# schedule
+
+_PROFILE_TIME_RE = re.compile(
+    r"(?mi)^([ \t]*time\s*=\s*)[0-9]{1,2}:[0-9]{2}([ \t]*(?:#.*)?)(\r?)$"
+)
+_PROFILE_TEMP_RE = re.compile(
+    r"(?mi)^([ \t]*)temperature\s*=\s*[^ \t\r\n{}#]+([ \t]*(?:#.*)?)(\r?)$"
+)
+_PROFILE_IDENTITY_RE = re.compile(
+    r"(?mi)^([ \t]*)identity(?:[ \t]*=[ \t]*(?:true|false))?"
+    r"([ \t]*(?:#.*)?)(\r?)$"
+)
+
+
+def _replace_time(profile, time_value):
+    return _PROFILE_TIME_RE.sub(
+        lambda match: match.group(1) + time_value + match.group(2) + match.group(3),
+        profile,
+        count=1,
+    )
+
+
+def _replace_temperature(profile, temperature):
+    return _PROFILE_TEMP_RE.sub(
+        lambda match: (
+            match.group(1) + "temperature = " + str(temperature) + match.group(2) + match.group(3)
+        ),
+        profile,
+        count=1,
+    )
+
+
+def _remove_temperature(profile):
+    return _PROFILE_TEMP_RE.sub(
+        lambda match: match.group(1) + match.group(2) + match.group(3)
+        if "#" in match.group(2)
+        else match.group(3),
+        profile,
+    )
+
+
+def _set_identity(profile):
+    if _PROFILE_IDENTITY_RE.search(profile):
+        return _PROFILE_IDENTITY_RE.sub(
+            lambda match: match.group(1) + "identity = true" + match.group(2) + match.group(3),
+            profile,
+            count=1,
+        )
+    line_ending = "\r\n" if "\r\n" in profile else "\n"
+    return re.sub(
+        r"\}\s*$",
+        f"    identity = true{line_ending}}}",
+        profile,
+        count=1,
+    )
+
+
+def _remove_identity(profile):
+    return _PROFILE_IDENTITY_RE.sub(
+        lambda match: match.group(1) + match.group(2) + match.group(3)
+        if "#" in match.group(2)
+        else match.group(3),
+        profile,
+    )
+
+
+def _update_profile(profile, time_value, temperature, identity_day):
+    """Update one profile block without disturbing formatting or comments."""
+    schedule_module = _schedule_module()
+    info = schedule_module.profile_info(profile) if schedule_module else {}
+    updated = _replace_time(profile, time_value)
+    if identity_day:
+        updated = _remove_temperature(updated)
+        if info.get("identity") is not None:
+            updated = _set_identity(updated)
+        else:
+            line_ending = "\r\n" if "\r\n" in updated else "\n"
+            updated = re.sub(
+                r"\}\s*$",
+                f"    identity = true{line_ending}}}",
+                updated,
+                count=1,
+            )
+    elif info.get("temperature") is not None:
+        updated = _replace_temperature(updated, temperature)
+        updated = _remove_identity(updated)
+    elif info.get("identity") is not None:
+        updated = _remove_identity(updated)
+        line_ending = "\r\n" if "\r\n" in updated else "\n"
+        updated = re.sub(
+            r"\}\s*$",
+            f"    temperature = {temperature}{line_ending}}}",
+            updated,
+            count=1,
+        )
+    else:
+        line_ending = "\r\n" if "\r\n" in updated else "\n"
+        updated = re.sub(
+            r"\}\s*$",
+            f"    temperature = {temperature}{line_ending}}}",
+            updated,
+            count=1,
+        )
+    return updated
+
+
+def _render_schedule(schedule, natural_day):
+    """Render a managed hyprsunset.conf when none exists yet."""
+    day_profile = (
+        f"profile {{\n    time = {schedule['day_time']}\n    identity = true\n}}"
+        if natural_day
+        else f"profile {{\n    time = {schedule['day_time']}\n"
+        f"    temperature = {schedule['day_temp']}\n}}"
+    )
+    return (
+        f"# Generated by Veilleuse\n"
+        f"# Times use the system timezone.\n"
+        f"{day_profile}\n\n"
+        f"profile {{\n    time = {schedule['night_time']}\n"
+        f"    temperature = {schedule['night_temp']}\n}}\n"
+    )
+
+
+def _update_schedule_text(existing, schedule, natural_day):
+    """Update the first day/night profiles, preserving every other block."""
+    schedule_module = _schedule_module()
+    replacements = []
+    found_day = False
+    found_night = False
+    for start, end, profile in schedule_module.iter_profile_blocks(existing):
+        info = schedule_module.profile_info(profile)
+        if info["time"] is None:
+            continue
+        kind = schedule_module.profile_kind(info)
+        if kind == "day" and not found_day:
+            replacements.append(
+                (start, end, _update_profile(profile, schedule["day_time"], schedule["day_temp"], natural_day))
+            )
+            found_day = True
+        elif kind == "night" and not found_night:
+            replacements.append(
+                (start, end, _update_profile(profile, schedule["night_time"], schedule["night_temp"], False))
+            )
+            found_night = True
+
+    updated = existing
+    for start, end, replacement in reversed(replacements):
+        updated = updated[:start] + replacement + updated[end:]
+
+    missing = []
+    if not found_day:
+        day_block = (
+            f"profile {{\n    time = {schedule['day_time']}\n    identity = true\n}}"
+            if natural_day
+            else f"profile {{\n    time = {schedule['day_time']}\n"
+            f"    temperature = {schedule['day_temp']}\n}}"
+        )
+        missing.append(day_block)
+    if not found_night:
+        missing.append(
+            f"profile {{\n    time = {schedule['night_time']}\n"
+            f"    temperature = {schedule['night_temp']}\n}}"
+        )
+    if missing:
+        separator = (
+            ""
+            if not updated or updated.endswith("\n\n")
+            else ("\n" if updated.endswith("\n") else "\n\n")
+        )
+        updated += separator + "\n\n".join(missing) + "\n"
+    return updated
+
+
+def schedule_module_or_error():
+    schedule_module = _schedule_module()
+    if schedule_module is None:
+        return None, "El parser de horario del plugin no está disponible"
+    return schedule_module, None
+
+
+def schedule_get():
+    """Return the parsed schedule, its identity day flag and active period.
+
+    A missing or empty config returns the parser's documented default
+    template (06:00 / 6000 K day, 15:30 / 3500 K night) so status stays
+    coherent before the user saves a first schedule.
+    """
+    schedule_module, error = schedule_module_or_error()
+    if schedule_module is None:
+        return _schedule_result(None, False, error)
+    path = config_path()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    try:
+        if not text.strip():
+            schedule = schedule_module.default_schedule()
+            day_identity = False
+            period_value = schedule_module.schedule_period(schedule)
+        else:
+            schedule = schedule_module.parse_schedule_text(text)
+            day_identity = schedule_module.day_profile_is_identity(text)
+            period_value = schedule_module.schedule_period(schedule)
+    except ValueError as caught:
+        return _schedule_result(None, False, str(caught))
+    return _schedule_result(schedule, day_identity, None, period_value)
+
+
+def schedule_set(values):
+    """Atomically update the schedule, preserving comments and permissions.
+
+    The write reuses the safe ``schedule_utils`` primitives: it validates with
+    ``validate_schedule``, updates only the first day/night profiles (keeping
+    unrelated blocks, comments and formatting), preserves the original file
+    mode, and writes atomically (temp file + ``os.replace``) under the shared
+    exclusive lock with a ``.bak`` backup.  No service is started, enabled or
+    restarted here.
+    """
+    schedule_module, error = schedule_module_or_error()
+    if schedule_module is None:
+        return _schedule_result(None, False, error)
+    path = config_path()
+    try:
+        schedule = schedule_module.validate_schedule(
+            {
+                "day_time": values["day_time"],
+                "day_temp": values["day_temp"],
+                "night_time": values["night_time"],
+                "night_temp": values["night_temp"],
+            }
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_mode = path.stat().st_mode & 0o7777 if path.exists() else None
+        with schedule_module.exclusive_lock(path.parent / ".veilleuse-schedule.lock"):
+            if path.exists():
+                existing = path.read_text(encoding="utf-8")
+            else:
+                existing = ""
+            if existing:
+                updated = _update_schedule_text(existing, schedule, values.get("natural_day", True))
+                try:
+                    schedule_module.parse_schedule_text(updated)
+                except ValueError as caught:
+                    return _schedule_result(None, values.get("natural_day", True), str(caught))
+            else:
+                updated = _render_schedule(schedule, values.get("natural_day", True))
+            if path.exists():
+                schedule_module.atomic_write_text(
+                    path.with_suffix(path.suffix + ".bak"), existing, original_mode
+                )
+            schedule_module.atomic_write_text(path, updated, original_mode)
+    except (OSError, ValueError) as caught:
+        return _schedule_result(None, values.get("natural_day", True), str(caught))
+    return schedule_get()
+
+
+def _schedule_result(schedule, day_identity, error, period_value=None):
+    result = {
+        "available": schedule is not None,
+        "day_time": None,
+        "day_temp": None,
+        "night_time": None,
+        "night_temp": None,
+        "day_identity": bool(day_identity),
+        "period": period_value,
+        "error": error,
+    }
+    if schedule is not None:
+        result.update(
+            {
+                "day_time": schedule.get("day_time"),
+                "day_temp": schedule.get("day_temp"),
+                "night_time": schedule.get("night_time"),
+                "night_temp": schedule.get("night_temp"),
+            }
+        )
+    return result
+
+
+# --------------------------------------------------------------------------- \
+# status + CLI
+
+def read_status():
+    """Combine monitor/brightness, nightlight and schedule state in one JSON."""
+    monitor = read_monitor_state()
+    brightness = None
+    if monitor["monitor"]:
+        percent, error = read_brightness(monitor["monitor"])
+        brightness_state = {
+            "available": percent is not None,
+            "percent": percent,
+            "monitor": monitor["monitor"],
+            "error": error,
+        }
+    else:
+        brightness_state = {
+            "available": False,
+            "percent": None,
+            "monitor": None,
+            "error": "No se pudo resolver un monitor enfocado",
+        }
+    root = resolve_plugin_root()
+    return {
+        "plugin": {"id": PLUGIN_ID, "root": str(root)},
+        "brightness": brightness_state,
+        "nightlight": read_nightlight(),
+        "schedule": schedule_get(),
+        "monitors": monitor["monitors"],
+    }
+
+
+def _emit(payload):
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+    sys.stdout.write("\n")
+
+
+def _abort(message):
+    _emit({"error": message})
+    return 1
+
+
+def _bounded(value, minimum, maximum, label):
+    try:
+        integer = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} debe ser un número entero")
+    if integer < minimum or integer > maximum:
+        raise ValueError(f"{label} debe estar entre {minimum} y {maximum}")
+    return integer
+
+
+def cmd_status(_args):
+    _emit(read_status())
+    return 0
+
+
+def cmd_brightness(args):
+    if args.value is None:
+        monitor_state = read_monitor_state()
+        percent, error = read_brightness(monitor_state["monitor"])
+        _emit(
+            {
+                "available": percent is not None,
+                "percent": percent,
+                "monitor": monitor_state["monitor"],
+                "error": error,
+            }
+        )
+        return 0 if percent is not None else 1
+    # Delegate an absolute percentage to the Omarchy surface; the request is
+    # clamped to the 1..100 contract so a panel can never be asked below 1%.
+    try:
+        raw = int(args.value)
+    except (TypeError, ValueError):
+        return _abort("El brillo debe ser un número entero")
+    target = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, raw))
+    monitor_state = read_monitor_state()
+    state = apply_brightness(monitor_state["monitor"], target)
+    ok = state["available"] and state["error"] is None
+    _emit(read_status() if ok else {"error": state["error"], "state": read_status()})
+    return 0 if ok else 1
+
+
+def cmd_nightlight(args):
+    operation = args.operation
+    if operation == "toggle":
+        state = toggle_nightlight()
+    elif operation == "natural":
+        state = _apply_natural()
+    elif operation == "temperature":
+        kelvin = _bounded(args.value, TEMPERATURE_MIN, TEMPERATURE_MAX, "La temperatura")
+        state = _apply_temperature(kelvin)
+    elif operation == "gamma":
+        percent = _bounded(args.value, GAMMA_MIN, GAMMA_MAX, "La gamma")
+        state = _apply_gamma(percent)
+    else:
+        return _abort(f"Operación de luz nocturna desconocida: {operation}")
+    ok = state["available"] and state["error"] is None
+    if ok:
+        run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
+    _emit(read_status() if ok else {"error": state["error"], "state": read_status()})
+    return 0 if ok else 1
+
+
+def cmd_schedule(args):
+    if args.action == "get":
+        state = schedule_get()
+        _emit(state)
+        return 0 if state["available"] else 1
+    values = {
+        "day_time": args.day_time,
+        "day_temp": args.day_temp,
+        "night_time": args.night_time,
+        "night_temp": args.night_temp,
+        "natural_day": args.natural_day,
+    }
+    try:
+        values["day_time"] = _clock(args.day_time, "Hora diurna")
+        values["night_time"] = _clock(args.night_time, "Hora nocturna")
+        values["day_temp"] = _bounded(args.day_temp, 5900, 6500, "Temperatura diurna")
+        values["night_temp"] = _bounded(args.night_temp, 2500, 5000, "Temperatura nocturna")
+    except ValueError as error:
+        return _abort(str(error))
+    state = schedule_set(values)
+    ok = state["available"] and state["error"] is None
+    _emit(read_status() if ok else {"error": state["error"], "state": read_status()})
+    return 0 if ok else 1
+
+
+def _clock(value, label):
+    match = re.fullmatch(r"\s*([0-9]{1,2}):([0-9]{2})\s*", str(value))
+    if not match:
+        raise ValueError(f"{label} debe usar el formato HH:MM")
+    hour, minute = map(int, match.groups())
+    if hour > 23 or minute > 59:
+        raise ValueError(f"{label} está fuera de rango")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="veilleuse-control",
+        description="Veilleuse Omarchy 4 plugin control helper.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    status = subparsers.add_parser("status", help="Print combined status JSON")
+    status.set_defaults(handler=cmd_status)
+
+    brightness = subparsers.add_parser(
+        "brightness", help="Read or set display brightness (1-100)"
+    )
+    brightness.add_argument("value", nargs="?", type=str, help="Target brightness percentage")
+    brightness.set_defaults(handler=cmd_brightness)
+
+    nightlight = subparsers.add_parser(
+        "nightlight", help="Control the hyprsunset night light"
+    )
+    nightlight.add_argument(
+        "operation",
+        choices=("toggle", "natural", "temperature", "gamma"),
+        help="Operation to run",
+    )
+    nightlight.add_argument("value", nargs="?", type=str, help="Target temperature/gamma")
+    nightlight.set_defaults(handler=cmd_nightlight)
+
+    schedule = subparsers.add_parser("schedule", help="Get or set the hyprsunset schedule")
+    schedule_sub = schedule.add_subparsers(dest="action", required=True)
+    schedule_get_parser = schedule_sub.add_parser("get", help="Print the parsed schedule")
+    schedule_get_parser.set_defaults(handler=cmd_schedule)
+    schedule_set_parser = schedule_sub.add_parser("set", help="Atomically update the schedule")
+    schedule_set_parser.add_argument("--day-time", required=True)
+    schedule_set_parser.add_argument("--night-time", required=True)
+    schedule_set_parser.add_argument("--day-temp", required=True, type=int)
+    schedule_set_parser.add_argument("--night-temp", required=True, type=int)
+    schedule_set_parser.set_defaults(natural_day=True)
+    natural_day = schedule_set_parser.add_mutually_exclusive_group()
+    natural_day.add_argument(
+        "--natural-day",
+        dest="natural_day",
+        action="store_true",
+        help="Write the day profile as identity = true (default)",
+    )
+    natural_day.add_argument(
+        "--no-natural-day",
+        dest="natural_day",
+        action="store_false",
+        help="Write a numeric day temperature instead of identity = true",
+    )
+    schedule_set_parser.set_defaults(handler=cmd_schedule)
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        return 2
+    try:
+        return args.handler(args)
+    except (OSError, ValueError) as error:
+        return _abort(str(error))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

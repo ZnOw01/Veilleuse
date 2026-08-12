@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.ZnOw01.veilleuse",
+  "name": "Veilleuse",
+  "version": "1.0.0",
+  "author": "ZnOw01",
+  "license": "MIT",
+  "description": "Controles nativos para luz nocturna, brillo, temperatura y horario.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Veilleuse",
+    "description": "Ajusta la luz nocturna y los controles de pantalla.",
+    "category": "Display",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
