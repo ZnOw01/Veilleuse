@@ -58,6 +58,7 @@ def _runtime_sources(root: Path | None = None) -> list[Path]:
     base = root or ROOT / "src"
     names = (
         "veilleuse.py",
+        "brightness_utils.py",
         "native_backends.py",
         "hyprsunset_backend.py",
         "schedule_utils.py",

@@ -5,6 +5,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,6 +96,44 @@ class InstallArticlesTests(unittest.TestCase):
             }
             expected = {s.name for s in install.runtime_sources()}
             self.assertEqual(installed, expected)
+
+    def test_isolated_runtime_runs_native_status_without_module_error(self):
+        """An installed runtime (only LIB_DIR on path) imports native_backends
+        and runs a fake status without any ModuleNotFoundError.
+
+        This guards the runtime manifest: every module that native_backends
+        imports at module level (hyprsunset_backend and brightness_utils) must
+        actually be installed, or an isolated install cannot even load the
+        backend for ``veilleuse --status``.
+        """
+        with tempfile.TemporaryDirectory(prefix="veilleuse-runtime-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+
+            lib = str(paths.LIB_DIR)
+            probe = (
+                "import importlib.util, subprocess; "
+                "import native_backends as nb; "
+                "print(importlib.util.find_spec('native_backends').origin); "
+                "fake = lambda args, **kw: subprocess.CompletedProcess("
+                "list(args), 1, '', 'no display'); "
+                "bs = nb.OmarchyBrightnessBackend(runner=fake).read_state(); "
+                "ns = nb.OmarchyNightLightBackend(read_state=lambda: None).read_state(); "
+                "assert bs.available is False and ns.available is False"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", probe],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONPATH": lib},
+                cwd=td,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            # Proves the backend was loaded from the isolated installed runtime
+            # (only LIB_DIR on the path) and not from the repo's src/.
+            self.assertEqual(
+                result.stdout.strip(), str(paths.LIB_DIR / "native_backends.py")
+            )
 
     def test_desktop_argument_escapes_percent(self):
         """A literal %% in Exec must be escaped as %%%% per the desktop spec."""
@@ -490,5 +530,71 @@ class UninstallResidueTests(unittest.TestCase):
             self.assertTrue(user_cfg.exists())
             self.assertFalse(residue.exists())
             self.assertTrue(paths.CONFIG_DIR.exists())
+
+
+class LegacyRuntimeMigrationTests(unittest.TestCase):
+    """ui_accessibility.py was installed by earlier Veilleuse releases but is
+    no longer part of the runtime. It is retired only when ownership (an
+    installed snapshot or our exact published payload) is proven; a
+    user-modified or foreign same-named file is always preserved."""
+
+    def test_snapshot_owned_unmodified_ui_accessibility_is_retired(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-legacy-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            legacy = paths.LIB_DIR / "ui_accessibility.py"
+            payload = (ROOT / "src" / "ui_accessibility.py").read_bytes()
+            legacy.write_bytes(payload)
+            snapshot = install.marker(legacy, "installed")
+            snapshot.write_bytes(payload)
+
+            install.install_files(paths)
+
+            self.assertFalse(legacy.exists())
+            self.assertFalse(snapshot.exists())
+
+    def test_byte_owned_without_snapshot_is_retired(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-legacy-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            legacy = paths.LIB_DIR / "ui_accessibility.py"
+            legacy.write_bytes((ROOT / "src" / "ui_accessibility.py").read_bytes())
+
+            install.install_files(paths)
+
+            self.assertFalse(legacy.exists())
+
+    def test_user_modified_ui_accessibility_is_preserved(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-legacy-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            legacy = paths.LIB_DIR / "ui_accessibility.py"
+            payload = (ROOT / "src" / "ui_accessibility.py").read_bytes()
+            legacy.write_bytes(payload)
+            snapshot = install.marker(legacy, "installed")
+            snapshot.write_bytes(payload)
+            legacy.write_bytes(payload + b"\n# user tweak\n")
+
+            install.install_files(paths)
+
+            self.assertTrue(legacy.exists())
+            self.assertNotEqual(legacy.read_bytes(), payload)
+            self.assertTrue(snapshot.exists())
+
+    def test_foreign_file_is_preserved(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-legacy-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            legacy = paths.LIB_DIR / "ui_accessibility.py"
+            foreign = b"foreign content that is not veilleuse\n"
+            legacy.write_bytes(foreign)
+
+            install.install_files(paths)
+
+            self.assertTrue(legacy.exists())
+            self.assertEqual(legacy.read_bytes(), foreign)
+            self.assertFalse(install.marker(legacy, "installed").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

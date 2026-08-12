@@ -203,6 +203,7 @@ def runtime_sources(root: Path | None = None) -> list[Path]:
     base = root or ROOT / "src"
     names = (
         "veilleuse.py",
+        "brightness_utils.py",
         "native_backends.py",
         "hyprsunset_backend.py",
         "schedule_utils.py",
@@ -252,6 +253,49 @@ def seed_hyprsunset(paths: SimpleNamespace) -> None:
     _atomic_replace_bytes(
         (ROOT / "data" / "hyprsunset.conf").read_bytes(), paths.HYPRSUNSET, 0o644
     )
+
+
+# Legacy runtime file that earlier Veilleuse releases installed but that the
+# unified runtime no longer ships. It is retired only on proven ownership.
+_LEGACY_RUNTIME_FILES = ("ui_accessibility.py",)
+
+
+def migrate_legacy_runtime(paths: SimpleNamespace) -> None:
+    """Retire legacy runtime files that Veilleuse no longer ships.
+
+    ``ui_accessibility.py`` was part of the runtime manifest until the unified
+    application replaced it. A leftover copy in the installed runtime directory
+    is removed only when Veilleuse ownership is proven: either the adjacent
+    ``*.veilleuse.installed`` snapshot still matches the live bytes, or (with no
+    snapshot) the bytes exactly match our published ``src/ui_accessibility.py``
+    payload. A user-modified or foreign same-named file is always preserved
+    untouched. This never infers ownership from the file name alone.
+    """
+    for relative in _LEGACY_RUNTIME_FILES:
+        destination = paths.LIB_DIR / relative
+        snapshot = marker(destination, "installed")
+        backup = marker(destination, "bak")
+        if not destination.exists() and not snapshot.exists():
+            continue
+        owned_by_snapshot = (
+            snapshot.exists()
+            and destination.exists()
+            and destination.read_bytes() == snapshot.read_bytes()
+        )
+        owned_by_payload = destination.exists() and (
+            ROOT / "src" / relative
+        ).read_bytes() == destination.read_bytes()
+        if not (owned_by_snapshot or owned_by_payload):
+            # User-modified (diverged from the snapshot) or foreign (no proof of
+            # Veilleuse ownership): preserve it and its ownership markers.
+            continue
+        destination.unlink(missing_ok=True)
+        if backup.exists():
+            # A genuine pre-Veilleuse original: restore it byte-for-byte and
+            # mode-for-mode instead of discarding the user's content.
+            backup.replace(destination)
+        snapshot.unlink(missing_ok=True)
+        backup.unlink(missing_ok=True)
 
 
 def _required_payloads(root: Path) -> list[Path]:
@@ -306,6 +350,10 @@ def install_files(paths: SimpleNamespace | None = None) -> None:
         paths.CONFIG_DIR,
     ):
         directory.mkdir(parents=True, exist_ok=True)
+
+    # One-time cleanup: retire the legacy ui_accessibility.py only when we own
+    # it (snapshot/bytes prove Veilleuse created it), preserving user edits.
+    migrate_legacy_runtime(paths)
 
     jobs: list[tuple[str, object, Path, int]] = [
         ("copy", ROOT / "bin" / "veilleuse", paths.BIN / "veilleuse", 0o755),
