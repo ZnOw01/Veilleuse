@@ -36,10 +36,10 @@ jobs:
       - name: Run model and helper tests
         run: |
           python -m unittest discover -s tests -p 'test_veilleuse_control.py'
-          node --test tests/UiModel.test.js tests/model.test.mjs
+          node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs
       - name: Check package hygiene
         run: |
           test -x scripts/veilleuse-control
-          test -z "$(find . -path ./.git -prune -o -type l -print -quit)"
-          test -z "$(find . -path ./.git -prune -o \( -name __pycache__ -o -name '*.pyc' \) -print -quit)"
-          git diff --check
+          test -z "$(find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o -type l -print -quit)"
+          test -z "$(find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o \( -name __pycache__ -o -name '*.pyc' \) -print -quit)"
+          git show --check --oneline --format= HEAD
