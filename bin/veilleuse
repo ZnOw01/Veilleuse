@@ -1,13 +1,22 @@
 #!/usr/bin/python3
 """Single Veilleuse command for GUI and native display controls."""
 
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
 
-from veilleuse import build_parser, cli_main, run_gui  # noqa: E402,F401
+def _runtime_dir() -> Path:
+    installed = Path.home() / ".local" / "lib" / "veilleuse"
+    if (installed / "veilleuse.py").is_file():
+        return installed
+    return Path(__file__).resolve().parents[1] / "src"
+
+
+sys.path.insert(0, str(_runtime_dir()))
+
+from veilleuse import build_parser, cli_main, run_gui  # noqa: E402
 
 
 def main(argv=None, backends=None):

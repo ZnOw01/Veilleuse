@@ -4,7 +4,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 printf '%s\n' '→ Python syntax'
-/usr/bin/python3 -m py_compile src/night_light_control.py src/brightness_control.py src/brightness_utils.py src/schedule_utils.py src/hyprsunset_backend.py src/native_backends.py bin/night-light-toggle bin/night-light-status bin/night-light bin/brightness-step scripts/install.py scripts/uninstall.py
+/usr/bin/python3 -m py_compile src/veilleuse.py src/native_backends.py src/night_light_control.py src/brightness_control.py src/brightness_utils.py src/schedule_utils.py src/hyprsunset_backend.py src/ui_accessibility.py bin/veilleuse scripts/install.py scripts/uninstall.py
 
 printf '%s\n' '→ Unit tests'
 /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py' -v
@@ -13,17 +13,15 @@ printf '%s\n' '→ Shell syntax'
 bash -n install.sh uninstall.sh scripts/check.sh
 
 printf '%s\n' '→ Desktop entry'
-tmp="$(mktemp --suffix=.desktop)"
-brightness_tmp="$(mktemp --suffix=.desktop)"
-trap 'rm -f "$tmp" "$brightness_tmp"' EXIT
-sed "s|@APP_EXEC@|$HOME/.local/bin/night-light-control|" data/night-light-control.desktop.in > "$tmp"
-sed "s|@BRIGHTNESS_EXEC@|$HOME/.local/bin/brightness-control|" data/brightness-control.desktop.in > "$brightness_tmp"
-desktop-file-validate "$tmp" "$brightness_tmp"
+veilleuse_tmp="$(mktemp --suffix=.desktop)"
+trap 'rm -f "$veilleuse_tmp"' EXIT
+sed "s|@VEILLEUSE_EXEC@|$HOME/.local/bin/veilleuse|" data/io.github.ZnOw01.Veilleuse.desktop.in > "$veilleuse_tmp"
+desktop-file-validate "$veilleuse_tmp"
 
 printf '%s\n' '→ Safety and portability'
 if grep -R --line-number --exclude-dir='__pycache__' --exclude='*.pyc' \
   -E '/home/[^/]+|shell[[:space:]]*=[[:space:]]*True|os\.system\(|eval\(|exec\(' \
-  src bin scripts/install.py scripts/uninstall.py install.sh uninstall.sh data/night-light-control.desktop.in; then
+  src/veilleuse.py src/native_backends.py bin/veilleuse scripts/install.py scripts/uninstall.py install.sh uninstall.sh data/io.github.ZnOw01.Veilleuse.desktop.in; then
   printf '%s\n' 'Unsafe or non-portable pattern detected.' >&2
   exit 1
 fi
@@ -54,8 +52,8 @@ for _start, _end, profile in iter_profile_blocks(text):
 PY
 
 printf '%s\n' '→ Runtime status JSON'
-if systemctl --user is-active --quiet hyprsunset.service; then
-  bin/night-light-status | /usr/bin/python3 -m json.tool >/dev/null
+if command -v omarchy-hw-display >/dev/null 2>&1 && systemctl --user is-active --quiet hyprsunset.service; then
+  bin/veilleuse --status | /usr/bin/python3 -m json.tool >/dev/null
 fi
 
 printf '%s\n' '✓ All checks passed.'
