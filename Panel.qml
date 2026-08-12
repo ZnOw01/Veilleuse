@@ -168,7 +168,7 @@ Panel {
             else if (cursor.field === 1)
                 endEditor.forceActiveFocus();
             else if (cursor.field === 2)
-                scheduleTemperatureEditor.forceActiveFocus();
+                scheduleTemperatureEditor.field.forceActiveFocus();
             else
                 queueSchedule();
         }
@@ -231,7 +231,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || scheduleTemperatureEditor.activeFocus
+            blocked: startEditor.activeFocus || endEditor.activeFocus || scheduleTemperatureEditor.field.activeFocus
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }
@@ -551,7 +551,7 @@ Panel {
                             Column {
                                 visible: root.scheduleExpanded
                                 width: parent.width
-                                spacing: Style.spacing.controlGap
+                                spacing: Style.spacing.rowGap
 
                                 Column {
                                     width: parent.width
@@ -565,32 +565,21 @@ Panel {
                                         width: parent.width
                                     }
 
-                                    CursorSurface {
+                                    TextField {
+                                        id: startEditor
+
                                         width: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 0
                                         foreground: root.foreground
-                                        implicitHeight: startEditor.implicitHeight + Style.spacing.controlPaddingY * 2
-
-                                        TextInput {
-                                            id: startEditor
-
-                                            anchors.fill: parent
-                                            anchors.leftMargin: Style.spacing.controlPaddingX
-                                            anchors.rightMargin: Style.spacing.controlPaddingX
-                                            text: root.editStart
-                                            color: root.foreground
-                                            selectionColor: Color.accent
-                                            font.family: root.fontFamily
-                                            font.pixelSize: Style.font.body
-                                            inputMask: "99:99"
-                                            onTextChanged: root.editStart = text
-                                            onAccepted: endEditor.forceActiveFocus()
-                                            Keys.onEscapePressed: {
-                                                focus = false;
-                                                keyCatcher.forceActiveFocus();
-                                            }
+                                        font.family: root.fontFamily
+                                        text: root.editStart
+                                        inputMask: "99:99"
+                                        onTextChanged: root.editStart = text
+                                        onAccepted: endEditor.forceActiveFocus()
+                                        Keys.onEscapePressed: {
+                                            focus = false;
+                                            keyCatcher.forceActiveFocus();
                                         }
-
                                     }
 
                                 }
@@ -607,32 +596,21 @@ Panel {
                                         width: parent.width
                                     }
 
-                                    CursorSurface {
+                                    TextField {
+                                        id: endEditor
+
                                         width: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 1
                                         foreground: root.foreground
-                                        implicitHeight: endEditor.implicitHeight + Style.spacing.controlPaddingY * 2
-
-                                        TextInput {
-                                            id: endEditor
-
-                                            anchors.fill: parent
-                                            anchors.leftMargin: Style.spacing.controlPaddingX
-                                            anchors.rightMargin: Style.spacing.controlPaddingX
-                                            text: root.editEnd
-                                            color: root.foreground
-                                            selectionColor: Color.accent
-                                            font.family: root.fontFamily
-                                            font.pixelSize: Style.font.body
-                                            inputMask: "99:99"
-                                            onTextChanged: root.editEnd = text
-                                            onAccepted: scheduleTemperatureEditor.forceActiveFocus()
-                                            Keys.onEscapePressed: {
-                                                focus = false;
-                                                keyCatcher.forceActiveFocus();
-                                            }
+                                        font.family: root.fontFamily
+                                        text: root.editEnd
+                                        inputMask: "99:99"
+                                        onTextChanged: root.editEnd = text
+                                        onAccepted: scheduleTemperatureEditor.field.forceActiveFocus()
+                                        Keys.onEscapePressed: {
+                                            focus = false;
+                                            keyCatcher.forceActiveFocus();
                                         }
-
                                     }
 
                                 }
@@ -649,41 +627,28 @@ Panel {
                                         width: parent.width
                                     }
 
-                                    CursorSurface {
+                                    NumberField {
+                                        id: scheduleTemperatureEditor
+
                                         width: parent.width
+                                        fieldWidth: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 2
                                         foreground: root.foreground
-                                        implicitHeight: scheduleTemperatureEditor.implicitHeight + Style.spacing.controlPaddingY * 2
-
-                                        TextInput {
-                                            id: scheduleTemperatureEditor
-
-                                            anchors.fill: parent
-                                            anchors.leftMargin: Style.spacing.controlPaddingX
-                                            anchors.rightMargin: Style.spacing.controlPaddingX
-                                            text: root.editTemperature
-                                            color: root.foreground
-                                            selectionColor: Color.accent
-                                            font.family: root.fontFamily
-                                            font.pixelSize: Style.font.body
-                                            inputMethodHints: Qt.ImhDigitsOnly
-                                            onTextChanged: root.editTemperature = text
-                                            onAccepted: {
-                                                focus = false;
-                                                keyCatcher.forceActiveFocus();
-                                            }
-                                            Keys.onEscapePressed: {
-                                                focus = false;
-                                                keyCatcher.forceActiveFocus();
-                                            }
-                                        }
-
+                                        fontFamily: root.fontFamily
+                                        value: Number(root.editTemperature || 2500)
+                                        from: 2500
+                                        to: 5000
+                                        stepSize: 100
+                                        onModified: value => root.editTemperature = String(value)
                                     }
 
                                 }
 
                                 Button {
                                     text: Model.copy.save
+                                    width: parent.width
+                                    leftAlign: false
+                                    bordered: true
                                     focusable: true
                                     hasCursor: root.cursor.section === 4 && root.cursor.field === 3
                                     foreground: root.foreground
