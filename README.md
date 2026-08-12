@@ -34,7 +34,7 @@ No se mantiene compatibilidad con Omarchy 3, Waybar ni otros escritorios.
 omarchy plugin add https://github.com/ZnOw01/veilleuse.git --enable --yes
 ```
 
-El plugin queda en `~/.config/omarchy/plugins/io.github.ZnOw01.veilleuse/` y aparece en la sección derecha de la barra. No instala servicios ni modifica archivos propiedad de Omarchy.
+El plugin queda en `~/.config/omarchy/plugins/io.github.znow01.veilleuse/` y aparece en la sección derecha de la barra. No instala servicios ni modifica archivos propiedad de Omarchy.
 
 Para una copia local de desarrollo:
 
@@ -47,14 +47,14 @@ omarchy plugin add "file://$PWD/veilleuse" --enable --yes
 ## Actualizar
 
 ```bash
-omarchy plugin update io.github.ZnOw01.veilleuse --yes
+omarchy plugin update io.github.znow01.veilleuse --yes
 ```
 
 ## Deshabilitar o eliminar
 
 ```bash
-omarchy plugin disable io.github.ZnOw01.veilleuse
-omarchy plugin remove io.github.ZnOw01.veilleuse --yes
+omarchy plugin disable io.github.znow01.veilleuse
+omarchy plugin remove io.github.znow01.veilleuse --yes
 ```
 
 La eliminación del plugin **no borra** `~/.config/hypr/hyprsunset.conf` ni su copia de seguridad.

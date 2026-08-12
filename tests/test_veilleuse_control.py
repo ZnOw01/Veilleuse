@@ -175,7 +175,7 @@ class PluginRootTests(HelperModuleTests):
         # A plugin installed at ~/.config/omarchy/plugins/<id> keeps the same
         # layout: manifest.json at root, helper under scripts/.  The helper
         # anchors itself to its own __file__ so the installed location wins.
-        install = self.xdg / "omarchy" / "plugins" / "io.github.ZnOw01.veilleuse"
+        install = self.xdg / "omarchy" / "plugins" / "io.github.znow01.veilleuse"
         (install / "scripts").mkdir(parents=True)
         (install / "manifest.json").write_text("{}", encoding="utf-8")
         helper = install / "scripts" / "veilleuse-control"
@@ -201,7 +201,7 @@ class StatusTests(HelperModuleTests):
         self.assertTrue(status["nightlight"]["enabled"])
         self.assertEqual(status["nightlight"]["gamma"], 100)
         self.assertEqual(status["schedule"]["night_time"], "15:30")
-        self.assertEqual(status["plugin"]["id"], "io.github.ZnOw01.veilleuse")
+        self.assertEqual(status["plugin"]["id"], "io.github.znow01.veilleuse")
 
     def test_status_reports_nightlight_unavailable_when_hyprsunset_missing(self):
         self.sim.hyprsunset_available = False

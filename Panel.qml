@@ -197,8 +197,8 @@ Panel {
 
     }
 
-    moduleName: "io.github.ZnOw01.veilleuse"
-    ipcTarget: "io.github.ZnOw01.veilleuse"
+    moduleName: "io.github.znow01.veilleuse"
+    ipcTarget: "io.github.znow01.veilleuse"
     onOpenedChanged: {
         if (opened)
             requestStatus();

@@ -26,7 +26,7 @@ jobs:
           from pathlib import Path
           manifest = json.loads(Path("manifest.json").read_text())
           assert manifest["schemaVersion"] == 1
-          assert manifest["id"] == "io.github.ZnOw01.veilleuse"
+          assert manifest["id"] == "io.github.znow01.veilleuse"
           assert manifest["kinds"] == ["bar-widget"]
           assert manifest["entryPoints"]["barWidget"] == "BarWidget.qml"
           assert Path("BarWidget.qml").is_file()

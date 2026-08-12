@@ -3,7 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const qml = fs.readFileSync(new URL('../Panel.qml', import.meta.url), 'utf8');
+const barQml = fs.readFileSync(new URL('../BarWidget.qml', import.meta.url), 'utf8');
+const helper = fs.readFileSync(new URL('../scripts/veilleuse-control', import.meta.url), 'utf8');
+const workflow = fs.readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
+const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 const schedule = qml.slice(qml.indexOf('id: scheduleColumn'));
+
+test('community plugin id is lowercase and consistent across entry points', () => {
+  assert.equal(manifest.id, manifest.id.toLowerCase());
+  assert.ok(qml.includes(`moduleName: "${manifest.id}"`));
+  assert.ok(qml.includes(`ipcTarget: "${manifest.id}"`));
+  assert.ok(barQml.includes(`moduleName: "${manifest.id}"`));
+  assert.ok(helper.includes(`PLUGIN_ID = "${manifest.id}"`));
+  assert.ok(workflow.includes(`manifest["id"] == "${manifest.id}"`));
+});
 
 test('schedule editor uses native vertically centered fields', () => {
   assert.equal((schedule.match(/\bTextField\s*\{/g) || []).length, 2);

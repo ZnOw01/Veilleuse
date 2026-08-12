@@ -48,7 +48,7 @@ BarWidget {
 
     }
 
-    moduleName: "io.github.ZnOw01.veilleuse"
+    moduleName: "io.github.znow01.veilleuse"
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
     onBarChanged: injectPanel()

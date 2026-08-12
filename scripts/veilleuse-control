@@ -40,7 +40,7 @@ GAMMA_MAX = 100
 IDENTITY_TEMPERATURE = 6000
 DEFAULT_TEMP = 3500
 
-PLUGIN_ID = "io.github.ZnOw01.veilleuse"
+PLUGIN_ID = "io.github.znow01.veilleuse"
 
 MONITOR_STATE_COMMAND = ("omarchy-monitor-state",)
 BRIGHTNESS_COMMAND = ("omarchy-brightness-display", "--no-osd", "--monitor")
