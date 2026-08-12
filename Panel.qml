@@ -544,21 +544,20 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
-                                Row {
+                                Column {
                                     width: parent.width
-                                    spacing: Style.spacing.controlGap
+                                    spacing: Style.spacing.labelGap
 
                                     Text {
                                         text: Model.copy.start
                                         color: root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
-                                        width: Style.space(54)
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width
                                     }
 
                                     CursorSurface {
-                                        width: parent.width - Style.space(54) - Style.spacing.controlGap
+                                        width: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 0
                                         foreground: root.foreground
                                         implicitHeight: startEditor.implicitHeight + Style.spacing.controlPaddingY * 2
@@ -587,21 +586,20 @@ Panel {
 
                                 }
 
-                                Row {
+                                Column {
                                     width: parent.width
-                                    spacing: Style.spacing.controlGap
+                                    spacing: Style.spacing.labelGap
 
                                     Text {
                                         text: Model.copy.end
                                         color: root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
-                                        width: Style.space(54)
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width
                                     }
 
                                     CursorSurface {
-                                        width: parent.width - Style.space(54) - Style.spacing.controlGap
+                                        width: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 1
                                         foreground: root.foreground
                                         implicitHeight: endEditor.implicitHeight + Style.spacing.controlPaddingY * 2
@@ -630,21 +628,20 @@ Panel {
 
                                 }
 
-                                Row {
+                                Column {
                                     width: parent.width
-                                    spacing: Style.spacing.controlGap
+                                    spacing: Style.spacing.labelGap
 
                                     Text {
                                         text: Model.copy.scheduleTemperature
                                         color: root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
-                                        width: Style.space(54)
-                                        anchors.verticalCenter: parent.verticalCenter
+                                        width: parent.width
                                     }
 
                                     CursorSurface {
-                                        width: parent.width - Style.space(54) - Style.spacing.controlGap
+                                        width: parent.width
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 2
                                         foreground: root.foreground
                                         implicitHeight: scheduleTemperatureEditor.implicitHeight + Style.spacing.controlPaddingY * 2
