@@ -186,7 +186,12 @@ def _record_ownership(path: Path, mode: int) -> None:
 
 
 def desktop_argument(path: Path) -> str:
-    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        str(path)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("%", "%%")
+    )
 
 
 def build_desktop(executable: Path) -> str:
@@ -201,7 +206,6 @@ def runtime_sources(root: Path | None = None) -> list[Path]:
         "native_backends.py",
         "hyprsunset_backend.py",
         "schedule_utils.py",
-        "ui_accessibility.py",
     )
     return [base / name for name in names]
 
@@ -300,7 +304,6 @@ def install_files(paths: SimpleNamespace | None = None) -> None:
         paths.APPS,
         paths.ICONS,
         paths.CONFIG_DIR,
-        paths.HYPR,
     ):
         directory.mkdir(parents=True, exist_ok=True)
 

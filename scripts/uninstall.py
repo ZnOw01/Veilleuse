@@ -61,7 +61,6 @@ def _runtime_sources(root: Path | None = None) -> list[Path]:
         "native_backends.py",
         "hyprsunset_backend.py",
         "schedule_utils.py",
-        "ui_accessibility.py",
     )
     return [base / name for name in names]
 
@@ -72,7 +71,12 @@ def runtime_destinations(paths: SimpleNamespace) -> list[Path]:
 
 
 def desktop_argument(path: Path) -> str:
-    return str(path).replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        str(path)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("%", "%%")
+    )
 
 
 def desktop_payload(paths: SimpleNamespace) -> bytes:

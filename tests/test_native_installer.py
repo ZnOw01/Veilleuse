@@ -82,6 +82,34 @@ class InstallArticlesTests(unittest.TestCase):
             # Own metadata
             self.assertTrue(paths.STATE_FILE.exists())
 
+    def test_ui_accessibility_is_not_part_of_the_runtime(self):
+        """The unified app never imports ui_accessibility: do not install it."""
+        with tempfile.TemporaryDirectory(prefix="veilleuse-runtime-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+
+            self.assertFalse((paths.LIB_DIR / "ui_accessibility.py").exists())
+            installed = {
+                p.name for p in paths.LIB_DIR.iterdir() if p.is_file() and p.suffix == ".py"
+            }
+            expected = {s.name for s in install.runtime_sources()}
+            self.assertEqual(installed, expected)
+
+    def test_desktop_argument_escapes_percent(self):
+        """A literal %% in Exec must be escaped as %%%% per the desktop spec."""
+        self.assertEqual(
+            install.desktop_argument(Path("/tmp/a%b/c")), "/tmp/a%%b/c"
+        )
+        self.assertEqual(
+            install.desktop_argument(Path('/tmp/a"b%c\\d')),
+            '/tmp/a\\"b%%c\\\\d',
+        )
+        # uninstall must byte-swap identically so it recognizes the desktop file.
+        self.assertEqual(
+            uninstall.desktop_argument(Path("/tmp/a%b/c")), "/tmp/a%%b/c"
+        )
+
+
     def test_install_never_touches_waybar_bindings_or_hyprland(self):
         with tempfile.TemporaryDirectory(prefix="veilleuse-install-") as td:
             paths = make_paths(td)
@@ -162,6 +190,26 @@ class SeedScheduleTests(unittest.TestCase):
             template = paths.HYPRSUNSET.read_bytes()
             install.install_files(paths)
             self.assertEqual(paths.HYPRSUNSET.read_bytes(), template)
+
+    def test_hypr_config_dir_not_created_when_schedule_exists(self):
+        """~/.config/hypr is never (re)created when hyprsunset.conf exists."""
+        with tempfile.TemporaryDirectory(prefix="veilleuse-hypr-") as td:
+            paths = make_paths(td)
+            paths.HYPR.mkdir(parents=True)
+            paths.HYPRSUNSET.write_bytes(b"user schedule\n")
+
+            created: list[Path] = []
+            real_mkdir = install.Path.mkdir
+
+            def spy_mkdir(self, *args, **kwargs):
+                created.append(self)
+                return real_mkdir(self, *args, **kwargs)
+
+            with patch.object(install.Path, "mkdir", spy_mkdir):
+                install.install_files(paths)
+
+            self.assertNotIn(paths.HYPR, created)
+            self.assertEqual(paths.HYPRSUNSET.read_bytes(), b"user schedule\n")
 
     def test_existing_hyprsunset_is_never_overwritten(self):
         with tempfile.TemporaryDirectory(prefix="veilleuse-seed-") as td:
@@ -387,8 +435,11 @@ class TransactionalInstallTests(unittest.TestCase):
             (fake_root / "data").mkdir()
             shutil.copy2(ROOT / "bin" / "veilleuse", fake_root / "bin" / "veilleuse")
             for entry in (ROOT / "src").iterdir():
-                if entry.is_file() and entry.name.endswith(".py") and entry.name != "ui_accessibility.py":
+                if entry.is_file() and entry.name.endswith(".py"):
                     shutil.copy2(entry, fake_root / "src" / entry.name)
+            # Simulate one runtime payload missing from the deploy tree so the
+            # install aborts before writing anything.
+            (fake_root / "src" / "schedule_utils.py").unlink()
             for name in (
                 "io.github.ZnOw01.Veilleuse.desktop.in",
                 "io.github.ZnOw01.Veilleuse.svg",
