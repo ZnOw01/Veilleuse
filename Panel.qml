@@ -30,6 +30,7 @@ Panel {
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool stateReady: state.available === true
     readonly property string statusText: !stateReady ? Model.copy.unavailable : (state.enabled ? Model.copy.enabled : Model.copy.disabled)
+    readonly property real valueColumnWidth: Style.space(54)
 
     function normalizedPath(value) {
         var candidate = String(value || "");
@@ -311,7 +312,10 @@ Panel {
 
                 Text {
                     visible: root.lastError !== "" && !root.scheduleExpanded
-                    width: parent.width
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.spacing.rowPaddingX
+                    anchors.rightMargin: Style.spacing.rowPaddingX
                     text: root.lastError
                     color: Color.urgent
                     font.family: root.fontFamily
@@ -356,12 +360,13 @@ Panel {
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
-                                width: Style.space(42)
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
                             PanelSlider {
-                                width: parent.width - Style.space(42) - Style.spacing.controlGap
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
                                 value: root.state.brightness === null ? 1 : root.state.brightness
                                 minimum: 1
@@ -415,12 +420,13 @@ Panel {
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
-                                width: Style.space(54)
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
                             PanelSlider {
-                                width: parent.width - Style.space(54) - Style.spacing.controlGap
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
                                 value: root.state.temperature === null ? 2500 : root.state.temperature
                                 minimum: 2500
@@ -474,12 +480,13 @@ Panel {
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
-                                width: Style.space(42)
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
                             PanelSlider {
-                                width: parent.width - Style.space(42) - Style.spacing.controlGap
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
                                 value: root.state.gamma === null ? 0 : root.state.gamma
                                 minimum: 0

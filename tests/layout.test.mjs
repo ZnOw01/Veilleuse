@@ -17,3 +17,45 @@ test('schedule controls share full width and the save label is centered', () => 
   assert.match(schedule, /id:\s*scheduleTemperatureEditor[\s\S]*?fieldWidth:\s*parent\.width/);
   assert.match(schedule, /text:\s*Model\.copy\.save[\s\S]*?width:\s*parent\.width[\s\S]*?leftAlign:\s*false/);
 });
+
+test('value column width is a single Style.space(54) token', () => {
+  assert.match(qml, /readonly\s+property\s+real\s+valueColumnWidth:\s*Style\.space\(54\)/);
+});
+
+test('value texts share valueColumnWidth and align right', () => {
+  const brightness = qml.slice(qml.indexOf('id: brightnessRow'), qml.indexOf('id: temperatureRow'));
+  const temperature = qml.slice(qml.indexOf('id: temperatureRow'), qml.indexOf('id: gammaRow'));
+  const gamma = qml.slice(qml.indexOf('id: gammaRow'), qml.indexOf('id: scheduleSurface'));
+
+  for (const section of [brightness, temperature, gamma]) {
+    assert.match(section, /width:\s*root\.valueColumnWidth/);
+    assert.match(section, /horizontalAlignment:\s*Text\.AlignRight/);
+    assert.match(section, /PanelSlider\s*\{[\s\S]*?width:\s*parent\.width\s*-\s*root\.valueColumnWidth\s*-\s*Style\.spacing\.controlGap/);
+  }
+});
+
+test('value column width has a single source of truth', () => {
+  assert.equal((qml.match(/Style\.space\(42\)/g) || []).length, 0);
+  assert.equal((qml.match(/Style\.space\(54\)/g) || []).length, 1);
+  const occurrences = qml.match(/valueColumnWidth/g);
+  assert.equal(occurrences ? occurrences.length : 0, 7);
+});
+
+test('lastError text gets the same horizontal padding as the rows', () => {
+  const start = qml.indexOf('visible: root.lastError !== ""');
+  const end = qml.indexOf('PanelSeparator {', start);
+  const err = qml.slice(start, end + 'PanelSeparator {'.length);
+
+  assert.match(err, /anchors\.leftMargin:\s*Style\.spacing\.rowPaddingX/);
+  assert.match(err, /anchors\.rightMargin:\s*Style\.spacing\.rowPaddingX/);
+  assert.doesNotMatch(err, /width:\s*parent\.width/);
+});
+
+test('schedule summary stays a full-width left-aligned button like the reference', () => {
+  const start = qml.indexOf('id: scheduleColumn');
+  const summary = qml.slice(start, qml.indexOf('Column {', start));
+
+  assert.match(summary, /Button\s*\{\s*visible:\s*!root\.scheduleExpanded/);
+  assert.match(summary, /width:\s*parent\.width/);
+  assert.match(summary, /leftAlign:\s*true/);
+});
