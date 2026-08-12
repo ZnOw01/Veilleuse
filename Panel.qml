@@ -390,7 +390,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: root.queueMutation("brightness", value)
+                                onMoved: function(v) { root.queueMutation("brightness", v) }
                             }
 
                         }
@@ -450,7 +450,7 @@ Panel {
                                 step: 100
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: root.queueMutation("temperature", value)
+                                onMoved: function(v) { root.queueMutation("temperature", v) }
                             }
 
                         }
@@ -510,7 +510,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: root.queueMutation("gamma", value)
+                                onMoved: function(v) { root.queueMutation("gamma", v) }
                             }
 
                         }

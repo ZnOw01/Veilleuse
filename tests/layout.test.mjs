@@ -18,6 +18,11 @@ test('community plugin id is lowercase and consistent across entry points', () =
   assert.ok(workflow.includes(`manifest["id"] == "${manifest.id}"`));
 });
 
+test('slider handlers declare signal parameters explicitly', () => {
+  assert.equal((qml.match(/onMoved:\s*function\(v\)\s*\{/g) || []).length, 3);
+  assert.doesNotMatch(qml, /onMoved:\s*root\./);
+});
+
 test('schedule editor uses native vertically centered fields', () => {
   assert.equal((schedule.match(/\bTextField\s*\{/g) || []).length, 2);
   assert.equal((schedule.match(/\bNumberField\s*\{/g) || []).length, 1);
