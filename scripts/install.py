@@ -64,22 +64,40 @@ def marker(path: Path, kind: str) -> Path:
     return path.with_name(path.name + f".{MARKER}.{kind}")
 
 
-def save_installed_snapshot(path: Path) -> None:
-    """Keep the first post-install bytes so a reinstall never erases user edits."""
+def _file_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o7777
+
+
+def save_installed_snapshot(path: Path, mode: int | None = None) -> None:
+    """Record the post-install bytes and mode as the owned state."""
     snapshot = marker(path, "installed")
     if not snapshot.exists():
-        shutil.copy2(path, snapshot)
+        _atomic_replace_bytes(
+            path.read_bytes(), snapshot, _file_mode(path) if mode is None else mode
+        )
 
 
-def refresh_installed_snapshot(path: Path) -> None:
-    """Bring the installed snapshot up to date with the current managed bytes."""
-    snapshot = marker(path, "installed")
-    _atomic_replace_bytes(path.read_bytes(), snapshot, path.stat().st_mode & 0o7777)
+def refresh_installed_snapshot(path: Path, mode: int | None = None) -> None:
+    """Bring the owned-state snapshot up to date with the current bytes/mode."""
+    _atomic_replace_bytes(
+        path.read_bytes(),
+        marker(path, "installed"),
+        _file_mode(path) if mode is None else mode,
+    )
 
 
 def managed_file_was_changed(path: Path) -> bool:
+    """A managed file counts as user-edited if bytes *or* mode diverged.
+
+    A mode-only change is still an edit: it must survive reinstall and
+    uninstall instead of being treated as still-owned.
+    """
     snapshot = marker(path, "installed")
-    return snapshot.exists() and path.exists() and path.read_bytes() != snapshot.read_bytes()
+    if not (snapshot.exists() and path.exists()):
+        return False
+    if path.read_bytes() != snapshot.read_bytes():
+        return True
+    return _file_mode(path) != (snapshot.stat().st_mode & 0o7777)
 
 
 def backup_once(path: Path) -> None:
@@ -122,37 +140,49 @@ def _atomic_replace_bytes(content_bytes: bytes, destination: Path, mode: int) ->
             Path(temporary).unlink(missing_ok=True)
 
 
-def copy_managed_file(source: Path, destination: Path, mode: int) -> None:
-    """Install one file, honoring backups, snapshots and user edits."""
+def copy_managed_file(source: Path, destination: Path, mode: int) -> bool:
+    """Install one file, honoring backups, snapshots and user edits.
+
+    Returns True when the file was actually written, False when a user edit
+    was preserved instead.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
         raise OSError(f"No se puede gestionar un enlace simbólico: {destination}")
     if managed_file_was_changed(destination):
         print(f"  Aviso: se conserva el archivo modificado por el usuario: {destination}")
-        return
+        return False
     backup_managed_file(destination)
     _atomic_replace_bytes(source.read_bytes(), destination, mode)
-    if marker(destination, "installed").exists():
-        refresh_installed_snapshot(destination)
-    else:
-        save_installed_snapshot(destination)
+    _record_ownership(destination, mode)
+    return True
 
 
-def write_managed_file(content, destination: Path, mode: int) -> None:
-    """Install a generated file, honoring backups, snapshots and user edits."""
+def write_managed_file(content, destination: Path, mode: int) -> bool:
+    """Install a generated file, honoring backups, snapshots and user edits.
+
+    Returns True when the file was actually written, False when a user edit
+    was preserved instead.
+    """
     data = content.encode("utf-8") if isinstance(content, str) else bytes(content)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
         raise OSError(f"No se puede gestionar un enlace simbólico: {destination}")
     if managed_file_was_changed(destination):
         print(f"  Aviso: se conserva el archivo modificado por el usuario: {destination}")
-        return
+        return False
     backup_managed_file(destination)
     _atomic_replace_bytes(data, destination, mode)
-    if marker(destination, "installed").exists():
-        refresh_installed_snapshot(destination)
+    _record_ownership(destination, mode)
+    return True
+
+
+def _record_ownership(path: Path, mode: int) -> None:
+    snapshot = marker(path, "installed")
+    if snapshot.exists():
+        refresh_installed_snapshot(path, mode)
     else:
-        save_installed_snapshot(destination)
+        save_installed_snapshot(path, mode)
 
 
 def desktop_argument(path: Path) -> str:
@@ -180,7 +210,7 @@ def _app_version() -> str:
     return "1.0.0"
 
 
-def write_state(paths: SimpleNamespace) -> None:
+def _state_content(paths: SimpleNamespace) -> bytes:
     state = {
         "app": "veilleuse",
         "app_id": "io.github.ZnOw01.Veilleuse",
@@ -192,12 +222,18 @@ def write_state(paths: SimpleNamespace) -> None:
             str(paths.DESKTOP),
         ],
     }
+    return (json.dumps(state, indent=2) + "\n").encode("utf-8")
+
+
+def write_state(paths: SimpleNamespace) -> None:
+    """Write install-state.json through the managed mechanism.
+
+    A pre-existing install-state.json is backed up byte-for-byte and
+    mode-for-mode like any other artifact, and restored on uninstall. It is
+    never written outside ``write_managed_file``.
+    """
     paths.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _atomic_replace_bytes(
-        (json.dumps(state, indent=2) + "\n").encode("utf-8"),
-        paths.STATE_FILE,
-        0o600,
-    )
+    write_managed_file(_state_content(paths), paths.STATE_FILE, 0o600)
 
 
 def seed_hyprsunset(paths: SimpleNamespace) -> None:
@@ -214,9 +250,50 @@ def seed_hyprsunset(paths: SimpleNamespace) -> None:
     )
 
 
+def _required_payloads(root: Path) -> list[Path]:
+    base = root / "src"
+    payloads = [
+        root / "bin" / "veilleuse",
+        root / "data" / "io.github.ZnOw01.Veilleuse.svg",
+        root / "data" / "io.github.ZnOw01.Veilleuse.desktop.in",
+        root / "data" / "hyprsunset.conf",
+    ]
+    payloads.extend(runtime_sources(base))
+    return payloads
+
+
+def _check_payloads_available(root: Path) -> None:
+    missing = [p for p in _required_payloads(root) if not p.exists() or p.is_symlink()]
+    if missing:
+        raise OSError(
+            "Falta un payload requerido: " + ", ".join(str(p) for p in missing)
+        )
+
+
+def _rollback_install(written: list[Path]) -> None:
+    """Undo a failed install: restore pre-install origins or remove new files."""
+    for destination in reversed(written):
+        backup = marker(destination, "bak")
+        if backup.exists():
+            try:
+                backup.replace(destination)
+            except OSError:
+                pass
+        else:
+            destination.unlink(missing_ok=True)
+        marker(destination, "installed").unlink(missing_ok=True)
+
+
 def install_files(paths: SimpleNamespace | None = None) -> None:
+    """Install every owned artifact transactionally.
+
+    Missing payloads fail up front, and a write failure rolls the already
+    written destinations back to their pre-install byte-for-byte origins.
+    """
     paths = paths or _default_paths()
     base = ROOT / "src"
+    _check_payloads_available(ROOT)
+
     for directory in (
         paths.BIN,
         paths.LIB_DIR,
@@ -227,14 +304,33 @@ def install_files(paths: SimpleNamespace | None = None) -> None:
     ):
         directory.mkdir(parents=True, exist_ok=True)
 
-    copy_managed_file(ROOT / "bin" / "veilleuse", paths.BIN / "veilleuse", 0o755)
+    jobs: list[tuple[str, object, Path, int]] = [
+        ("copy", ROOT / "bin" / "veilleuse", paths.BIN / "veilleuse", 0o755),
+        (
+            "copy",
+            ROOT / "data" / "io.github.ZnOw01.Veilleuse.svg",
+            paths.ICON,
+            0o644,
+        ),
+        ("write", build_desktop(paths.BIN / "veilleuse"), paths.DESKTOP, 0o644),
+        ("write", _state_content(paths), paths.STATE_FILE, 0o600),
+    ]
     for source in runtime_sources():
-        relative = source.relative_to(base)
-        copy_managed_file(source, paths.LIB_DIR / relative, 0o644)
-    copy_managed_file(ROOT / "data" / "io.github.ZnOw01.Veilleuse.svg", paths.ICON, 0o644)
-    write_managed_file(build_desktop(paths.BIN / "veilleuse"), paths.DESKTOP, 0o644)
-    write_state(paths)
-    seed_hyprsunset(paths)
+        jobs.append(("copy", source, paths.LIB_DIR / source.relative_to(base), 0o644))
+
+    written: list[Path] = []
+    try:
+        for kind, payload, destination, mode in jobs:
+            if kind == "copy":
+                wrote = copy_managed_file(payload, destination, mode)  # type: ignore[arg-type]
+            else:
+                wrote = write_managed_file(payload, destination, mode)
+            if wrote:
+                written.append(destination)
+        seed_hyprsunset(paths)
+    except OSError:
+        _rollback_install(written)
+        raise
 
 
 def run_optional(*args: str) -> bool:

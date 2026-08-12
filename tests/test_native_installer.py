@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -288,6 +289,155 @@ class SnapshotSafetyTests(unittest.TestCase):
             snapshot = path.with_name(path.name + ".veilleuse.installed")
             self.assertEqual(snapshot.read_text(), "first installed state\n")
 
+class StateFileOwnershipTests(unittest.TestCase):
+    def test_preexisting_state_file_is_backed_up_and_restored(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-state-") as td:
+            paths = make_paths(td)
+            original = b'{"legacy": true}\n'
+            paths.CONFIG_DIR.mkdir(parents=True)
+            paths.STATE_FILE.write_bytes(original)
+            paths.STATE_FILE.chmod(0o640)
 
+            install.install_files(paths)
+
+            # Now managed: replaced by our state JSON with the install mode.
+            self.assertNotEqual(paths.STATE_FILE.read_bytes(), original)
+            self.assertEqual(paths.STATE_FILE.stat().st_mode & 0o7777, 0o600)
+            # Written through the managed mechanism (pre-install backup preserved).
+            self.assertTrue(install.marker(paths.STATE_FILE, "bak").exists())
+
+            uninstall.uninstall_all(paths)
+
+            # Original restored byte-for-byte and mode-for-mode.
+            self.assertEqual(paths.STATE_FILE.read_bytes(), original)
+            self.assertEqual(paths.STATE_FILE.stat().st_mode & 0o7777, 0o640)
+
+
+class ModeOwnershipTests(unittest.TestCase):
+    def test_mode_only_change_survives_reinstall(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-mode-") as td:
+            source = Path(td) / "source"
+            destination = Path(td) / "destination"
+            source.write_bytes(b"payload\n")
+            install.copy_managed_file(source, destination, 0o644)
+            destination.chmod(0o600)
+            install.copy_managed_file(source, destination, 0o644)
+            self.assertEqual(destination.stat().st_mode & 0o7777, 0o600)
+
+    def test_mode_only_change_survives_uninstall(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-mode-") as td:
+            source = Path(td) / "source"
+            destination = Path(td) / "destination"
+            source.write_bytes(b"payload\n")
+            install.copy_managed_file(source, destination, 0o644)
+            destination.chmod(0o600)
+            uninstall.remove_or_restore(destination)
+            self.assertEqual(destination.read_bytes(), b"payload\n")
+            self.assertEqual(destination.stat().st_mode & 0o7777, 0o600)
+
+
+class BackupOrphanTests(unittest.TestCase):
+    def test_uninstall_preserves_edit_and_removes_orphan_backup(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-orphan-") as td:
+            source = Path(td) / "source"
+            destination = Path(td) / "destination"
+            source.write_bytes(b"payload\n")
+            destination.write_bytes(b"original\n")
+            install.copy_managed_file(source, destination, 0o644)
+            backup = install.marker(destination, "bak")
+            self.assertTrue(backup.exists())
+            destination.write_bytes(b"user edit\n")
+            uninstall.remove_or_restore(destination)
+            self.assertEqual(destination.read_bytes(), b"user edit\n")
+            self.assertFalse(backup.exists())
+
+class DurableOwnershipTests(unittest.TestCase):
+    def test_reinstall_after_uninstall_does_not_overwrite_edit(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-durable-") as td:
+            source = Path(td) / "source"
+            destination = Path(td) / "destination"
+            source.write_bytes(b"version one\n")
+            destination.write_bytes(b"original\n")
+            install.copy_managed_file(source, destination, 0o644)
+            destination.write_bytes(b"user edit\n")
+            uninstall.remove_or_restore(destination)
+            self.assertEqual(destination.read_bytes(), b"user edit\n")
+            install.copy_managed_file(source, destination, 0o644)
+            self.assertEqual(destination.read_bytes(), b"user edit\n")
+
+    def test_install_edit_uninstall_reinstall_never_overwrites_edit(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-durable-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            binary = paths.BIN / "veilleuse"
+            binary.write_bytes(b"my custom binary edit\n")
+            uninstall.uninstall_all(paths)
+            self.assertEqual(binary.read_bytes(), b"my custom binary edit\n")
+            install.install_files(paths)
+            self.assertEqual(binary.read_bytes(), b"my custom binary edit\n")
+
+
+class TransactionalInstallTests(unittest.TestCase):
+    def test_install_rolls_back_when_payload_missing(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-tx-") as td:
+            paths = make_paths(td)
+            fake_root = Path(td) / "broken-root"
+            (fake_root / "bin").mkdir(parents=True)
+            (fake_root / "src").mkdir()
+            (fake_root / "data").mkdir()
+            shutil.copy2(ROOT / "bin" / "veilleuse", fake_root / "bin" / "veilleuse")
+            for entry in (ROOT / "src").iterdir():
+                if entry.is_file() and entry.name.endswith(".py") and entry.name != "ui_accessibility.py":
+                    shutil.copy2(entry, fake_root / "src" / entry.name)
+            for name in (
+                "io.github.ZnOw01.Veilleuse.desktop.in",
+                "io.github.ZnOw01.Veilleuse.svg",
+                "hyprsunset.conf",
+            ):
+                shutil.copy2(ROOT / "data" / name, fake_root / "data" / name)
+
+            with patch.object(install, "ROOT", fake_root):
+                with self.assertRaises(OSError):
+                    install.install_files(paths)
+
+            # No partial artifacts left behind.
+            self.assertFalse((paths.BIN / "veilleuse").exists())
+            self.assertFalse((paths.LIB_DIR / "veilleuse.py").exists())
+
+    def test_install_rolls_back_restores_original_on_write_failure(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-tx-") as td:
+            paths = make_paths(td)
+            original = b"pre-existing binary\n"
+            paths.BIN.mkdir(parents=True)
+            (paths.BIN / "veilleuse").write_bytes(original)
+            real = install.copy_managed_file
+
+            def flaky(src, dst, mode):
+                if dst.suffix == ".py":
+                    raise OSError("simulated write failure")
+                return real(src, dst, mode)
+
+            with patch.object(install, "copy_managed_file", flaky):
+                with self.assertRaises(OSError):
+                    install.install_files(paths)
+
+            # The pre-existing destination was rolled back, nothing partial remains.
+            self.assertEqual((paths.BIN / "veilleuse").read_bytes(), original)
+            self.assertEqual(list(paths.LIB_DIR.rglob("*.py")), [])
+
+
+class UninstallResidueTests(unittest.TestCase):
+    def test_uninstall_removes_only_app_temp_residue_not_user_files(self):
+        with tempfile.TemporaryDirectory(prefix="veilleuse-residue-") as td:
+            paths = make_paths(td)
+            install.install_files(paths)
+            user_cfg = paths.CONFIG_DIR / "user-settings.conf"
+            user_cfg.write_text("user data\n")
+            residue = paths.CONFIG_DIR / "install-state.json.tmp"
+            residue.write_text("junk\n")
+            uninstall.uninstall_all(paths)
+            self.assertTrue(user_cfg.exists())
+            self.assertFalse(residue.exists())
+            self.assertTrue(paths.CONFIG_DIR.exists())
 if __name__ == "__main__":
     unittest.main(verbosity=2)

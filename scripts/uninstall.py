@@ -97,6 +97,17 @@ def _expected_payload(path: Path, paths: SimpleNamespace) -> bytes | None:
     return None
 
 
+def _is_owned(path: Path, snapshot: Path) -> bool:
+    """A destination is still ours when bytes *and* mode match the snapshot."""
+    try:
+        return (
+            path.read_bytes() == snapshot.read_bytes()
+            and (path.stat().st_mode & 0o7777) == (snapshot.stat().st_mode & 0o7777)
+        )
+    except OSError:
+        return False
+
+
 def remove_or_restore(
     path: Path, paths: SimpleNamespace | None = None, expected: bytes | None = None
 ) -> None:
@@ -104,8 +115,10 @@ def remove_or_restore(
 
     Ownership is established by the *.veilleuse.installed snapshot (first
     installed bytes). If the snapshot is missing but the file still matches our
-    known payload, it is also treated as ours. A user-modified file is never
-    deleted: it becomes the new user-owned baseline and the snapshot is dropped.
+    known payload, it is also treated as ours. A user-modified file (bytes *or*
+    mode differ) is never deleted: it becomes the new user-owned baseline. Its
+    ambiguous pre-install backup is dropped (so no orphan *.bak is left), while
+    the snapshot is kept so a later reinstall never overwrites that ownership.
     """
     if DRY_RUN:
         print(f"  --dry-run: se desinstalaría {path}")
@@ -116,13 +129,19 @@ def remove_or_restore(
     snapshot = marker(path, "installed")
     backup = marker(path, "bak")
     if snapshot.exists():
-        owned = path.exists() and path.read_bytes() == snapshot.read_bytes()
-        if owned:
+        if path.exists() and _is_owned(path, snapshot):
             path.unlink(missing_ok=True)
             if backup.exists():
                 # Restore the pre-existing original byte-for-byte and mode-for-mode.
                 backup.replace(path)
-        snapshot.unlink(missing_ok=True)
+            snapshot.unlink(missing_ok=True)
+        elif path.exists():
+            # User modified the managed file: keep their bytes and mode, drop the
+            # now-ambiguous backup, and retain the snapshot for durable ownership.
+            backup.unlink(missing_ok=True)
+        else:
+            # File already gone: just forget ownership.
+            snapshot.unlink(missing_ok=True)
         return
     if expected is None and paths is not None:
         expected = _expected_payload(path, paths)
@@ -137,7 +156,9 @@ def clean_metadata(paths: SimpleNamespace) -> None:
     if DRY_RUN:
         print(f"  --dry-run: se limpiaría la metadata en {paths.CONFIG_DIR}")
         return
-    paths.STATE_FILE.unlink(missing_ok=True)
+    # install-state.json is handled like any artifact by uninstall_all; here we
+    # only remove our own transient residue (.tmp writes and sidecar markers),
+    # never a user file living inside the app config dir.
     if paths.CONFIG_DIR.exists():
         for leftover in list(paths.CONFIG_DIR.rglob("*")):
             if leftover.is_file() and (
@@ -170,6 +191,7 @@ def uninstall_all(paths: SimpleNamespace | None = None) -> None:
         *runtime_destinations(paths),
         paths.ICON,
         paths.DESKTOP,
+        paths.STATE_FILE,
     ]
     for artifact in artifacts:
         remove_or_restore(artifact, paths)
