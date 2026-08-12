@@ -58,15 +58,22 @@ function validTime(value) {
 }
 
 function validNumber(value, minimum, maximum) {
+  if (value === null || value === undefined || typeof value === 'boolean' || (typeof value === 'string' && value.trim() === '')) return null;
   var number = Number(value);
   return isFinite(number) && number >= minimum && number <= maximum ? Math.round(number) : null;
 }
 
 function normalizeSchedule(schedule) {
   var source = schedule || {};
+  var start = validTime(source.start);
+  var end = validTime(source.end);
+  if (start !== null && start === end) {
+    start = null;
+    end = null;
+  }
   return {
-    start: validTime(source.start),
-    end: validTime(source.end),
+    start: start,
+    end: end,
     temperature: validNumber(source.temperature, 2500, 5000)
   };
 }
@@ -99,12 +106,27 @@ function normalizeState(raw) {
 
 function commitResponse(previousState, response) {
   var current = normalizeState(previousState);
-  if (!response || response.requestId !== response.latestRequestId || response.ok !== true) {
+  var requestId = response && response.requestId;
+  var latestRequestId = response && response.latestRequestId;
+  var validRequestId = typeof requestId === 'number' && isFinite(requestId) && Math.floor(requestId) === requestId && requestId >= 0;
+  var validLatestRequestId = typeof latestRequestId === 'number' && isFinite(latestRequestId) && Math.floor(latestRequestId) === latestRequestId && latestRequestId >= 0;
+  var patch = response && response.state;
+  var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch);
+  var stateKeys = ['available', 'enabled', 'brightness', 'temperature', 'gamma', 'schedule', 'error'];
+  var hasStateField = false;
+  if (validPatch) {
+    for (var stateKeyIndex = 0; stateKeyIndex < stateKeys.length; stateKeyIndex++) {
+      if (Object.prototype.hasOwnProperty.call(patch, stateKeys[stateKeyIndex])) {
+        hasStateField = true;
+        break;
+      }
+    }
+  }
+  if (!response || !validRequestId || !validLatestRequestId || requestId !== latestRequestId || response.ok !== true || !validPatch || !hasStateField) {
     return { accepted: false, state: current };
   }
   var next = {};
   for (var key in current) next[key] = current[key];
-  var patch = response.state || {};
   for (var patchKey in patch) next[patchKey] = patch[patchKey];
   return { accepted: true, state: normalizeState(next) };
 }

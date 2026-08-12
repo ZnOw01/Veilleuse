@@ -65,6 +65,8 @@ class SimulatedCommands:
         self.failures_before_readback = 0
         self.monitor_state_text = None
         self.hyprsunset_available = True
+        self.fail_identity_read = False
+        self.brightness_output = None
 
     def __call__(self, args, *, timeout=None):
         tokens = list(args)
@@ -81,7 +83,10 @@ class SimulatedCommands:
             if len(tokens) == 4 and tokens[2] == "--monitor":
                 if self.fail_brightness_read:
                     return cp(tokens, 1, "", "driver busy")
-                return cp(tokens, 0, f"{self.brightness_percent}\n", "")
+                output = self.brightness_output
+                if output is None:
+                    output = f"{self.brightness_percent}\n"
+                return cp(tokens, 0, output, "")
             # --no-osd --monitor NAME +1%|1%- → one-point write
             if len(tokens) == 5 and tokens[2] == "--monitor":
                 if self.apply_brightness:
@@ -107,6 +112,8 @@ class SimulatedCommands:
                     self.identity = False
                 return cp(tokens, 0, "", "")
             if command == "identity" and len(tokens) == 4 and tokens[3] == "get":
+                if self.fail_identity_read:
+                    return cp(tokens, 1, "", "identity unavailable")
                 return cp(tokens, 0, "true" if self.identity else "false\n", "")
             if command == "identity" and len(tokens) == 3:
                 self.identity = True
@@ -211,6 +218,17 @@ class StatusTests(HelperModuleTests):
         self.assertFalse(status["brightness"]["available"])
         self.assertIsNone(status["brightness"]["percent"])
 
+    def test_status_ignores_malformed_monitor_entries(self):
+        self.sim.monitor_state_text = monitor_state_text(
+            monitors=[
+                {"name": None, "enabled": True, "focused": True},
+                {"name": "DP-1", "enabled": "yes", "focused": False},
+                {"name": "eDP-1", "enabled": True, "focused": True},
+            ]
+        )
+        status = json.loads(self.run_cli("status")[1])
+        self.assertEqual(status["monitors"], [{"name": "eDP-1", "enabled": True, "focused": True}])
+
     def test_status_includes_schedule_period(self):
         code, output = self.run_cli("status")
         status = json.loads(output)
@@ -255,6 +273,12 @@ class BrightnessTests(HelperModuleTests):
         code, output = self.run_cli("brightness", "abc")
         self.assertNotEqual(code, 0)
         self.assertIn("error", output.lower())
+
+    def test_brightness_read_rejects_out_of_range_native_output(self):
+        self.sim.brightness_output = "101\n"
+        percent, error = vc.read_brightness("eDP-1")
+        self.assertIsNone(percent)
+        self.assertEqual(error, "Salida de brillo no reconocida")
 
 
 class NightlightTests(HelperModuleTests):
@@ -303,6 +327,19 @@ class NightlightTests(HelperModuleTests):
         code, output = self.run_cli("nightlight", "natural")
         self.assertNotEqual(code, 0)
         self.assertIn("error", output.lower())
+
+    def test_nightlight_fails_closed_when_identity_read_is_missing(self):
+        self.sim.fail_identity_read = True
+        state = vc.read_nightlight()
+        self.assertFalse(state["available"])
+        self.assertIsNone(state["identity"])
+        self.assertIsNone(state["temperature"])
+
+    def test_nightlight_rejects_out_of_range_temperature_readback(self):
+        self.sim.temperature = 1000
+        state = vc.read_nightlight()
+        self.assertFalse(state["available"])
+        self.assertIsNone(state["temperature"])
 
 
 class ScheduleTests(HelperModuleTests):
@@ -394,6 +431,33 @@ class ScheduleTests(HelperModuleTests):
         self.assertIn("some_other_setting = 1", text)
         self.assertIn("identity = true", text)
 
+    def test_schedule_set_rejects_invalid_unrelated_profile_without_writing(self):
+        original = (
+            "profile {\n"
+            "    time = 06:00\n"
+            "    identity = true\n"
+            "}\n\n"
+            "profile {\n"
+            "    time = 15:30\n"
+            "    temperature = 3500\n"
+            "}\n\n"
+            "profile {\n"
+            "    time = 12:00\n"
+            "    temperature = 7000\n"
+            "}\n"
+        )
+        path = self.write_config(original)
+        code, output = self.run_cli(
+            "schedule", "set",
+            "--night-time", "21:00",
+            "--day-time", "07:00",
+            "--night-temp", "4000",
+            "--day-temp", "6000",
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("fuera de rango", output)
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
     def test_schedule_set_rejects_invalid_time(self):
         self.write_config(
             "profile {\n    time = 06:00\n    identity = true\n}\n"
@@ -408,6 +472,58 @@ class ScheduleTests(HelperModuleTests):
         )
         self.assertNotEqual(code, 0)
         self.assertIn("error", output.lower())
+
+    def test_schedule_get_fails_closed_on_unreadable_config(self):
+        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+            state = vc.schedule_get()
+        self.assertFalse(state["available"])
+        self.assertIn("denied", state["error"])
+
+    def test_schedule_get_rejects_out_of_range_profile_temperature(self):
+        self.write_config(
+            "profile {\n    time = 06:00\n    temperature = 7000\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        state = vc.schedule_get()
+        self.assertFalse(state["available"])
+        self.assertIn("fuera de rango", state["error"])
+
+    def test_schedule_set_snapshots_file_mode_after_acquiring_lock(self):
+        self.write_config(
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        module = vc._schedule_module()
+        config = vc.config_path()
+        events = []
+
+        class FakeLock:
+            def __enter__(self):
+                events.append("lock")
+
+            def __exit__(self, *_args):
+                return False
+
+        original_stat = Path.stat
+
+        def tracked_stat(path, *args, **kwargs):
+            if path == config:
+                events.append("config-stat")
+            return original_stat(path, *args, **kwargs)
+
+        with patch.object(module, "exclusive_lock", return_value=FakeLock()):
+            with patch.object(Path, "stat", new=tracked_stat):
+                state = vc.schedule_set(
+                    {
+                        "day_time": "07:00",
+                        "day_temp": 6000,
+                        "night_time": "21:00",
+                        "night_temp": 3500,
+                        "natural_day": True,
+                    }
+                )
+        self.assertIsNone(state["error"])
+        self.assertLess(events.index("lock"), events.index("config-stat"))
 
 
 if __name__ == "__main__":

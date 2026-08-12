@@ -20,7 +20,7 @@ var RANGES = {
 
 function clamp(value, min, max) {
   var number = Number(value)
-  if (value === null || value === undefined || isNaN(number)) return null
+  if (value === null || value === undefined || typeof value === "boolean" || (typeof value === "string" && value.trim() === "") || !isFinite(number)) return null
   return Math.max(min, Math.min(max, number))
 }
 
@@ -37,22 +37,36 @@ function clampGamma(value) {
 }
 
 function toInt(value) {
-  if (value === null || value === undefined || value === "") return null
+  if (value === null || value === undefined || typeof value === "boolean" || (typeof value === "string" && value.trim() === "")) return null
   var number = Number(value)
-  return isNaN(number) ? null : number
+  return isFinite(number) && Math.floor(number) === number ? number : null
+}
+
+function normalizeClock(value) {
+  if (typeof value !== "string") return null
+  var match = /^\s*([0-9]{1,2}):([0-9]{2})\s*$/.exec(value)
+  if (!match) return null
+  var hour = Number(match[1])
+  var minute = Number(match[2])
+  if (hour > 23 || minute > 59) return null
+  return twoDigits(hour) + ":" + twoDigits(minute)
 }
 
 function parseSchedule(raw) {
   var schedule = raw && typeof raw === "object" ? raw : {}
+  var dayTime = normalizeClock(schedule.day_time)
+  var nightTime = normalizeClock(schedule.night_time)
+  var dayTemp = clampTemperature(toInt(schedule.day_temp))
+  var nightTemp = clampTemperature(toInt(schedule.night_temp))
+  if (dayTime !== null && dayTime === nightTime) {
+    dayTime = null
+    nightTime = null
+  }
   return {
-    day_time: schedule.day_time ? String(schedule.day_time) : null,
-    day_temp: clampTemperature(toInt(schedule.day_temp)) === null
-      ? null
-      : clampTemperature(toInt(schedule.day_temp)),
-    night_time: schedule.night_time ? String(schedule.night_time) : null,
-    night_temp: clampTemperature(toInt(schedule.night_temp)) === null
-      ? null
-      : clampTemperature(toInt(schedule.night_temp)),
+    day_time: dayTime,
+    day_temp: dayTemp,
+    night_time: nightTime,
+    night_temp: nightTemp,
     day_identity: schedule.day_identity === true
   }
 }
@@ -61,26 +75,35 @@ function parseSchedule(raw) {
 // an active natural-color mode.
 function parseNightlight(raw) {
   var nightlight = raw && typeof raw === "object" ? raw : {}
-  var available = nightlight.available === true
-  var identity = nightlight.identity === true
-  var temperature = available ? clampTemperature(toInt(nightlight.temperature)) : null
-  var enabled = available && !identity && temperature !== null
-    ? temperature < IDENTITY_TEMPERATURE
-    : false
+  var advertised = nightlight.available === true
+  var identity = nightlight.identity === true || nightlight.identity === false
+    ? nightlight.identity
+    : null
+  var temperature = advertised ? clampTemperature(toInt(nightlight.temperature)) : null
+  var gamma = advertised ? clampGamma(toInt(nightlight.gamma)) : null
+  var available = advertised && identity !== null && temperature !== null && gamma !== null
+  if (!available) {
+    identity = null
+    temperature = null
+    gamma = null
+  }
+  var enabled = available && !identity && temperature < IDENTITY_TEMPERATURE
   return {
     available: available,
     enabled: enabled,
     temperature: temperature,
     identity: identity,
-    gamma: available ? clampGamma(toInt(nightlight.gamma)) : null,
+    gamma: gamma,
     error: nightlight.error ? String(nightlight.error) : null
   }
 }
 
 function parseBrightness(raw) {
   var brightness = raw && typeof raw === "object" ? raw : {}
-  var available = brightness.available === true
-  var percent = available ? clampBrightness(toInt(brightness.percent)) : null
+  var advertised = brightness.available === true
+  var percent = advertised ? clampBrightness(toInt(brightness.percent)) : null
+  var available = advertised && percent !== null
+  if (!available) percent = null
   return {
     available: available,
     percent: percent,
@@ -112,6 +135,7 @@ function period(schedule, now) {
   var night = schedule && minutesOfDay(schedule.night_time)
   var day = schedule && minutesOfDay(schedule.day_time)
   if (night === null || day === null || isNaN(night) || isNaN(day)) return "night"
+  if (night === day) return "night"
   var current = minutesOfDay(nowTime(now))
   if (isNaN(current)) current = minutesOfDay(nowFallback())
   if (isNaN(current)) return "night"

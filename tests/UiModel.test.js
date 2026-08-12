@@ -46,6 +46,16 @@ test('normalizes unavailable helper data to a fail-closed state', () => {
   });
 });
 
+test('rejects boolean numeric fields from malformed JSON', () => {
+  const state = Model.normalizeState({
+    brightness: { available: true, percent: true },
+    nightlight: { available: true, temperature: 3500, gamma: true }
+  });
+  assert.equal(state.available, false);
+  assert.equal(state.brightness, null);
+  assert.equal(state.gamma, null);
+});
+
 test('accepts only the latest successful helper response', () => {
   const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
   const stale = Model.commitResponse(state, { requestId: 3, latestRequestId: 4, ok: true, state: { enabled: true } });
@@ -55,6 +65,27 @@ test('accepts only the latest successful helper response', () => {
   const current = Model.commitResponse(state, { requestId: 4, latestRequestId: 4, ok: true, state: { enabled: true } });
   assert.equal(current.accepted, true);
   assert.equal(current.state.enabled, true);
+});
+
+test('rejects helper responses without a request identity', () => {
+  const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
+  const result = Model.commitResponse(state, { ok: true, state: { enabled: true } });
+  assert.equal(result.accepted, false);
+  assert.equal(result.state.enabled, false);
+});
+
+test('rejects successful helper responses whose state is not an object', () => {
+  const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
+  const result = Model.commitResponse(state, { requestId: 4, latestRequestId: 4, ok: true, state: 'corrupt' });
+  assert.equal(result.accepted, false);
+  assert.equal(result.state.enabled, false);
+});
+
+test('rejects successful helper responses with no state fields', () => {
+  const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
+  const result = Model.commitResponse(state, { requestId: 4, latestRequestId: 4, ok: true, state: { ok: true } });
+  assert.equal(result.accepted, false);
+  assert.equal(result.state.enabled, false);
 });
 
 test('keeps native copy explicit and action-oriented', () => {
@@ -80,4 +111,15 @@ test('normalizes the combined JSON emitted by veilleuse-control', () => {
   assert.equal(state.temperature, 3500);
   assert.equal(state.gamma, 90);
   assert.deepEqual(state.schedule, { start: '07:00', end: '21:00', temperature: 3200 });
+});
+
+test('fails closed when schedule boundaries are equal', () => {
+  const state = Model.normalizeState({
+    available: true,
+    brightness: 50,
+    temperature: 3500,
+    gamma: 90,
+    schedule: { start: '06:00', end: '06:00', temperature: 3200 }
+  });
+  assert.deepEqual(state.schedule, { start: null, end: null, temperature: 3200 });
 });

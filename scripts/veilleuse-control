@@ -134,7 +134,8 @@ def _percent_or_none(output) -> int | None:
     match = _PERCENT_PATTERN.fullmatch(_text(output))
     if match is None:
         return None
-    return max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, int(match.group(1))))
+    percent = int(match.group(1))
+    return percent if BRIGHTNESS_MIN <= percent <= BRIGHTNESS_MAX else None
 
 
 # --------------------------------------------------------------------------- \
@@ -181,11 +182,23 @@ def _parse_monitors_json(text):
     for entry in data:
         if not isinstance(entry, dict):
             continue
+        name = entry.get("name")
+        enabled_value = entry.get("enabled", True)
+        disabled_value = entry.get("disabled", False)
+        focused_value = entry.get("focused", False)
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(enabled_value, bool)
+            or not isinstance(disabled_value, bool)
+            or not isinstance(focused_value, bool)
+        ):
+            continue
         result.append(
             {
-                "name": entry.get("name"),
-                "enabled": entry.get("enabled") is not False and entry.get("disabled") is not True,
-                "focused": entry.get("focused") is True,
+                "name": name,
+                "enabled": enabled_value and not disabled_value,
+                "focused": focused_value,
             }
         )
     return result
@@ -270,9 +283,15 @@ def read_nightlight():
     identity = None
     if identity_result.returncode == 0 and identity_value in {"true", "false"}:
         identity = identity_value == "true"
-    temperature = (
+    temperature_value = (
         _int_or_none(temperature_result.stdout)
         if temperature_result.returncode == 0
+        else None
+    )
+    temperature = (
+        temperature_value
+        if temperature_value is not None
+        and TEMPERATURE_MIN <= temperature_value <= TEMPERATURE_MAX
         else None
     )
     gamma_value = _int_or_none(gamma_result.stdout) if gamma_result.returncode == 0 else None
@@ -280,11 +299,14 @@ def read_nightlight():
     if gamma_value is not None and GAMMA_MIN <= gamma_value <= GAMMA_MAX:
         gamma = gamma_value
 
-    available = identity is not None or temperature is not None or gamma is not None
-    if identity is True:
+    available = identity is not None and temperature is not None and gamma is not None
+    if not available:
+        identity = None
+        temperature = None
+        gamma = None
         enabled = False
-    elif temperature is None:
-        enabled = None
+    elif identity is True:
+        enabled = False
     else:
         enabled = temperature < IDENTITY_TEMPERATURE
     return {
@@ -586,15 +608,17 @@ def schedule_get():
     path = config_path()
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
         text = ""
+    except OSError as caught:
+        return _schedule_result(None, False, str(caught))
     try:
         if not text.strip():
             schedule = schedule_module.default_schedule()
             day_identity = False
             period_value = schedule_module.schedule_period(schedule)
         else:
-            schedule = schedule_module.parse_schedule_text(text)
+            schedule = schedule_module.parse_schedule_text(text, strict=True)
             day_identity = schedule_module.day_profile_is_identity(text)
             period_value = schedule_module.schedule_period(schedule)
     except ValueError as caught:
@@ -626,8 +650,8 @@ def schedule_set(values):
             }
         )
         path.parent.mkdir(parents=True, exist_ok=True)
-        original_mode = path.stat().st_mode & 0o7777 if path.exists() else None
         with schedule_module.exclusive_lock(path.parent / ".veilleuse-schedule.lock"):
+            original_mode = path.stat().st_mode & 0o7777 if path.exists() else None
             if path.exists():
                 existing = path.read_text(encoding="utf-8")
             else:
@@ -635,7 +659,7 @@ def schedule_set(values):
             if existing:
                 updated = _update_schedule_text(existing, schedule, values.get("natural_day", True))
                 try:
-                    schedule_module.parse_schedule_text(updated)
+                    schedule_module.parse_schedule_text(updated, strict=True)
                 except ValueError as caught:
                     return _schedule_result(None, values.get("natural_day", True), str(caught))
             else:

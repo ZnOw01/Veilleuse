@@ -42,6 +42,13 @@ describe('Model.js ranges and clamping', () => {
     assert.equal(clamp(150, 1, 100), 100)
   })
 
+  it('rejects non-finite numeric input instead of clamping it', () => {
+    assert.equal(clamp(Infinity, 1, 100), null)
+    assert.equal(clamp('Infinity', 1, 100), null)
+    assert.equal(clamp(true, 1, 100), null)
+    assert.equal(clamp(' ', 0, 100), null)
+  })
+
   it('clamps brightness to 1..100', () => {
     assert.equal(clampBrightness(42), 42)
     assert.equal(clampBrightness(0), 1)
@@ -118,6 +125,54 @@ describe('Model.js parseStatus', () => {
     assert.equal(model.nightlight.identity, true)
   })
 
+  it('fails closed when an available component omits required values', () => {
+    const model = parseStatus({
+      brightness: { available: true, monitor: 'eDP-1' },
+      nightlight: { available: true, temperature: 3500, gamma: 100 },
+      schedule: {}
+    })
+    assert.equal(model.brightness.available, false)
+    assert.equal(model.nightlight.available, false)
+    assert.equal(model.nightlight.enabled, false)
+  })
+
+  it('fails closed when JSON numeric fields are booleans', () => {
+    const model = parseStatus({
+      brightness: { available: true, percent: true },
+      nightlight: { available: true, identity: false, temperature: true, gamma: 100 },
+      schedule: { day_time: '06:00', night_time: '18:00', night_temp: true }
+    })
+    assert.equal(model.brightness.available, false)
+    assert.equal(model.nightlight.available, false)
+    assert.equal(model.schedule.night_temp, null)
+  })
+
+  it('does not treat blank numeric strings as zero', () => {
+    const model = parseStatus({
+      brightness: { available: true, percent: '42' },
+      nightlight: { available: true, identity: false, temperature: 3500, gamma: ' ' }
+    })
+    assert.equal(model.nightlight.available, false)
+  })
+
+  it('rejects malformed schedule times at the model boundary', () => {
+    const model = parseStatus({
+      schedule: { day_time: '25:99', night_time: '18:00', night_temp: 3500 },
+      nightlight: { available: false }
+    })
+    assert.equal(model.schedule.day_time, null)
+    assert.equal(model.schedule.night_time, '18:00')
+  })
+
+  it('rejects equal schedule boundaries in parsed status', () => {
+    const model = parseStatus({
+      schedule: { day_time: '06:00', night_time: '06:00', night_temp: 3500 },
+      nightlight: { available: false }
+    })
+    assert.equal(model.schedule.day_time, null)
+    assert.equal(model.schedule.night_time, null)
+  })
+
   it('computes the schedule period when the payload omits it', () => {
     const model = parseStatus({
       schedule: { day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500 },
@@ -179,6 +234,10 @@ describe('Model.js period', () => {
   it('treats an unparseable schedule defensively', () => {
     assert.equal(period(null, new Date(2026, 0, 1, 12, 0, 0)), 'night')
     assert.equal(period({}, new Date(2026, 0, 1, 12, 0, 0)), 'night')
+  })
+
+  it('treats equal schedule boundaries as invalid and fails closed', () => {
+    assert.equal(period({ day_time: '06:00', night_time: '06:00' }, new Date(2026, 0, 1, 12, 0, 0)), 'night')
   })
 })
 
