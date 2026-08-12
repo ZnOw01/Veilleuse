@@ -34,6 +34,8 @@ jobs:
           assert Path("scripts/veilleuse-control").is_file()
           PY
       - name: Run model and helper tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           python -m unittest discover -s tests -p 'test_veilleuse_control.py'
           node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs
