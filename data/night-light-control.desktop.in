@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Luz nocturna
+GenericName=Control de temperatura de color
+Comment=Controla la luz cálida y su horario automático
+Exec="@APP_EXEC@"
+Icon=night-light-control
+Terminal=false
+Categories=Settings;
+Keywords=night;light;blue;temperature;screen;noche;luz;calidez;
+StartupNotify=true
+StartupWMClass=com.snowflake.NightLight
+X-GNOME-UsesNotifications=true

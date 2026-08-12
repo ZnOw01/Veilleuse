@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+"""Apply one safe physical brightness step for Waybar scroll actions."""
+
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+try:
+    from brightness_utils import (
+        is_safe_brightness_change,
+        parse_brightness_info,
+        plan_brightness_change,
+    )
+except ModuleNotFoundError as error:
+    if error.name != "brightness_utils":
+        raise
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from brightness_utils import (
+        is_safe_brightness_change,
+        parse_brightness_info,
+        plan_brightness_change,
+    )
+
+try:
+    from schedule_utils import STATE_LOCK, exclusive_lock
+except ModuleNotFoundError as error:
+    if error.name != "schedule_utils":
+        raise
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from schedule_utils import STATE_LOCK, exclusive_lock
+
+
+READ_ATTEMPTS = 2
+RETRY_DELAY = 0.08
+
+
+def run(args):
+    try:
+        return subprocess.run(args, text=True, capture_output=True, check=False, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def read_info(device=None):
+    args = ["brightnessctl", "-c", "backlight"]
+    if device:
+        args.extend(["-d", device])
+    args.append("-m")
+    result = run(args)
+    if result is None or result.returncode != 0:
+        raise RuntimeError("No se pudo leer el brillo")
+    return parse_brightness_info(result.stdout)
+
+
+def read_info_with_retry(device=None, allow_redetect=True):
+    candidates = [device]
+    if device and allow_redetect:
+        candidates.append(None)
+    last_error = None
+    for candidate in candidates:
+        for attempt in range(READ_ATTEMPTS):
+            try:
+                return read_info(candidate)
+            except (RuntimeError, ValueError) as error:
+                last_error = error
+                if attempt + 1 < READ_ATTEMPTS:
+                    time.sleep(RETRY_DELAY)
+    raise RuntimeError(str(last_error) if last_error else "No se encontró un dispositivo")
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in {"+", "-"}:
+        return 2
+    with exclusive_lock(STATE_LOCK):
+        try:
+            info = read_info_with_retry()
+        except (RuntimeError, ValueError):
+            return 1
+        _target, adjustment = plan_brightness_change(
+            info, 1 if sys.argv[1] == "+" else -1
+        )
+        if adjustment is None:
+            return 0
+        result = run([
+            "brightnessctl", "-c", "backlight", "-d", info["device"], "set", adjustment
+        ])
+        if result is None or result.returncode != 0:
+            return 1
+        try:
+            verified = read_info_with_retry(info["device"], allow_redetect=False)
+        except (RuntimeError, ValueError):
+            return 1
+        if verified["device"] != info["device"]:
+            return 1
+        return 0 if is_safe_brightness_change(info, verified, 1 if sys.argv[1] == "+" else -1) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

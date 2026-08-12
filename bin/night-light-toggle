@@ -1,0 +1,108 @@
+#!/usr/bin/python3
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    from schedule_utils import SETTINGS_PATH, STATE_LOCK, exclusive_lock
+except ModuleNotFoundError as error:
+    if error.name != "schedule_utils":
+        raise
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from schedule_utils import SETTINGS_PATH, STATE_LOCK, exclusive_lock
+
+try:
+    from hyprsunset_backend import (
+        COMMAND_TIMEOUT,
+        BackendState,
+        read_state as read_backend_state,
+        ensure_backend,
+        load_temperature as load_backend_temperature,
+        request_hyprsunset,
+        run_command,
+        set_identity,
+        set_temperature,
+    )
+except ModuleNotFoundError as error:
+    if error.name != "hyprsunset_backend":
+        raise
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from hyprsunset_backend import (
+        COMMAND_TIMEOUT,
+        BackendState,
+        read_state as read_backend_state,
+        ensure_backend,
+        load_temperature as load_backend_temperature,
+        request_hyprsunset,
+        run_command,
+        set_identity,
+        set_temperature,
+    )
+
+
+def run(args, timeout=COMMAND_TIMEOUT):
+    """Compatibility wrapper for callers that used the old script helper."""
+    return run_command(args, timeout=timeout)
+
+
+def current_temperature():
+    from hyprsunset_backend import read_temperature
+
+    return read_temperature()
+
+
+def current_identity():
+    from hyprsunset_backend import read_identity
+
+    return read_identity()
+
+
+def backend_state() -> BackendState:
+    return read_backend_state()
+
+
+def request(arguments, predicate=None, timeout=1.0):
+    return request_hyprsunset(arguments, predicate, timeout=timeout)
+
+
+def load_temperature():
+    return load_backend_temperature(SETTINGS_PATH)
+
+
+def notify(title, body):
+    try:
+        subprocess.Popen(
+            ["notify-send", "-u", "low", title, body],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def main():
+    with exclusive_lock(STATE_LOCK):
+        state = ensure_backend()
+        if state.active is None:
+            notify("Luz nocturna", "No se pudo conectar con hyprsunset")
+            return 1
+
+        if state.active:
+            result = set_identity()
+            if result.returncode == 0:
+                notify("☀  Luz nocturna", "Color normal restaurado")
+                return 0
+            notify("Luz nocturna", "No se pudo restaurar el color normal")
+            return 1
+
+        temperature = load_temperature()
+        result = set_temperature(temperature)
+        if result.returncode == 0:
+            notify("☾  Luz nocturna", f"Activada a {temperature} K")
+            return 0
+        notify("Luz nocturna", "No se pudo aplicar el color cálido")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
