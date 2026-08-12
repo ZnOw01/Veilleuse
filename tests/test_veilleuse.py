@@ -133,6 +133,23 @@ class VeilleuseServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(veilleuse.OperationError, "disponible"):
             veilleuse.toggle_night_light(backends)
 
+    def test_backend_error_state_is_not_treated_as_confirmed_success(self):
+        state = BrightnessState(True, 42, "eDP-1", "Operación cancelada")
+
+        with self.assertRaisesRegex(veilleuse.OperationError, "cancelada"):
+            veilleuse._confirmed_state(state, lambda: state, "La pantalla")
+
+    def test_confirmation_readback_receives_compatible_deadline(self):
+        received = []
+
+        def reader(*, deadline=None):
+            received.append(deadline)
+            return BrightnessState(True, 42, "eDP-1")
+
+        veilleuse._confirmed_state(None, reader, "La pantalla", deadline=12.5)
+
+        self.assertEqual(received, [12.5])
+
     def test_schedule_update_preserves_comments_custom_content_and_unmanaged_profiles(self):
         original = """# personal header
 profile {
@@ -259,6 +276,169 @@ profile {
 
         self.assertEqual(len(calls), 1)
         self.assertNotEqual(calls[0], caller)
+
+
+class LatestValueQueueTests(unittest.TestCase):
+    def test_cancellable_queue_keeps_only_latest_value_and_stops_active_work(self):
+        started = []
+        completions = {}
+        results = []
+
+        def start(value, cancel_event, complete):
+            started.append((value, cancel_event))
+            completions[value] = complete
+
+        queue = veilleuse.LatestValueQueue(
+            start, lambda value, result, obsolete: results.append((value, result, obsolete)),
+            cancel_active=True,
+        )
+
+        queue.submit(20)
+        queue.submit(40)
+        queue.submit(60)
+
+        self.assertEqual([value for value, _event in started], [20])
+        self.assertTrue(started[0][1].is_set())
+
+        completions[20]("cancelled")
+        self.assertEqual([value for value, _event in started], [20, 60])
+        self.assertEqual(results, [(20, "cancelled", True)])
+
+        completions[60]("confirmed")
+        self.assertEqual(results, [(20, "cancelled", True), (60, "confirmed", False)])
+
+    def test_non_cancellable_queue_starts_latest_value_after_active_result(self):
+        started = []
+        completions = {}
+
+        def start(value, cancel_event, complete):
+            started.append((value, cancel_event))
+            completions[value] = complete
+
+        queue = veilleuse.LatestValueQueue(start, lambda *_: None)
+        queue.submit(20)
+        queue.submit(40)
+        queue.submit(60)
+
+        self.assertFalse(started[0][1].is_set())
+        completions[20]("confirmed")
+        self.assertEqual([value for value, _event in started], [20, 60])
+
+    def test_backend_adapter_supports_future_optional_deadline_and_cancel_event(self):
+        received = []
+        deadline = 123.5
+
+        def future_backend(value, *, deadline=None, cancel_event=None):
+            received.append((value, deadline, cancel_event))
+            return "ok"
+
+        cancel_event = threading.Event()
+        self.assertEqual(
+            veilleuse._call_backend(
+                future_backend, 72, deadline=deadline, should_stop=cancel_event.is_set
+            ),
+            "ok",
+        )
+        self.assertEqual(received, [(72, deadline, cancel_event)])
+
+    def test_backend_adapter_keeps_legacy_backend_signature_compatible(self):
+        received = []
+
+        def legacy_backend(value):
+            received.append(value)
+            return "ok"
+
+        self.assertEqual(
+            veilleuse._call_backend(
+                legacy_backend, 72, deadline=123.5, should_stop=lambda: False
+            ),
+            "ok",
+        )
+        self.assertEqual(received, [72])
+
+
+class VeilleuseAccessibilityTests(unittest.TestCase):
+    def test_brightness_minimum_matches_native_backend_contract(self):
+        self.assertEqual(veilleuse.BRIGHTNESS_MIN, 1)
+
+    def test_accessible_label_is_explicit_in_addition_to_tooltip(self):
+        calls = []
+
+        class Widget:
+            def update_property(self, properties, values):
+                calls.append((properties, values))
+
+        class Gtk:
+            class AccessibleProperty:
+                LABEL = "label"
+
+        with patch.object(veilleuse, "_gtk_modules", return_value=(None, None, None, Gtk)):
+            veilleuse._accessible_label(Widget(), "Reducir brillo")
+
+        self.assertEqual(calls, [(["label"], ["Reducir brillo"])])
+
+
+
+class DisplayControlStateTests(unittest.TestCase):
+    def test_confirmed_value_resynchronizes_widget_without_reentering_user_handler(self):
+        controls = veilleuse.DisplayControlState()
+        observed = []
+
+        confirmed = controls.confirm(
+            "brightness",
+            BrightnessState(True, 62, "eDP-1"),
+            apply=lambda value: observed.append((value, controls.accepts_user_input)),
+        )
+
+        self.assertEqual(confirmed, 62)
+        self.assertEqual(observed, [(62, False)])
+        self.assertEqual(controls.confirmed("brightness"), 62)
+        self.assertTrue(controls.accepts_user_input)
+
+    def test_each_confirmed_display_control_resynchronizes_its_widget(self):
+        controls = veilleuse.DisplayControlState()
+        observed = []
+
+        controls.confirm(
+            "temperature",
+            NightLightState(True, True, 2900, False, 100),
+            apply=lambda value: observed.append(
+                ("temperature", value, controls.accepts_user_input)
+            ),
+        )
+        controls.confirm(
+            "gamma",
+            NightLightState(True, True, 2900, False, 73),
+            apply=lambda value: observed.append(
+                ("gamma", value, controls.accepts_user_input)
+            ),
+        )
+
+        self.assertEqual(observed, [
+            ("temperature", 2900, False),
+            ("gamma", 73, False),
+        ])
+        self.assertEqual(controls.confirmed("temperature"), 2900)
+        self.assertEqual(controls.confirmed("gamma"), 73)
+
+    def test_brightness_steps_advance_from_latest_requested_confirmed_value(self):
+        controls = veilleuse.DisplayControlState()
+        controls.apply_snapshot({"brightness": {"percent": 40}}, {"brightness"})
+
+        self.assertEqual(controls.step_brightness(1), 41)
+        self.assertEqual(controls.step_brightness(1), 42)
+        self.assertEqual(controls.step_brightness(-1), 41)
+
+        controls.apply_snapshot({"brightness": {"percent": 70}}, {"brightness"})
+        self.assertEqual(controls.step_brightness(1), 71)
+
+    def test_external_refresh_is_deferred_until_all_control_queues_are_idle(self):
+        controls = veilleuse.DisplayControlState()
+
+        self.assertFalse(controls.request_refresh(controls_idle=False))
+        self.assertFalse(controls.take_deferred_refresh(controls_idle=False))
+        self.assertTrue(controls.take_deferred_refresh(controls_idle=True))
+        self.assertFalse(controls.take_deferred_refresh(controls_idle=True))
 
 
 if __name__ == "__main__":

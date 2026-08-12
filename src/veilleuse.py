@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import inspect
 import json
 import re
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -67,8 +69,9 @@ APP_ID = "io.github.ZnOw01.Veilleuse"
 SCHEDULE_PATH = HYPRSUNSET_CONFIG
 GAMMA_MIN = 0
 GAMMA_MAX = 100
-BRIGHTNESS_MIN = 0
+BRIGHTNESS_MIN = 1
 BRIGHTNESS_MAX = 100
+CONTROL_DEADLINE = 2.0
 
 
 class OperationError(RuntimeError):
@@ -107,9 +110,17 @@ def _require_available(state: Any, name: str) -> None:
         raise OperationError(f"{name} no está disponible")
 
 
-def _confirmed_state(result: Any, reader: Callable[[], Any], name: str) -> Any:
-    state = result if result is not None else reader()
+def _confirmed_state(
+    result: Any,
+    reader: Callable[[], Any],
+    name: str,
+    *,
+    deadline: float | None = None,
+) -> Any:
+    state = result if result is not None else _call_backend(reader, deadline=deadline)
     _require_available(state, name)
+    if getattr(state, "error", None):
+        raise OperationError(str(state.error))
     return state
 
 
@@ -353,6 +364,213 @@ def safe_error_message(error: BaseException) -> str:
     return "No se pudo confirmar la operación"
 
 
+class DisplayControlState:
+    """Keep confirmed display values separate from transient widget values."""
+
+    _FIELDS = {
+        "brightness": ("brightness", "percent"),
+        "temperature": ("night_light", "temperature"),
+        "gamma": ("night_light", "gamma"),
+    }
+
+    def __init__(self):
+        self._confirmed: dict[str, int | None] = {
+            channel: None for channel in self._FIELDS
+        }
+        self._requested: dict[str, int | None] = {
+            channel: None for channel in self._FIELDS
+        }
+        self._syncing = False
+        self._refresh_pending = False
+
+    @property
+    def accepts_user_input(self) -> bool:
+        return not self._syncing
+
+    def synchronize(self, apply: Callable[[], Any]) -> Any:
+        previous = self._syncing
+        self._syncing = True
+        try:
+            return apply()
+        finally:
+            self._syncing = previous
+
+    def confirmed(self, channel: str) -> int | None:
+        return self._confirmed[channel]
+
+    def request(self, channel: str, value: int) -> int:
+        self._requested[channel] = value
+        return value
+
+    def step_brightness(self, direction: int) -> int:
+        base = self._requested["brightness"]
+        if base is None:
+            base = self._confirmed["brightness"] or BRIGHTNESS_MIN
+        return self.request(
+            "brightness",
+            max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, base + direction)),
+        )
+
+    def confirm(
+        self,
+        channel: str,
+        state: Any,
+        *,
+        obsolete: bool = False,
+        apply: Callable[[int], Any] | None = None,
+    ) -> int | None:
+        if obsolete:
+            return None
+        _section, field = self._FIELDS[channel]
+        value = getattr(state, field, None)
+        if value is None:
+            return None
+        self._confirmed[channel] = value
+        self._requested[channel] = value
+        if apply is not None:
+            self.synchronize(lambda: apply(value))
+        return value
+
+    def apply_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        idle_channels: set[str],
+        *,
+        apply: Callable[[dict[str, int]], Any] | None = None,
+    ) -> dict[str, int]:
+        updates: dict[str, int] = {}
+        for channel, (section, field) in self._FIELDS.items():
+            if channel not in idle_channels:
+                continue
+            values = snapshot.get(section, {})
+            value = values.get(field)
+            if value is None:
+                continue
+            self._confirmed[channel] = value
+            self._requested[channel] = value
+            updates[channel] = value
+        if apply is not None and updates:
+            self.synchronize(lambda: apply(updates))
+        return updates
+
+    def request_refresh(self, *, controls_idle: bool) -> bool:
+        if not controls_idle:
+            self._refresh_pending = True
+            return False
+        self._refresh_pending = False
+        return True
+
+    def take_deferred_refresh(self, *, controls_idle: bool) -> bool:
+        if not controls_idle or not self._refresh_pending:
+            return False
+        self._refresh_pending = False
+        return True
+
+
+_MISSING = object()
+
+
+class LatestValueQueue:
+    """Serialize a control's work while retaining only its newest request."""
+
+    def __init__(
+        self,
+        start: Callable[[Any, threading.Event, Callable[[Any], Any]], Any],
+        on_result: Callable[[Any, Any, bool], Any],
+        *,
+        cancel_active: bool = False,
+    ):
+        self._start = start
+        self._on_result = on_result
+        self._cancel_active = cancel_active
+        self._lock = threading.Lock()
+        self._active_value = _MISSING
+        self._active_token = None
+        self._active_cancel: threading.Event | None = None
+        self._pending = _MISSING
+
+    def submit(self, value: Any) -> bool:
+        with self._lock:
+            if self._active_value is not _MISSING:
+                self._pending = value
+                if self._cancel_active and self._active_cancel is not None:
+                    self._active_cancel.set()
+                return False
+            cancel_event = threading.Event()
+            request_token = object()
+            self._active_value = value
+            self._active_token = request_token
+            self._active_cancel = cancel_event
+        self._start(
+            value,
+            cancel_event,
+            lambda result: self._complete(request_token, result),
+        )
+        return True
+
+    @property
+    def active(self) -> bool:
+        with self._lock:
+            return self._active_value is not _MISSING
+
+    def _complete(self, request_token: object, result: Any) -> None:
+        with self._lock:
+            if request_token is not self._active_token:
+                return
+            value = self._active_value
+            pending = self._pending
+            self._pending = _MISSING
+            if pending is _MISSING:
+                self._active_value = _MISSING
+                self._active_token = None
+                self._active_cancel = None
+            else:
+                next_cancel = threading.Event()
+                next_token = object()
+                self._active_value = pending
+                self._active_token = next_token
+                self._active_cancel = next_cancel
+        obsolete = pending is not _MISSING
+        self._on_result(value, result, obsolete)
+        if pending is not _MISSING:
+            self._start(
+                pending,
+                next_cancel,
+                lambda next_result: self._complete(next_token, next_result),
+            )
+
+
+def _callable_accepts(method: Callable[..., Any], name: str) -> bool:
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):
+        return False
+    if name in signature.parameters:
+        return True
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+def _call_backend(
+    method: Callable[..., Any],
+    *args: Any,
+    deadline: float | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> Any:
+    """Call current or future backend methods without assuming new kwargs."""
+    kwargs: dict[str, Any] = {}
+    if deadline is not None and _callable_accepts(method, "deadline"):
+        kwargs["deadline"] = deadline
+    if should_stop is not None:
+        if _callable_accepts(method, "should_stop"):
+            kwargs["should_stop"] = should_stop
+        if _callable_accepts(method, "cancel_event"):
+            kwargs["cancel_event"] = getattr(should_stop, "__self__", should_stop)
+    return method(*args, **kwargs)
+
+
 def _dispatch_to_main(callback: Callable[[], Any]) -> Any:
     try:
         import gi
@@ -411,6 +629,14 @@ def _accessible_range(widget: Any, label: str, minimum: int, maximum: int, value
         pass
 
 
+def _accessible_label(widget: Any, label: str) -> None:
+    try:
+        _Adw, _Gio, _GLib, Gtk = _gtk_modules()
+        widget.update_property([Gtk.AccessibleProperty.LABEL], [label])
+    except (AttributeError, ImportError, ValueError):
+        pass
+
+
 def create_application(backends: BackendBundle | None = None):
     """Create the single adaptive Libadwaita application window."""
     Adw, Gio, GLib, Gtk = _gtk_modules()
@@ -420,6 +646,8 @@ def create_application(backends: BackendBundle | None = None):
             super().__init__(application=application, title="Veilleuse")
             self.backends = backends
             self._busy = False
+            self._control_state = DisplayControlState()
+            self._control_queues: dict[str, LatestValueQueue] = {}
             self._schedule = default_schedule()
             self._build_ui()
             self._refresh(include_schedule=True)
@@ -473,14 +701,18 @@ def create_application(backends: BackendBundle | None = None):
             )
             self.brightness_scale.set_draw_value(False)
             self.brightness_scale.set_hexpand(True)
-            self.brightness_scale.set_tooltip_text("Brillo de la pantalla, de 0 a 100 por ciento")
-            _accessible_range(self.brightness_scale, "Brillo de la pantalla", 0, 100, 0, "0 %")
+            self.brightness_scale.set_tooltip_text("Brillo de la pantalla, de 1 a 100 por ciento")
+            _accessible_range(self.brightness_scale, "Brillo de la pantalla",
+                              BRIGHTNESS_MIN, BRIGHTNESS_MAX, BRIGHTNESS_MIN,
+                              f"{BRIGHTNESS_MIN} %")
             self.brightness_scale.connect("value-changed", self._brightness_changed)
             minus = Gtk.Button.new_from_icon_name("list-remove-symbolic")
             minus.set_tooltip_text("Reducir brillo un punto")
+            _accessible_label(minus, "Reducir brillo")
             minus.connect("clicked", lambda *_: self._step_brightness(-1))
             plus = Gtk.Button.new_from_icon_name("list-add-symbolic")
             plus.set_tooltip_text("Aumentar brillo un punto")
+            _accessible_label(plus, "Aumentar brillo")
             plus.connect("clicked", lambda *_: self._step_brightness(1))
             row.append(minus)
             row.append(self.brightness_scale)
@@ -495,6 +727,7 @@ def create_application(backends: BackendBundle | None = None):
             toggle_row.append(Gtk.Label(label="Activar luz nocturna", xalign=0, hexpand=True))
             self.night_switch = Gtk.Switch()
             self.night_switch.set_tooltip_text("Activa o desactiva la luz nocturna")
+            _accessible_label(self.night_switch, "Activar o desactivar la luz nocturna")
             self.night_switch.connect("state-set", self._night_toggled)
             toggle_row.append(self.night_switch)
             natural = Gtk.Button(label="Color natural")
@@ -548,6 +781,10 @@ def create_application(backends: BackendBundle | None = None):
             return group
 
         def _refresh(self, *, include_schedule=False):
+            if not self._control_state.request_refresh(
+                controls_idle=self._all_controls_idle()
+            ):
+                return
             self._set_busy(True)
             def read():
                 bundle = self.backends or load_backends()
@@ -564,28 +801,145 @@ def create_application(backends: BackendBundle | None = None):
                 self.night_temp_spin.set_value(schedule["night_temp"])
             brightness = snapshot["brightness"]
             night = snapshot["night_light"]
-            if brightness["percent"] is not None:
-                self.brightness_scale.set_value(brightness["percent"])
-            self.brightness_value.set_text(
-                "—" if brightness["percent"] is None else f"{brightness['percent']} %"
-            )
-            enabled = night["enabled"] is True
-            self.night_switch.set_active(enabled)
-            if night["temperature"] is not None:
-                self.temperature_scale.set_value(night["temperature"])
-                self.temperature_value.set_text(f"{night['temperature']} K")
-            if night["gamma"] is not None:
-                self.gamma_scale.set_value(night["gamma"])
-                self.gamma_value.set_text(f"Gamma {night['gamma']} %")
+            idle_channels = {
+                channel for channel in self._control_state._FIELDS
+                if self._control_idle(channel)
+            }
+            self._control_state.apply_snapshot(snapshot, idle_channels)
+            def update_widgets():
+                if "brightness" in idle_channels:
+                    if brightness["percent"] is not None:
+                        self.brightness_scale.set_value(brightness["percent"])
+                    self.brightness_value.set_text(
+                        "—" if brightness["percent"] is None else f"{brightness['percent']} %"
+                    )
+                self.night_switch.set_active(night["enabled"] is True)
+                if "temperature" in idle_channels and night["temperature"] is not None:
+                    self.temperature_scale.set_value(night["temperature"])
+                    self.temperature_value.set_text(f"{night['temperature']} K")
+                if "gamma" in idle_channels and night["gamma"] is not None:
+                    self.gamma_scale.set_value(night["gamma"])
+                    self.gamma_value.set_text(f"Gamma {night['gamma']} %")
+            self._control_state.synchronize(update_widgets)
             self.status_label.set_text("Todo listo" if brightness["available"] and night["available"]
                                        else "Algún control no está disponible")
             self._set_busy(False)
 
         def _set_busy(self, busy):
             self._busy = busy
-            for widget in (self.brightness_scale, self.temperature_scale,
-                           self.gamma_scale, self.night_switch):
-                widget.set_sensitive(not busy)
+
+        def _control_idle(self, channel):
+            queue = self._control_queues.get(channel)
+            return queue is None or not queue.active
+
+        def _all_controls_idle(self):
+            return all(self._control_idle(channel) for channel in self._control_state._FIELDS)
+
+        def _queue_control(self, channel, value):
+            if self.backends is None:
+                return
+            if channel not in self._control_queues:
+                self._control_queues[channel] = LatestValueQueue(
+                    lambda item, cancel_event, complete: self._launch_control(
+                        channel, item, cancel_event, complete
+                    ),
+                    lambda item, outcome, obsolete: self._finish_control(
+                        channel, item, outcome, obsolete
+                    ),
+                    cancel_active=channel == "brightness",
+                )
+            self._control_queues[channel].submit(value)
+
+        def _launch_control(self, channel, value, cancel_event, complete):
+            messages = {
+                "brightness": f"Aplicando brillo al {value}%…",
+                "temperature": f"Aplicando temperatura a {value} K…",
+                "gamma": f"Aplicando gamma al {value}%…",
+            }
+            self.status_label.set_text(messages[channel])
+            backend_bundle = self.backends
+
+            def work():
+                if backend_bundle is None:
+                    raise OperationError("El backend no está disponible")
+                deadline = time.monotonic() + CONTROL_DEADLINE
+                if channel == "brightness":
+                    result = _call_backend(
+                        backend_bundle.brightness.set_percent,
+                        value,
+                        deadline=deadline,
+                        should_stop=cancel_event.is_set,
+                    )
+                    return _confirmed_state(
+                        result, backend_bundle.brightness.read_state, "La pantalla",
+                        deadline=deadline,
+                    )
+                if channel == "temperature":
+                    result = _call_backend(
+                        backend_bundle.night_light.set_temperature,
+                        value,
+                        deadline=deadline,
+                    )
+                    return _confirmed_state(
+                        result, backend_bundle.night_light.read_state, "La luz nocturna",
+                        deadline=deadline,
+                    )
+                if channel == "gamma":
+                    result = _call_backend(
+                        backend_bundle.night_light.set_gamma,
+                        value,
+                        deadline=deadline,
+                    )
+                    return _confirmed_state(
+                        result, backend_bundle.night_light.read_state, "La luz nocturna",
+                        deadline=deadline,
+                    )
+                raise OperationError("Operación no disponible")
+
+            run_worker(
+                work,
+                lambda result: complete(("success", result)),
+                lambda error: complete(("error", error)),
+            )
+
+        def _finish_control(self, channel, _value, outcome, obsolete):
+            if obsolete:
+                self.status_label.set_text("Aplicando el último valor solicitado…")
+                return
+            kind, result = outcome
+            if kind == "error":
+                self._show_error(result)
+                self._maybe_refresh_after_controls_idle()
+                return
+            self._control_state.confirm(
+                channel,
+                result,
+                apply=lambda value: self._apply_confirmed_control(channel, value),
+            )
+            messages = {
+                "brightness": "Brillo confirmado",
+                "temperature": "Temperatura confirmada",
+                "gamma": "Gamma confirmado",
+            }
+            self._show_toast(messages[channel])
+            self._maybe_refresh_after_controls_idle()
+
+        def _apply_confirmed_control(self, channel, value):
+            if channel == "brightness":
+                self.brightness_scale.set_value(value)
+                self.brightness_value.set_text(f"{value} %")
+            elif channel == "temperature":
+                self.temperature_scale.set_value(value)
+                self.temperature_value.set_text(f"{value} K")
+            elif channel == "gamma":
+                self.gamma_scale.set_value(value)
+                self.gamma_value.set_text(f"Gamma {value} %")
+
+        def _maybe_refresh_after_controls_idle(self):
+            if self._control_state.take_deferred_refresh(
+                controls_idle=self._all_controls_idle()
+            ):
+                self._refresh()
 
         def _show_toast(self, message):
             self.toast_overlay.add_toast(Adw.Toast.new(message))
@@ -600,7 +954,12 @@ def create_application(backends: BackendBundle | None = None):
             self._refresh()
 
         def _start_backend(self, operation, value=None):
-            if self._busy or self.backends is None:
+            if self.backends is None:
+                return
+            if operation in {"temperature", "gamma"}:
+                self._queue_control(operation, value)
+                return
+            if self._busy:
                 return
             self._set_busy(True)
             def work():
@@ -609,43 +968,31 @@ def create_application(backends: BackendBundle | None = None):
                     return _confirmed_state(
                         result, self.backends.night_light.read_state, "La luz nocturna"
                     )
-                if operation == "temperature":
-                    result = self.backends.night_light.set_temperature(value)
-                    return _confirmed_state(
-                        result, self.backends.night_light.read_state, "La luz nocturna"
-                    )
-                if operation == "gamma":
-                    result = self.backends.night_light.set_gamma(value)
-                    return _confirmed_state(
-                        result, self.backends.night_light.read_state, "La luz nocturna"
-                    )
                 raise OperationError("Operación no disponible")
             run_worker(work, lambda _result: self._confirmed_operation("Cambio confirmado"),
                        self._show_error)
 
         def _brightness_changed(self, scale):
-            if not self._busy and self.backends is not None:
-                target = round(scale.get_value())
-                self.brightness_value.set_text(f"{target} %")
-                self._set_busy(True)
-                run_worker(lambda: _confirmed_state(
-                               self.backends.brightness.set_percent(target),
-                               self.backends.brightness.read_state, "La pantalla"
-                           ),
-                           lambda _result: self._confirmed_operation("Brillo confirmado"),
-                           self._show_error)
+            if not self._control_state.accepts_user_input:
+                return
+            target = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, round(scale.get_value())))
+            self.brightness_value.set_text(f"{target} %")
+            self._control_state.request("brightness", target)
+            self._queue_control("brightness", target)
 
         def _step_brightness(self, direction):
-            if not self._busy and self.backends is not None:
-                self._set_busy(True)
-                run_worker(lambda: _confirmed_state(
-                               self.backends.brightness.step(direction),
-                               self.backends.brightness.read_state, "La pantalla"
-                           ),
-                           lambda _result: self._confirmed_operation("Brillo confirmado"),
-                           self._show_error)
+            if self.backends is None:
+                return
+            target = self._control_state.step_brightness(direction)
+            self._control_state.synchronize(
+                lambda: self.brightness_scale.set_value(target)
+            )
+            self.brightness_value.set_text(f"{target} %")
+            self._queue_control("brightness", target)
 
         def _night_toggled(self, _switch, _state):
+            if not self._control_state.accepts_user_input:
+                return False
             if not self._busy and self.backends is not None:
                 self._set_busy(True)
                 run_worker(lambda: toggle_night_light(self.backends),
@@ -654,16 +1001,20 @@ def create_application(backends: BackendBundle | None = None):
             return False
 
         def _temperature_changed(self, scale):
+            if not self._control_state.accepts_user_input:
+                return
             value = round(scale.get_value())
             self.temperature_value.set_text(f"{value} K")
-            if not self._busy and self.backends is not None:
-                self._start_backend("temperature", value)
+            self._control_state.request("temperature", value)
+            self._start_backend("temperature", value)
 
         def _gamma_changed(self, scale):
+            if not self._control_state.accepts_user_input:
+                return
             value = round(scale.get_value())
             self.gamma_value.set_text(f"Gamma {value} %")
-            if not self._busy and self.backends is not None:
-                self._start_backend("gamma", value)
+            self._control_state.request("gamma", value)
+            self._start_backend("gamma", value)
 
         def _save_schedule(self, _button):
             try:
