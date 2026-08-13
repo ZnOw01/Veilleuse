@@ -23,11 +23,7 @@ if command -v qmllint >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell ]]; then
   qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml
 fi
 
-[[ -x scripts/veilleuse-control ]]
-[[ $(jq -r '.id' manifest.json) == io.github.znow01.veilleuse ]]
-[[ $(jq -r '.entryPoints.barWidget' manifest.json) == BarWidget.qml ]]
-! find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o -type l -print -quit | grep -q .
-! find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o \( -name __pycache__ -o -name '*.pyc' \) -print -quit | grep -q .
+./scripts/check_hygiene.sh
 
 git diff --check
 printf 'Veilleuse plugin checks passed.\n'

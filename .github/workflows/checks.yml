@@ -39,9 +39,24 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_veilleuse_control.py'
           node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs
+      - name: Validate plugin package when omarchy-plugin-validate is available
+        run: |
+          if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+            PACKAGE_TMP="$(mktemp -d)"
+            trap 'rm -rf "$PACKAGE_TMP"' EXIT
+            git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$PACKAGE_TMP"
+            omarchy-plugin-validate "$PACKAGE_TMP"
+          else
+            echo "omarchy-plugin-validate not installed; skipping."
+          fi
+      - name: Lint QML when qmllint and shell imports are available
+        run: |
+          if command -v qmllint >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell ]]; then
+            qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml
+          else
+            echo "qmllint not installed; skipping."
+          fi
       - name: Check package hygiene
         run: |
-          test -x scripts/veilleuse-control
-          test -z "$(find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o -type l -print -quit)"
-          test -z "$(find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o \( -name __pycache__ -o -name '*.pyc' \) -print -quit)"
+          bash scripts/check_hygiene.sh
           git show --check --oneline --format= HEAD
