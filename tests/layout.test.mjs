@@ -342,3 +342,9 @@ test('transition seconds field bounds', () => {
   assert.match(qml, /id:\s*transitionEditor[\s\S]*?from:\s*0/);
   assert.match(qml, /id:\s*transitionEditor[\s\S]*?to:\s*1800/);
 });
+
+test('last-applied provenance owns the remaining row width and elides cleanly', () => {
+  assert.match(qml, /id:\s*lastAppliedLabel/);
+  assert.match(qml, /width:\s*parent\.width\s*-\s*lastAppliedLabel\.implicitWidth\s*-\s*parent\.spacing/);
+  assert.match(qml, /elide:\s*Text\.ElideRight/);
+});

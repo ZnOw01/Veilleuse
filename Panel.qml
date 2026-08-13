@@ -818,6 +818,7 @@ Panel {
                         spacing: Style.spacing.controlGap
 
                         Text {
+                            id: lastAppliedLabel
                             text: root.text("last_applied")
                             color: Qt.darker(root.foreground, 1.35)
                             font.family: root.fontFamily
@@ -825,6 +826,7 @@ Panel {
                         }
 
                         Text {
+                            width: parent.width - lastAppliedLabel.implicitWidth - parent.spacing
                             text: root.lastAppliedText === "" ? root.text("unknown") : root.lastAppliedText
                             color: root.foreground
                             font.family: root.fontFamily
