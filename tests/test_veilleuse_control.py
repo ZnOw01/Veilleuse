@@ -549,29 +549,36 @@ class ScheduleTests(HelperModuleTests):
 
 
 def clone_tracked_files(destination):
-    """Shallow-copy the tracked package files like the release staging does.
+    """Copy the releasable package tree with or without VCS metadata.
 
-    Mirrors the ``git ls-files | tar`` staging used by check.sh and CI: only
-    tracked files, preserving the executable bit, with no VCS metadata.
+    In a checkout, mirror the ``git ls-files | tar`` staging used by CI. In a
+    ``git archive`` export, copy the already-filtered package tree directly so
+    the release artifact can run its own verification suite.
     """
     destination = Path(destination)
-    tracked = subprocess.run(
+    listed = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z"],
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout.split("\0")
-    for relative in tracked:
-        if not relative:
-            continue
+    )
+    if listed.returncode == 0:
+        relatives = [Path(relative) for relative in listed.stdout.split("\0") if relative]
+    else:
+        relatives = [
+            source.relative_to(ROOT)
+            for source in ROOT.rglob("*")
+            if source.is_file()
+            and ".git" not in source.relative_to(ROOT).parts
+            and "__pycache__" not in source.relative_to(ROOT).parts
+            and source.suffix != ".pyc"
+        ]
+
+    for relative in relatives:
         source = ROOT / relative
         target = destination / relative
-        if source.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            shutil.copymode(source, target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        shutil.copymode(source, target)
 
 
 class HygieneGateTests(unittest.TestCase):
