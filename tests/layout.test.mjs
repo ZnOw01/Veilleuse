@@ -124,10 +124,24 @@ test('bar activity follows actual night-light state without depending on panel v
   assert.doesNotMatch(barQml, /active:\s*root\.opened/);
 });
 
-test('closed panel refreshes status so scheduled bar activity cannot stay stale', () => {
+test('closed panel reconciles periodically so snooze expiry and schedule boundaries physically apply', () => {
   assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
   assert.match(qml, /running:\s*!root\.opened/);
-  assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.requestStatus\(\)/);
+  assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.reconcile\(\)/);
+  assert.doesNotMatch(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.requestStatus\(\)/);
+  assert.match(qml, /function reconcile\(\)\s*\{\s*root\.request\(\["reconcile"\],\s*"reconcile"\)\s*;/);
+});
+
+test('panel reconciles once after load, retrying until idle so an expired snooze applies even after a shell restart', () => {
+  assert.match(qml, /id:\s*initialReconcileTimer[\s\S]*?interval:\s*1000[\s\S]*?repeat:\s*false/);
+  assert.match(qml, /onTriggered:\s*\{[\s\S]*?if\s*\(root\.actionPending\)\s*\{[\s\S]*?initialReconcileTimer\.restart\(\);[\s\S]*?return\s*;[\s\S]*?root\.reconcile\(\)/);
+});
+
+test('global IPC toggleNightlight queues through the latest-wins request bus instead of silently dropping while busy or unavailable', () => {
+  const toggle = qml.slice(qml.indexOf('function toggleNightlight()'), qml.indexOf('function normalizeCombined'));
+  assert.match(qml, /function toggleNightlight\(\)\s*\{\s*root\.request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)\s*;\s*\}/);
+  assert.doesNotMatch(toggle, /stateReady|actionPending|return/);
+  assert.equal((toggle.match(/request\(\["nightlight"/g) || []).length, 1);
 });
 
 test('schedule summary stays a full-width left-aligned button like the reference', () => {

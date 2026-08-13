@@ -81,8 +81,7 @@ Panel {
     }
 
     function toggleNightlight() {
-        if (root.stateReady && !root.actionPending)
-            root.request(["nightlight", "toggle"], "toggle");
+        root.request(["nightlight", "toggle"], "toggle");
     }
 
     function normalizeCombined(raw) {
@@ -236,6 +235,10 @@ Panel {
 
     function requestStatus() {
         request(["status"], "status");
+    }
+
+    function reconcile() {
+        root.request(["reconcile"], "reconcile");
     }
 
     function request(command, operation) {
@@ -490,12 +493,27 @@ Panel {
     }
 
     Timer {
+        id: initialReconcileTimer
+
+        interval: 1000
+        repeat: false
+        running: true
+        onTriggered: {
+            if (root.actionPending) {
+                initialReconcileTimer.restart();
+                return ;
+            }
+            root.reconcile();
+        }
+    }
+
+    Timer {
         id: backgroundStatusTimer
 
         interval: 30000
         repeat: true
         running: !root.opened
-        onTriggered: if (!root.actionPending) root.requestStatus()
+        onTriggered: if (!root.actionPending) root.reconcile()
     }
 
     Process {
