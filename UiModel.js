@@ -1,7 +1,7 @@
 // Kept free of Qt globals so the state contract can be exercised with Node.
 
 var SECTION_ORDER = ['nightLight', 'brightness', 'temperature', 'gamma', 'schedule'];
-var FIELD_COUNTS = [2, 2, 2, 2, 4];
+var FIELD_COUNTS = [2, 2, 2, 2, 6];
 
 var copy = {
   heroTitle: 'Luz nocturna',
@@ -10,12 +10,18 @@ var copy = {
   gamma: 'Brillo percibido',
   schedule: 'Horario',
   save: 'Guardar cambios',
+  saved: 'Cambios guardados',
   unavailable: 'No disponible',
   notConfirmed: 'Estado no confirmado',
   enabled: 'Activada',
   disabled: 'Color natural',
+  periodDay: 'Periodo diurno',
+  periodNight: 'Periodo nocturno',
+  manualOverride: 'Anulación manual',
   start: 'Inicio',
   end: 'Fin',
+  naturalDay: 'Día natural',
+  scheduleDayTemperature: 'Temperatura diurna',
   scheduleTemperature: 'Temperatura nocturna'
 };
 
@@ -69,45 +75,114 @@ function validNumber(value, minimum, maximum) {
   return isFinite(number) && number >= minimum && number <= maximum ? Math.round(number) : null;
 }
 
-function normalizeSchedule(schedule) {
-  var source = schedule || {};
-  var start = validTime(source.start);
-  var end = validTime(source.end);
-  if (start !== null && start === end) {
-    start = null;
-    end = null;
-  }
+function normalizeBrightness(source, root) {
+  var raw = source && typeof source === 'object' ? source : {};
+  var percentValue = raw.percent !== undefined ? raw.percent : (typeof source === 'number' ? source : root.brightness);
+  var percent = validNumber(percentValue, 1, 100);
+  var advertised = raw.available !== undefined ? raw.available === true : root.available === true;
   return {
-    start: start,
-    end: end,
-    temperature: validNumber(source.temperature, 2500, 5000)
+    available: advertised && percent !== null,
+    percent: advertised && percent !== null ? percent : null,
+    monitor: raw.monitor ? String(raw.monitor) : null,
+    error: raw.error ? String(raw.error) : null
+  };
+}
+
+function normalizeNightlight(source, root) {
+  var raw = source && typeof source === 'object' ? source : {};
+  var temperatureValue = raw.temperature !== undefined ? raw.temperature : root.temperature;
+  var gammaValue = raw.gamma !== undefined ? raw.gamma : root.gamma;
+  var temperature = validNumber(temperatureValue, 2500, 6500);
+  var gamma = validNumber(gammaValue, 0, 100);
+  var advertised = raw.available !== undefined ? raw.available === true : root.available === true;
+  var enabled = raw.enabled !== undefined ? raw.enabled === true : root.enabled === true;
+  return {
+    available: advertised && temperature !== null && gamma !== null,
+    enabled: advertised && temperature !== null && gamma !== null && enabled,
+    identity: raw.identity === true || raw.identity === false ? raw.identity : null,
+    temperature: advertised && temperature !== null ? temperature : null,
+    gamma: advertised && gamma !== null ? gamma : null,
+    error: raw.error ? String(raw.error) : null
+  };
+}
+
+function normalizeSchedule(source) {
+  var raw = source && typeof source === 'object' ? source : {};
+  var dayTime = validTime(raw.day_time !== undefined ? raw.day_time : raw.start);
+  var nightTime = validTime(raw.night_time !== undefined ? raw.night_time : raw.end);
+  var dayTemperature = validNumber(raw.day_temp, 5900, 6500);
+  var nightTemperature = validNumber(raw.night_temp !== undefined ? raw.night_temp : raw.temperature, 2500, 5000);
+  var available = raw.available === true;
+  if (raw.available === undefined)
+    available = dayTime !== null && nightTime !== null && nightTemperature !== null;
+  if (dayTime !== null && dayTime === nightTime) {
+    dayTime = null;
+    nightTime = null;
+    available = false;
+  }
+  var period = raw.period === 'day' || raw.period === 'night' ? raw.period : null;
+  return {
+    available: available,
+    day_time: dayTime,
+    day_temp: dayTemperature,
+    night_time: nightTime,
+    night_temp: nightTemperature,
+    day_identity: raw.day_identity === true,
+    period: period,
+    start: dayTime,
+    end: nightTime,
+    temperature: nightTemperature,
+    error: raw.error ? String(raw.error) : null
   };
 }
 
 function normalizeState(raw) {
   var source = raw || {};
-  var brightnessSource = source.brightness && typeof source.brightness === 'object' ? source.brightness : {};
-  var nightSource = source.nightlight && typeof source.nightlight === 'object' ? source.nightlight : {};
-  var scheduleSource = source.schedule && typeof source.schedule === 'object' ? source.schedule : {};
-  var brightness = validNumber(brightnessSource.percent !== undefined ? brightnessSource.percent : source.brightness, 1, 100);
-  var temperature = validNumber(nightSource.temperature !== undefined ? nightSource.temperature : source.temperature, 2500, 6500);
-  var gamma = validNumber(nightSource.gamma !== undefined ? nightSource.gamma : source.gamma, 0, 100);
-  var available = (brightnessSource.available !== undefined ? brightnessSource.available === true : source.available === true)
-    && (nightSource.available !== undefined ? nightSource.available === true : source.available === true)
-    && brightness !== null && temperature !== null && gamma !== null;
+  var brightness = normalizeBrightness(source.brightness, source);
+  var nightlight = normalizeNightlight(source.nightlight, source);
+  var schedule = normalizeSchedule(source.schedule);
+  var available = brightness.available && nightlight.available;
+  if (source.available !== undefined)
+    available = available && source.available === true;
   return {
     available: available,
-    enabled: available && (nightSource.enabled !== undefined ? nightSource.enabled === true : source.enabled === true),
-    brightness: available ? brightness : null,
-    temperature: available ? temperature : null,
-    gamma: available ? gamma : null,
-    schedule: normalizeSchedule({
-      start: scheduleSource.day_time !== undefined ? scheduleSource.day_time : scheduleSource.start,
-      end: scheduleSource.night_time !== undefined ? scheduleSource.night_time : scheduleSource.end,
-      temperature: scheduleSource.night_temp !== undefined ? scheduleSource.night_temp : scheduleSource.temperature
-    }),
-    error: available ? String(source.error || brightnessSource.error || nightSource.error || '') : copy.notConfirmed
+    enabled: available && nightlight.enabled,
+    brightness: brightness,
+    brightnessPercent: brightness.percent,
+    temperature: available ? nightlight.temperature : null,
+    gamma: available ? nightlight.gamma : null,
+    nightlight: nightlight,
+    schedule: schedule,
+    error: String(source.error || brightness.error || nightlight.error || schedule.error || (available ? '' : copy.notConfirmed))
   };
+}
+
+function validateScheduleFields(start, end, naturalDay, dayTemperature, nightTemperature) {
+  if (validTime(start) === null)
+    return { valid: false, error: 'La hora diurna debe usar el formato HH:MM' };
+  if (validTime(end) === null)
+    return { valid: false, error: 'La hora nocturna debe usar el formato HH:MM' };
+  if (start === end)
+    return { valid: false, error: 'Las horas de día y noche deben ser diferentes' };
+  if (validNumber(dayTemperature, 5900, 6500) === null)
+    return { valid: false, error: 'La temperatura diurna debe estar entre 5900 y 6500 K' };
+  if (validNumber(nightTemperature, 2500, 5000) === null)
+    return { valid: false, error: 'La temperatura nocturna debe estar entre 2500 y 5000 K' };
+  return { valid: true, error: '' };
+}
+
+function isManualOverride(state) {
+  var schedule = state && state.schedule;
+  if (!state || state.available !== true || !schedule || schedule.available !== true)
+    return false;
+  if (schedule.period === 'day') {
+    var expectedDayEnabled = schedule.day_identity !== true
+      && schedule.day_temp !== null
+      && schedule.day_temp < 6000;
+    return state.enabled !== expectedDayEnabled;
+  }
+  if (schedule.period === 'night') return state.enabled !== true;
+  return false;
 }
 
 function commitResponse(previousState, response) {
@@ -118,7 +193,7 @@ function commitResponse(previousState, response) {
   var validLatestRequestId = typeof latestRequestId === 'number' && isFinite(latestRequestId) && Math.floor(latestRequestId) === latestRequestId && latestRequestId >= 0;
   var patch = response && response.state;
   var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch);
-  var stateKeys = ['available', 'enabled', 'brightness', 'temperature', 'gamma', 'schedule', 'error'];
+  var stateKeys = ['available', 'enabled', 'brightness', 'brightnessPercent', 'temperature', 'gamma', 'nightlight', 'schedule', 'error'];
   var hasStateField = false;
   if (validPatch) {
     for (var stateKeyIndex = 0; stateKeyIndex < stateKeys.length; stateKeyIndex++) {
@@ -133,17 +208,37 @@ function commitResponse(previousState, response) {
   }
   var next = {};
   for (var key in current) next[key] = current[key];
-  for (var patchKey in patch) next[patchKey] = patch[patchKey];
+  for (var patchKey in patch) {
+    if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
+        && patch[patchKey] && typeof patch[patchKey] === 'object'
+        && current[patchKey] && typeof current[patchKey] === 'object') {
+      next[patchKey] = {};
+      for (var currentNestedKey in current[patchKey]) next[patchKey][currentNestedKey] = current[patchKey][currentNestedKey];
+      for (var patchNestedKey in patch[patchKey]) next[patchKey][patchNestedKey] = patch[patchKey][patchNestedKey];
+    } else {
+      next[patchKey] = patch[patchKey];
+    }
+  }
+  if (patch.enabled !== undefined && patch.nightlight === undefined) {
+    next.nightlight = {};
+    for (var nightlightKey in current.nightlight) next.nightlight[nightlightKey] = current.nightlight[nightlightKey];
+    next.nightlight.enabled = patch.enabled === true;
+  } else if (patch.nightlight && patch.enabled === undefined && patch.nightlight.enabled !== undefined) {
+    next.enabled = patch.nightlight.enabled === true;
+  }
   return { accepted: true, state: normalizeState(next) };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
+    FIELD_COUNTS: FIELD_COUNTS,
     sectionOrder: sectionOrder,
     cursorStart: cursorStart,
     moveCursor: moveCursor,
     normalizeState: normalizeState,
+    validateScheduleFields: validateScheduleFields,
+    isManualOverride: isManualOverride,
     commitResponse: commitResponse
   };
 }

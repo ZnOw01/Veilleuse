@@ -14,8 +14,11 @@ Panel {
     property bool scheduleExpanded: false
     property string editStart: "06:00"
     property string editEnd: "15:30"
-    property string editTemperature: "2500"
+    property bool editNaturalDay: true
+    property string editDayTemperature: "6000"
+    property string editNightTemperature: "3500"
     property string lastError: ""
+    property string feedbackText: ""
     property bool actionPending: false
     property int latestRequestId: 0
     property int queuedRequestId: 0
@@ -30,6 +33,10 @@ Panel {
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool stateReady: state.available === true
     readonly property string statusText: !stateReady ? Model.copy.unavailable : (state.enabled ? Model.copy.enabled : Model.copy.disabled)
+    readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature).error
+    readonly property string errorText: root.lastError !== "" ? root.lastError : (root.scheduleExpanded && root.scheduleValidationError !== "" ? root.scheduleValidationError : String(root.state.error || ""))
+    readonly property string periodText: root.stateReady && root.state.schedule.period === "day" ? Model.copy.periodDay : (root.stateReady && root.state.schedule.period === "night" ? Model.copy.periodNight : root.statusText)
+    readonly property string heroMeta: root.periodText + (Model.isManualOverride(root.state) ? " · " + Model.copy.manualOverride : "")
     readonly property real valueColumnWidth: Style.space(54)
 
     function normalizedPath(value) {
@@ -54,6 +61,7 @@ Panel {
         queuedOperation = operation;
         actionPending = true;
         lastError = "";
+        feedbackText = "";
         debounce.restart();
     }
 
@@ -72,12 +80,13 @@ Panel {
             return ;
 
         request(["schedule", "set", "--day-time", editStart,
-                 "--night-time", editEnd, "--day-temp", "6000",
-                 "--night-temp", editTemperature, "--natural-day"], "schedule");
+                 "--night-time", editEnd, "--day-temp", editDayTemperature,
+                 "--night-temp", editNightTemperature,
+                 editNaturalDay ? "--natural-day" : "--no-natural-day"], "schedule");
     }
 
     function scheduleFieldsValid() {
-        return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(editStart) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(editEnd) && /^(?:2500|[2-4]\d{3}|5000)$/.test(editTemperature);
+        return Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature).valid;
     }
 
     function launchLatest() {
@@ -120,9 +129,12 @@ Panel {
         if (result.accepted) {
             state = result.state;
             actionPending = false;
-            lastError = "";
-            if (queuedOperation === "schedule")
+            lastError = result.state.error || "";
+            if (queuedOperation === "schedule") {
+                feedbackText = Model.copy.saved;
+                feedbackTimer.restart();
                 scheduleExpanded = false;
+            }
 
             return ;
         }
@@ -131,14 +143,16 @@ Panel {
             state = Model.normalizeState({
         });
 
-        lastError = processError !== "" ? processError : Model.copy.notConfirmed;
+        var payloadError = payload && payload.error ? String(payload.error) : "";
+        var failedState = responseState && typeof responseState === "object" ? Model.normalizeState(responseState) : null;
+        lastError = payloadError || (failedState && failedState.error ? failedState.error : "") || processError || Model.copy.notConfirmed;
     }
 
     function moveCursor(dx, dy) {
         if (dx !== 0 && stateReady) {
             var section = Model.sectionOrder()[cursor.section];
             if (section === "brightness")
-                queueMutation("brightness", state.brightness + dx);
+                queueMutation("brightness", state.brightness.percent + dx);
             else if (section === "temperature")
                 queueMutation("temperature", state.temperature + dx * 100);
             else if (section === "gamma")
@@ -177,7 +191,9 @@ Panel {
                 scheduleExpanded = true;
                 editStart = state.schedule.start || "06:00";
                 editEnd = state.schedule.end || "15:30";
-                editTemperature = String(state.schedule.temperature || 2500);
+                editNaturalDay = state.schedule.day_identity === true;
+                editDayTemperature = String(state.schedule.day_temp || 6000);
+                editNightTemperature = String(state.schedule.night_temp || 3500);
                 return ;
             }
             if (cursor.field === 0)
@@ -185,6 +201,10 @@ Panel {
             else if (cursor.field === 1)
                 endEditor.forceActiveFocus();
             else if (cursor.field === 2)
+                naturalDayEditor.forceActiveFocus();
+            else if (cursor.field === 3)
+                dayTemperatureEditor.field.forceActiveFocus();
+            else if (cursor.field === 4)
                 scheduleTemperatureEditor.field.forceActiveFocus();
             else
                 queueSchedule();
@@ -212,6 +232,14 @@ Panel {
         interval: 90
         repeat: false
         onTriggered: root.launchLatest()
+    }
+
+    Timer {
+        id: feedbackTimer
+
+        interval: 2200
+        repeat: false
+        onTriggered: root.feedbackText = ""
     }
 
     Process {
@@ -248,7 +276,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || scheduleTemperatureEditor.field.activeFocus
+            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }
@@ -294,7 +322,7 @@ Panel {
                         anchors.leftMargin: Style.spacing.rowPaddingX
                         anchors.rightMargin: Style.spacing.rowPaddingX
                         title: Model.copy.heroTitle
-                        meta: root.stateReady ? root.statusText : Model.copy.unavailable
+                        meta: root.stateReady ? root.heroMeta : Model.copy.unavailable
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         iconOpacity: root.stateReady ? 1 : 0.45
@@ -327,13 +355,26 @@ Panel {
                 }
 
                 Text {
-                    visible: root.lastError !== "" && !root.scheduleExpanded
+                    visible: root.errorText !== ""
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.leftMargin: Style.spacing.rowPaddingX
                     anchors.rightMargin: Style.spacing.rowPaddingX
-                    text: root.lastError
+                    text: root.errorText
                     color: Color.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    visible: root.feedbackText !== ""
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.spacing.rowPaddingX
+                    anchors.rightMargin: Style.spacing.rowPaddingX
+                    text: root.feedbackText
+                    color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
@@ -372,7 +413,7 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             Text {
-                                text: root.stateReady ? root.state.brightness + "%" : "—"
+                                text: root.stateReady ? root.state.brightness.percent + "%" : "—"
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
@@ -384,7 +425,7 @@ Panel {
                             PanelSlider {
                                 width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
-                                value: root.state.brightness === null ? 1 : root.state.brightness
+                                value: root.state.brightness.percent === null ? 1 : root.state.brightness.percent
                                 minimum: 1
                                 maximum: 100
                                 step: 1
@@ -446,7 +487,7 @@ Panel {
                                 bar: root.bar
                                 value: root.state.temperature === null ? 2500 : root.state.temperature
                                 minimum: 2500
-                                maximum: 5000
+                                maximum: 6500
                                 step: 100
                                 integer: true
                                 enabled: root.stateReady
@@ -566,7 +607,9 @@ Panel {
                                     if (root.scheduleExpanded) {
                                         root.editStart = root.state.schedule.start || "06:00";
                                         root.editEnd = root.state.schedule.end || "15:30";
-                                        root.editTemperature = String(root.state.schedule.temperature || 2500);
+                                        root.editNaturalDay = root.state.schedule.day_identity === true;
+                                        root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
+                                        root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
                                     }
                                 }
                             }
@@ -628,9 +671,76 @@ Panel {
                                         text: root.editEnd
                                         inputMask: "99:99"
                                         onTextChanged: root.editEnd = text
-                                        onAccepted: scheduleTemperatureEditor.field.forceActiveFocus()
+                                        onAccepted: naturalDayEditor.forceActiveFocus()
                                         Keys.onEscapePressed: {
                                             root.leaveScheduleEditor(endEditor);
+                                        }
+                                    }
+
+                                }
+
+                                Column {
+                                    width: parent.width
+                                    spacing: Style.spacing.labelGap
+
+                                    Text {
+                                        text: Model.copy.naturalDay
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        width: parent.width
+                                    }
+
+                                    ToggleSwitch {
+                                        id: naturalDayEditor
+
+                                        width: parent.width
+                                        checked: root.editNaturalDay
+                                        focusable: true
+                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 2
+                                        foreground: root.foreground
+                                        interactive: root.stateReady && !root.actionPending
+                                        onToggled: root.editNaturalDay = checked
+                                        Keys.onEscapePressed: root.leaveScheduleEditor(naturalDayEditor, 2)
+                                        Keys.onReturnPressed: dayTemperatureEditor.field.forceActiveFocus()
+                                    }
+
+                                }
+
+                                Column {
+                                    width: parent.width
+                                    spacing: Style.spacing.labelGap
+
+                                    Text {
+                                        text: Model.copy.scheduleDayTemperature
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        width: parent.width
+                                    }
+
+                                    NumberField {
+                                        id: dayTemperatureEditor
+
+                                        width: parent.width
+                                        fieldWidth: parent.width
+                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 3
+                                        foreground: root.foreground
+                                        fontFamily: root.fontFamily
+                                        value: Number(root.editDayTemperature || 6000)
+                                        from: 5900
+                                        to: 6500
+                                        stepSize: 100
+                                        onModified: value => root.editDayTemperature = String(value)
+                                        field.Keys.priority: Keys.BeforeItem
+                                        field.Keys.onPressed: function(event) {
+                                            if (event.key === Qt.Key_Escape) {
+                                                root.leaveScheduleEditor(dayTemperatureEditor.field, 3);
+                                                event.accepted = true;
+                                            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                                root.leaveScheduleEditor(dayTemperatureEditor.field, 4);
+                                                event.accepted = true;
+                                            }
                                         }
                                     }
 
@@ -653,21 +763,21 @@ Panel {
 
                                         width: parent.width
                                         fieldWidth: parent.width
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 2
+                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 4
                                         foreground: root.foreground
                                         fontFamily: root.fontFamily
-                                        value: Number(root.editTemperature || 2500)
+                                        value: Number(root.editNightTemperature || 3500)
                                         from: 2500
                                         to: 5000
                                         stepSize: 100
-                                        onModified: value => root.editTemperature = String(value)
+                                        onModified: value => root.editNightTemperature = String(value)
                                         field.Keys.priority: Keys.BeforeItem
                                         field.Keys.onPressed: function(event) {
                                             if (event.key === Qt.Key_Escape) {
-                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 2);
+                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 4);
                                                 event.accepted = true;
                                             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 3);
+                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 5);
                                                 event.accepted = true;
                                             }
                                         }
@@ -681,7 +791,7 @@ Panel {
                                     leftAlign: false
                                     bordered: true
                                     focusable: true
-                                    hasCursor: root.cursor.section === 4 && root.cursor.field === 3
+                                    hasCursor: root.cursor.section === 4 && root.cursor.field === 5
                                     foreground: root.foreground
                                     enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
                                     onClicked: root.queueSchedule()

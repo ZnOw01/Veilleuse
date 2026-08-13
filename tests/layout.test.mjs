@@ -25,8 +25,18 @@ test('slider handlers declare signal parameters explicitly', () => {
 
 test('schedule editor uses native vertically centered fields', () => {
   assert.equal((schedule.match(/\bTextField\s*\{/g) || []).length, 2);
-  assert.equal((schedule.match(/\bNumberField\s*\{/g) || []).length, 1);
+  assert.equal((schedule.match(/\bNumberField\s*\{/g) || []).length, 2);
+  assert.match(schedule, /text:\s*Model\.copy\.naturalDay/);
+  assert.match(schedule, /id:\s*naturalDayEditor/);
   assert.equal((schedule.match(/\bTextInput\s*\{/g) || []).length, 0);
+});
+
+test('schedule editor exposes the day and night temperature bounds and both identity flags', () => {
+  assert.match(schedule, /id:\s*dayTemperatureEditor[\s\S]*?from:\s*5900[\s\S]*?to:\s*6500/);
+  assert.match(schedule, /id:\s*scheduleTemperatureEditor[\s\S]*?from:\s*2500[\s\S]*?to:\s*5000/);
+  assert.match(qml, /--day-temp/, 'queueSchedule sends the edited day temperature');
+  assert.match(qml, /--natural-day/);
+  assert.match(qml, /--no-natural-day/);
 });
 
 test('schedule controls share full width and the save label is centered', () => {
@@ -60,13 +70,47 @@ test('value column width has a single source of truth', () => {
 });
 
 test('lastError text gets the same horizontal padding as the rows', () => {
-  const start = qml.indexOf('visible: root.lastError !== ""');
+  const start = qml.indexOf('visible: root.errorText !== ""');
   const end = qml.indexOf('PanelSeparator {', start);
   const err = qml.slice(start, end + 'PanelSeparator {'.length);
 
   assert.match(err, /anchors\.leftMargin:\s*Style\.spacing\.rowPaddingX/);
   assert.match(err, /anchors\.rightMargin:\s*Style\.spacing\.rowPaddingX/);
-  assert.doesNotMatch(err, /width:\s*parent\.width/);
+  assert.doesNotMatch(err, /visible:\s*root\.lastError !== ""\s*&&\s*!root\.scheduleExpanded/);
+});
+
+test('payload and state errors remain visible while the editor is expanded', () => {
+  assert.match(qml, /payload\.error/);
+  assert.match(qml, /state\.error/);
+  assert.match(qml, /visible:\s*root\.errorText !== ""/);
+  assert.doesNotMatch(qml, /visible:\s*root\.errorText !== ""\s*&&\s*!root\.scheduleExpanded/);
+});
+
+test('successful schedule saves render short-lived feedback', () => {
+  assert.match(qml, /property string feedbackText/);
+  assert.match(qml, /Timer\s*\{[\s\S]*?id:\s*feedbackTimer/);
+  assert.match(qml, /feedbackTimer\.restart\(\)/);
+  assert.match(qml, /text:\s*root\.feedbackText/);
+});
+
+test('hero shows the scheduled period and only conditional manual override', () => {
+  assert.match(qml, /state\.schedule\.period/);
+  assert.match(qml, /Model\.isManualOverride\(root\.state\)/);
+  assert.match(qml, /Model\.copy\.manualOverride/);
+});
+
+test('temperature slider is live across the full 2500..6500 range', () => {
+  const temperature = qml.slice(qml.indexOf('id: temperatureRow'), qml.indexOf('id: gammaRow'));
+  assert.match(temperature, /minimum:\s*2500/);
+  assert.match(temperature, /maximum:\s*6500/);
+  assert.match(temperature, /onMoved:\s*function\(v\)/);
+});
+
+test('bar activity follows actual night-light state without depending on panel visibility', () => {
+  assert.match(barQml, /readonly property bool lightActive/);
+  assert.match(barQml, /state\.enabled/);
+  assert.match(barQml, /active:\s*root\.lightActive/);
+  assert.doesNotMatch(barQml, /active:\s*root\.opened/);
 });
 
 test('schedule summary stays a full-width left-aligned button like the reference', () => {
@@ -86,5 +130,5 @@ test('schedule editors return focus before Escape can close the panel', () => {
   assert.match(qml, /function handleCloseRequested\(\)\s*\{[\s\S]*?if \(scheduleExpanded\)[\s\S]*?scheduleExpanded\s*=\s*false;[\s\S]*?keyCatcher\.forceActiveFocus\(\);[\s\S]*?return ;[\s\S]*?root\.close\(\);/);
 
   const editor = schedule.slice(schedule.indexOf('id: scheduleTemperatureEditor'));
-  assert.match(editor, /field\.Keys\.onPressed:\s*function\(event\)\s*\{[\s\S]*?Qt\.Key_Escape[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*2\)[\s\S]*?Qt\.Key_Return[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*3\)/);
+  assert.match(editor, /field\.Keys\.onPressed:\s*function\(event\)\s*\{[\s\S]*?Qt\.Key_Escape[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*4\)[\s\S]*?Qt\.Key_Return[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*5\)/);
 });

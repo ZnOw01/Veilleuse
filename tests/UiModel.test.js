@@ -23,36 +23,43 @@ test('moves the panel cursor with bounded section and field navigation', () => {
   assert.deepEqual(Model.moveCursor({ section: 2, field: 1 }, 'h'), { section: 2, field: 0 });
 });
 
+test('exposes six keyboard fields when the schedule editor is expanded', () => {
+  assert.equal(Model.FIELD_COUNTS && Model.FIELD_COUNTS[4], 6);
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 4 }, 'j', true), { section: 4, field: 5 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 5 }, 'j', true), { section: 4, field: 5 });
+});
+
 test('clamps a horizontal field when vertical navigation enters a shorter section', () => {
   assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'k'), { section: 3, field: 1 });
 });
 
-test('keeps expanded schedule vertical navigation inside fields 0 through 3', () => {
+test('keeps expanded schedule vertical navigation inside fields 0 through 5', () => {
   assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'j', true), { section: 4, field: 1 });
   assert.deepEqual(Model.moveCursor({ section: 4, field: 1 }, 'ArrowDown', true), { section: 4, field: 2 });
   assert.deepEqual(Model.moveCursor({ section: 4, field: 2 }, 'j', true), { section: 4, field: 3 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'ArrowDown', true), { section: 4, field: 3 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'k', true), { section: 4, field: 2 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'ArrowDown', true), { section: 4, field: 4 });
+  assert.deepEqual(Model.moveCursor({ section: 4, field: 4 }, 'k', true), { section: 4, field: 3 });
   assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'ArrowUp', true), { section: 4, field: 0 });
 });
 
 test('normalizes unavailable helper data to a fail-closed state', () => {
-  assert.deepEqual(Model.normalizeState({
+  const state = Model.normalizeState({
     available: true,
     enabled: true,
     brightness: 150,
     temperature: 'not-a-number',
     gamma: -4,
     schedule: { start: '25:99', end: '15:30', temperature: 3000 }
-  }), {
-    available: false,
-    enabled: false,
-    brightness: null,
-    temperature: null,
-    gamma: null,
-    schedule: { start: null, end: '15:30', temperature: 3000 },
-    error: 'Estado no confirmado'
   });
+  assert.equal(state.available, false);
+  assert.equal(state.enabled, false);
+  assert.deepEqual(state.brightness, { available: false, percent: null, monitor: null, error: null });
+  assert.equal(state.temperature, null);
+  assert.equal(state.gamma, null);
+  assert.equal(state.schedule.start, null);
+  assert.equal(state.schedule.end, '15:30');
+  assert.equal(state.schedule.temperature, 3000);
+  assert.equal(state.error, 'Estado no confirmado');
 });
 
 test('rejects boolean numeric fields from malformed JSON', () => {
@@ -61,7 +68,7 @@ test('rejects boolean numeric fields from malformed JSON', () => {
     nightlight: { available: true, temperature: 3500, gamma: true }
   });
   assert.equal(state.available, false);
-  assert.equal(state.brightness, null);
+  assert.deepEqual(state.brightness, { available: false, percent: null, monitor: null, error: null });
   assert.equal(state.gamma, null);
 });
 
@@ -112,14 +119,26 @@ test('normalizes the combined JSON emitted by veilleuse-control', () => {
   const state = Model.normalizeState({
     brightness: { available: true, percent: 42, monitor: 'eDP-2', error: null },
     nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 90, error: null },
-    schedule: { available: true, day_time: '07:00', night_time: '21:00', night_temp: 3200, error: null }
+    schedule: { available: true, day_time: '07:00', day_temp: 6200, night_time: '21:00', night_temp: 3200, day_identity: false, period: 'day', error: null }
   });
   assert.equal(state.available, true);
-  assert.equal(state.brightness, 42);
+  assert.deepEqual(state.brightness, { available: true, percent: 42, monitor: 'eDP-2', error: null });
   assert.equal(state.enabled, true);
   assert.equal(state.temperature, 3500);
   assert.equal(state.gamma, 90);
-  assert.deepEqual(state.schedule, { start: '07:00', end: '21:00', temperature: 3200 });
+  assert.deepEqual(state.schedule, {
+    available: true,
+    day_time: '07:00',
+    day_temp: 6200,
+    night_time: '21:00',
+    night_temp: 3200,
+    day_identity: false,
+    period: 'day',
+    start: '07:00',
+    end: '21:00',
+    temperature: 3200,
+    error: null
+  });
 });
 
 test('fails closed when schedule boundaries are equal', () => {
@@ -130,5 +149,66 @@ test('fails closed when schedule boundaries are equal', () => {
     gamma: 90,
     schedule: { start: '06:00', end: '06:00', temperature: 3200 }
   });
-  assert.deepEqual(state.schedule, { start: null, end: null, temperature: 3200 });
+  assert.equal(state.schedule.start, null);
+  assert.equal(state.schedule.end, null);
+  assert.equal(state.schedule.temperature, 3200);
+  assert.equal(state.schedule.available, false);
+});
+
+test('keeps a numeric day profile and its 5900..6500 temperature', () => {
+  const state = Model.normalizeState({
+    brightness: { available: true, percent: 50, monitor: 'DP-1' },
+    nightlight: { available: true, enabled: false, identity: true, temperature: 6000, gamma: 100 },
+    schedule: { available: true, day_time: '06:00', day_temp: 5900, night_time: '18:00', night_temp: 5000, day_identity: false, period: 'night' }
+  });
+  assert.equal(state.schedule.day_temp, 5900);
+  assert.equal(state.schedule.night_temp, 5000);
+  assert.equal(state.schedule.day_identity, false);
+  assert.equal(state.schedule.period, 'night');
+});
+
+test('reports a specific local error when schedule times are equal', () => {
+  assert.equal(typeof Model.validateScheduleFields, 'function');
+  if (typeof Model.validateScheduleFields !== 'function') return;
+  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', true, 6000, 3500), {
+    valid: false,
+    error: 'Las horas de día y noche deben ser diferentes'
+  });
+});
+
+test('detects a manual override only when real light state contradicts schedule period', () => {
+  assert.equal(typeof Model.isManualOverride, 'function');
+  if (typeof Model.isManualOverride !== 'function') return;
+  const scheduledDay = Model.normalizeState({
+    brightness: { available: true, percent: 50, monitor: 'DP-1' },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100 },
+    schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500, day_identity: true, period: 'day' }
+  });
+  const scheduledNight = Model.commitResponse(scheduledDay, {
+    requestId: 1,
+    latestRequestId: 1,
+    ok: true,
+    state: { enabled: false, schedule: { period: 'night' } }
+  }).state;
+  assert.equal(Model.isManualOverride(scheduledDay), true);
+  assert.equal(Model.isManualOverride(scheduledNight), true);
+  assert.equal(Model.isManualOverride(Model.commitResponse(scheduledDay, {
+    requestId: 2,
+    latestRequestId: 2,
+    ok: true,
+    state: { enabled: false, schedule: { period: 'day' } }
+  }).state), false);
+
+  const numericDay = Model.normalizeState({
+    brightness: { available: true, percent: 50, monitor: 'DP-1' },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 5900, gamma: 100 },
+    schedule: { available: true, day_time: '06:00', day_temp: 5900, night_time: '18:00', night_temp: 3500, day_identity: false, period: 'day' }
+  });
+  assert.equal(Model.isManualOverride(numericDay), false);
+  assert.equal(Model.isManualOverride(Model.commitResponse(numericDay, {
+    requestId: 3,
+    latestRequestId: 3,
+    ok: true,
+    state: { enabled: false }
+  }).state), true);
 });
