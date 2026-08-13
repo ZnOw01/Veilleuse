@@ -2,8 +2,19 @@
 
 var SECTION_ORDER = ['nightLight', 'brightness', 'temperature', 'gamma', 'schedule'];
 var FIELD_COUNTS = [2, 2, 2, 2, 6];
+var ROUTES = ['home', 'automation', 'settings'];
 
-var copy = {
+// Load I18n when running under Node (CommonJS module present). Quickshell has
+// no `require`, so the bundled DEFAULT_COPY below keeps the panel fully
+// functional in its native Spanish default until the locale wiring is added.
+var I18n = null;
+if (typeof module !== 'undefined' && module.exports) {
+  I18n = require('./I18n.js');
+}
+
+// Bundled Spanish default used only as a Quickshell fallback; in Node the
+// `copy` surface is the exact I18n.es dictionary so both stay in parity.
+var DEFAULT_COPY = {
   heroTitle: 'Luz nocturna',
   brightness: 'Brillo',
   temperature: 'Temperatura',
@@ -22,8 +33,61 @@ var copy = {
   end: 'Fin',
   naturalDay: 'Día natural',
   scheduleDayTemperature: 'Temperatura diurna',
-  scheduleTemperature: 'Temperatura nocturna'
+  scheduleTemperature: 'Temperatura nocturna',
+  routeHome: 'Inicio',
+  routeAutomation: 'Automatización',
+  routeSettings: 'Ajustes',
+  provenanceAutomatic: 'Automática',
+  provenanceManual: 'Manual',
+  provenancePreset: 'Perfil',
+  provenanceSnooze: 'Posposición',
+  provenanceUnknown: 'Desconocido',
+  midnightExplanation: 'La posposición “hasta mañana” se mantiene hasta el inicio del periodo diurno del día siguiente (medianoche), cuando el horario retoma el perfil programado.',
+  preflightTitle: 'Comprobación del asistente',
+  preflightStatusOk: 'Todo listo',
+  preflightStatusWarn: 'Atención',
+  preflightStatusFail: 'Falla',
+  errHelperMissing: 'No se pudo iniciar el asistente de control.',
+  errBrightnessUnavailable: 'El brillo no está disponible en este momento.',
+  errNightlightUnavailable: 'La luz nocturna no está disponible.',
+  errMonitorUnavailable: 'El monitor seleccionado no está disponible.',
+  errScheduleInvalid: 'El horario configurado no es válido.',
+  errSnoozeInvalid: 'La posposición solicitada no es válida.',
+  errPresetNotFound: 'No se encontró el perfil solicitado.',
+  errPresetInvalid: 'El perfil no es válido.',
+  errHistoryUnreadable: 'No se pudo leer el historial.',
+  errSettingsWrite: 'No se pudieron guardar los ajustes.',
+  errShortcutWrite: 'No se pudo actualizar el acceso directo.',
+  errUnknown: 'Se produjo un error desconocido.',
+  presetTitle: 'Perfiles',
+  presetApply: 'Aplicar',
+  presetDelete: 'Eliminar',
+  presetSave: 'Guardar perfil',
+  presetAll: 'Todos los perfiles',
+  presetBuiltIn: 'Integrado',
+  snoozeTitle: 'Posposición',
+  snoozeSet: 'Posponer',
+  snoozeUntilTomorrow: 'Hasta mañana',
+  snoozeClear: 'Cancelar posposición',
+  snoozeStatusActive: 'Pospuesta',
+  snoozeStatusOff: 'Sin posposición',
+  settingsTitle: 'Ajustes',
+  applyScope: 'Alcance de aplicación',
+  applyScopeSession: 'Sesión',
+  applyScopePersistent: 'Persistente',
+  defaultPreset: 'Perfil predeterminado',
+  language: 'Idioma',
+  shortcut: 'Acceso directo',
+  shortcutInstall: 'Instalar',
+  shortcutRemove: 'Quitar',
+  transitionSeconds: 'Transición (s)',
+  historyTitle: 'Historial',
+  historyClear: 'Limpiar historial',
+  historyEmpty: 'Sin registros'
 };
+
+var copy = (I18n && I18n.es) ? I18n.es : DEFAULT_COPY;
+
 
 function sectionOrder() {
   return SECTION_ORDER.slice();
@@ -235,6 +299,182 @@ function commitResponse(previousState, response) {
   return { accepted: true, state: normalizeState(next) };
 }
 
+function t(key, locale) {
+  if (I18n) return I18n.t(key, locale);
+  return Object.prototype.hasOwnProperty.call(copy, key) ? copy[key] : key;
+}
+
+function copyFor(locale) {
+  if (I18n) return I18n.dictionary(locale);
+  return copy;
+}
+
+var ERROR_CODE_KEYS = {
+  helperMissing: 'errHelperMissing',
+  brightnessUnavailable: 'errBrightnessUnavailable',
+  nightlightUnavailable: 'errNightlightUnavailable',
+  monitorUnavailable: 'errMonitorUnavailable',
+  scheduleInvalid: 'errScheduleInvalid',
+  snoozeInvalid: 'errSnoozeInvalid',
+  presetNotFound: 'errPresetNotFound',
+  presetInvalid: 'errPresetInvalid',
+  historyUnreadable: 'errHistoryUnreadable',
+  settingsWrite: 'errSettingsWrite',
+  shortcutWrite: 'errShortcutWrite'
+};
+
+function errorCodeMessage(code, locale) {
+  var key = Object.prototype.hasOwnProperty.call(ERROR_CODE_KEYS, code) ? ERROR_CODE_KEYS[code] : 'errUnknown';
+  return t(key, locale);
+}
+
+function localizeError(error, locale) {
+  if (!error) return '';
+  if (typeof error === 'string' && Object.prototype.hasOwnProperty.call(ERROR_CODE_KEYS, error)) {
+    return errorCodeMessage(error, locale);
+  }
+  return error;
+}
+
+function routeOrder() {
+  return ROUTES.slice();
+}
+
+function routeStart() {
+  return ROUTES[0];
+}
+
+function moveRoute(route, key) {
+  var index = ROUTES.indexOf(route);
+  if (index === -1) index = 0;
+  if (key === 'l' || key === 'ArrowRight') index = Math.min(ROUTES.length - 1, index + 1);
+  if (key === 'h' || key === 'ArrowLeft') index = Math.max(0, index - 1);
+  return ROUTES[index];
+}
+
+function routeLabel(route, locale) {
+  var name = String(route || '');
+  var key = name === '' ? 'routeHome' : 'route' + name.charAt(0).toUpperCase() + name.slice(1);
+  return t(key, locale);
+}
+
+var PROVENANCE_KEYS = {
+  automatic: 'provenanceAutomatic',
+  manual: 'provenanceManual',
+  preset: 'provenancePreset',
+  snooze: 'provenanceSnooze',
+  unknown: 'provenanceUnknown'
+};
+
+function provenanceLabel(origin, locale) {
+  var key = Object.prototype.hasOwnProperty.call(PROVENANCE_KEYS, origin) ? PROVENANCE_KEYS[origin] : 'provenanceUnknown';
+  return t(key, locale);
+}
+
+function midnightExplanation(locale) {
+  return t('midnightExplanation', locale);
+}
+
+function preflightStatus(preflight, locale) {
+  var checks = preflight && Array.isArray(preflight.checks) ? preflight.checks : [];
+  var failed = 0;
+  var warnings = 0;
+  for (var i = 0; i < checks.length; i++) {
+    var check = checks[i] || {};
+    if (check.ok !== true) failed += 1;
+    else if (check.warn === true) warnings += 1;
+  }
+  var statusKey = failed > 0 || checks.length === 0 ? 'preflightStatusFail' : (warnings > 0 ? 'preflightStatusWarn' : 'preflightStatusOk');
+  var mapped = [];
+  for (var j = 0; j < checks.length; j++) {
+    var c = checks[j] || {};
+    mapped.push({
+      name: c.name ? String(c.name) : '',
+      ok: c.ok === true,
+      warn: c.warn === true,
+      error: c.error ? (typeof c.error === 'string' ? localizeError(c.error, locale) : c.error) : ''
+    });
+  }
+  return {
+    ok: checks.length > 0 && failed === 0 && warnings === 0,
+    status: t(statusKey, locale),
+    failed: failed,
+    warnings: warnings,
+    checks: mapped
+  };
+}
+
+function presetViewModel(presets, selected, locale) {
+  var list = Array.isArray(presets) ? presets : [];
+  var applyLabel = t('presetApply', locale);
+  var builtinLabel = t('presetBuiltIn', locale);
+  var mapped = [];
+  for (var i = 0; i < list.length; i++) {
+    var preset = list[i] || {};
+    var name = preset.name ? String(preset.name) : '';
+    mapped.push({
+      name: name,
+      builtin: preset.builtin === true,
+      selected: name !== '' && name === String(selected == null ? '' : selected),
+      applyLabel: applyLabel,
+      builtinLabel: builtinLabel
+    });
+  }
+  return mapped;
+}
+
+function snoozeViewModel(automation, locale) {
+  var a = automation && typeof automation === 'object' ? automation : {};
+  return {
+    snoozed: a.snoozed === true,
+    scheduleEnabled: a.schedule_enabled === true,
+    transitionSeconds: a.transition_seconds,
+    statusLabel: t(a.snoozed === true ? 'snoozeStatusActive' : 'snoozeStatusOff', locale),
+    snoozeSetLabel: t('snoozeSet', locale),
+    snoozeUntilTomorrowLabel: t('snoozeUntilTomorrow', locale),
+    snoozeClearLabel: t('snoozeClear', locale)
+  };
+}
+
+function settingsViewModel(settings, locale) {
+  var s = settings && typeof settings === 'object' ? settings : {};
+  return {
+    language: s.locale ? String(s.locale) : 'es',
+    applyScope: s.apply_scope === 'persistent' ? 'persistent' : 'session',
+    defaultPreset: s.default_preset ? String(s.default_preset) : '',
+    shortcutKeys: s.shortcut_keys ? String(s.shortcut_keys) : '',
+    languageLabel: t('language', locale),
+    applyScopeLabel: t('applyScope', locale),
+    sessionLabel: t('applyScopeSession', locale),
+    persistentLabel: t('applyScopePersistent', locale),
+    defaultPresetLabel: t('defaultPreset', locale),
+    shortcutLabel: t('shortcut', locale),
+    shortcutInstallLabel: t('shortcutInstall', locale),
+    shortcutRemoveLabel: t('shortcutRemove', locale),
+    transitionLabel: t('transitionSeconds', locale)
+  };
+}
+
+function historyViewModel(records, locale) {
+  var list = Array.isArray(records) ? records : [];
+  var bounded = list.slice(0, 50);
+  var mapped = [];
+  for (var i = 0; i < bounded.length; i++) {
+    var record = bounded[i] || {};
+    mapped.push({
+      time: record.time ? String(record.time) : '',
+      operation: record.operation ? String(record.operation) : '',
+      origin: record.origin ? String(record.origin) : ''
+    });
+  }
+  return {
+    records: mapped,
+    empty: mapped.length === 0,
+    emptyLabel: t('historyEmpty', locale),
+    clearLabel: t('historyClear', locale)
+  };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
@@ -245,6 +485,21 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeState: normalizeState,
     validateScheduleFields: validateScheduleFields,
     isManualOverride: isManualOverride,
-    commitResponse: commitResponse
+    commitResponse: commitResponse,
+    t: t,
+    copyFor: copyFor,
+    errorCodeMessage: errorCodeMessage,
+    localizeError: localizeError,
+    routeOrder: routeOrder,
+    routeStart: routeStart,
+    moveRoute: moveRoute,
+    routeLabel: routeLabel,
+    provenanceLabel: provenanceLabel,
+    midnightExplanation: midnightExplanation,
+    preflightStatus: preflightStatus,
+    presetViewModel: presetViewModel,
+    snoozeViewModel: snoozeViewModel,
+    settingsViewModel: settingsViewModel,
+    historyViewModel: historyViewModel
   };
 }

@@ -10,7 +10,7 @@ for path in (Path('scripts/veilleuse-control'), Path('scripts/schedule_utils.py'
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
 PY
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_veilleuse_control.py'
-node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs
+node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs tests/i18n.test.js tests/uiModelV2.test.js
 /usr/bin/python3 -m json.tool manifest.json >/dev/null
 
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then
