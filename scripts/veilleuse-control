@@ -53,6 +53,7 @@ _INTEGER_PATTERN = re.compile(r"\s*([0-9]+)\s*")
 _SCHEDULE_MODULE_CACHE = {}
 _SHORTCUT_MODULE_CACHE = {}
 _STATE_MODULE_CACHE = {}
+_UTILITY_MODULE_CACHE = {}
 
 
 # --------------------------------------------------------------------------- \
@@ -134,6 +135,46 @@ def _state_module():
         except Exception:
             return None
     return None
+
+
+def _utility_module(name):
+    """Load one existing utility module without creating package bytecode."""
+    root = resolve_plugin_root()
+    path = root / "scripts" / f"{name}.py"
+    cache_key = (path, str(os.environ.get("XDG_CONFIG_HOME", "")), str(os.environ.get("XDG_STATE_HOME", "")))
+    cached = _UTILITY_MODULE_CACHE.get((name, cache_key))
+    if cached is not None:
+        if name == "schedule_toggle_utils":
+            cached.HYPRSUNSET_CONFIG = config_path()
+        return cached
+    if not path.is_file():
+        return None
+    try:
+        source = root / "scripts"
+        package = sys.modules.get("scripts")
+        if package is None:
+            package = types.ModuleType("scripts")
+            package.__path__ = [str(source)]
+            sys.modules["scripts"] = package
+        state = _state_module()
+        if state is not None:
+            sys.modules["scripts.state_utils"] = state
+            sys.modules["state_utils"] = state
+        schedule = _schedule_module()
+        if schedule is not None:
+            sys.modules["schedule_utils"] = schedule
+        module_name = f"scripts.{name}" if name == "preset_utils" else name
+        module = types.ModuleType(module_name)
+        module.__file__ = str(path)
+        module.__package__ = "scripts" if name == "preset_utils" else ""
+        code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+        exec(code, module.__dict__)
+        _UTILITY_MODULE_CACHE[(name, cache_key)] = module
+        if name == "schedule_toggle_utils":
+            module.HYPRSUNSET_CONFIG = config_path()
+        return module
+    except Exception:
+        return None
 
 
 def config_path() -> Path:
@@ -276,16 +317,31 @@ def read_brightness(monitor):
     return percent, None
 
 
-def _focused_monitor_write_error(monitor):
+def _monitor_write_error(monitor, target="focused"):
     state = read_monitor_state()
-    if state["monitor"] != monitor:
-        return "El monitor enfocado no es coherente con el estado actual"
     matches = [entry for entry in state["monitors"] if entry["name"] == monitor]
     if not matches or not matches[0]["enabled"]:
-        return "El monitor enfocado no está habilitado"
-    if not matches[0]["focused"]:
-        return "El monitor enfocado no es coherente con la lista de monitores"
+        return "El monitor seleccionado no está habilitado"
+    if target == "focused":
+        if state["monitor"] != monitor:
+            return "El monitor enfocado no es coherente con el estado actual"
+        if not matches[0]["focused"]:
+            return "El monitor enfocado no es coherente con la lista de monitores"
     return None
+
+
+def _resolve_monitor_target(target, state=None):
+    state = read_monitor_state() if state is None else state
+    if target == "focused":
+        monitor = state.get("monitor")
+        error = _monitor_write_error(monitor, "focused") if monitor else "No se pudo resolver un monitor enfocado"
+        return monitor, error
+    if not isinstance(target, str) or not target:
+        return None, "El monitor seleccionado no está habilitado"
+    matches = [entry for entry in state.get("monitors", []) if entry.get("name") == target]
+    if len(matches) != 1 or matches[0].get("enabled") is not True:
+        return None, "El monitor seleccionado no está habilitado"
+    return target, None
 
 
 def apply_brightness(monitor, target):
@@ -308,7 +364,7 @@ def apply_brightness(monitor, target):
         return {"available": False, "percent": None, "monitor": monitor, "error": error}
     if target == before:
         return {"available": True, "percent": before, "monitor": monitor, "error": None}
-    monitor_error = _focused_monitor_write_error(monitor)
+    monitor_error = _monitor_write_error(monitor, "focused" if monitor == read_monitor_state().get("monitor") else "explicit")
     if monitor_error is not None:
         return {
             "available": False,
@@ -919,6 +975,93 @@ def _history_status(module):
     }
 
 
+def _native_apply_values(temperature, gamma):
+    """Apply both native night-light registers and return the confirmed state."""
+    temperature_state = _apply_temperature(temperature)
+    if not temperature_state["available"] or temperature_state.get("error"):
+        temperature_state["error_code"] = "temperature_readback_failed"
+        return temperature_state
+    gamma_state = _apply_gamma(gamma)
+    if not gamma_state["available"] or gamma_state.get("error"):
+        gamma_state["error_code"] = "gamma_readback_failed"
+        return gamma_state
+    return gamma_state
+
+
+def _native_brightness_step(monitor, token):
+    if token not in ("+1%", "1%-"):
+        return {"ok": False, "error_code": "invalid_brightness_step"}
+    before, error = read_brightness(monitor)
+    if before is None:
+        return {"ok": False, "error_code": "brightness_readback_failed", "error": error}
+    monitor_error = _monitor_write_error(
+        monitor, "focused" if read_monitor_state().get("monitor") == monitor else "explicit"
+    )
+    if monitor_error:
+        return {"ok": False, "error_code": "monitor_unavailable", "error": monitor_error}
+    expected = min(BRIGHTNESS_MAX, before + 1) if token == "+1%" else max(BRIGHTNESS_MIN, before - 1)
+    result = run_command([*BRIGHTNESS_COMMAND, monitor, token], timeout=WRITE_TIMEOUT)
+    if result.returncode != 0:
+        return {"ok": False, "error_code": "brightness_write_failed", "error": result.stderr.strip()}
+    actual, error = read_brightness(monitor)
+    if actual != expected or abs((actual or before) - before) > 1:
+        return {"ok": False, "error_code": "brightness_readback_failed", "error": error or "El cambio de brillo no se confirmó"}
+    return {"ok": True, "percent": actual, "monitor": monitor}
+
+
+def _current_profile():
+    schedule = schedule_get()
+    if not schedule.get("available"):
+        return {
+            "available": False,
+            "error_code": "schedule_unavailable",
+            "error": schedule.get("error") or "El perfil de horario no está disponible",
+        }
+    period_value = schedule.get("period")
+    if period_value == "day":
+        if schedule.get("day_identity"):
+            return {"available": True, "kind": "identity"}
+        return {"available": True, "kind": "temperature", "temperature": schedule["day_temp"]}
+    return {"available": True, "kind": "temperature", "temperature": schedule["night_temp"]}
+
+
+def _automation_environment():
+    module = _utility_module("automation_utils")
+    state = _state_module()
+    if module is None or state is None:
+        return None, None
+    return module, {
+        "read_state": state.read_state,
+        "update_state": state.update_state,
+        "append_history": state.append_history,
+        "read_nightlight": read_nightlight,
+        "apply_values": _native_apply_values,
+        "apply_natural": _apply_natural,
+        "current_profile": _current_profile,
+        "token": lambda: None,
+    }
+
+
+def _preset_manager(*, transition_seconds=0):
+    module = _utility_module("preset_utils")
+    state = _state_module()
+    automation_module, environment = _automation_environment()
+    if module is None or state is None:
+        return None
+    if automation_module is not None and environment is not None:
+        def apply_nightlight(temperature, gamma):
+            return automation_module.transition(temperature, gamma, transition_seconds, environment)
+    else:
+        apply_nightlight = _native_apply_values
+    operations = {
+        "read_monitor_state": read_monitor_state,
+        "read_brightness": read_brightness,
+        "brightness_step": _native_brightness_step,
+        "apply_nightlight": apply_nightlight,
+    }
+    return module.PresetManager(operations, state=state)
+
+
 def _preflight_check(name, ok, error_code=None, error=None):
     return {
         "name": name,
@@ -1047,16 +1190,17 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
     }
 
 
-def read_status(*, nightlight=None):
+def read_status(*, nightlight=None, monitor_name=None):
     """Combine monitor/brightness, nightlight and schedule state in one JSON."""
     monitor = read_monitor_state()
     brightness = None
-    if monitor["monitor"]:
-        percent, error = read_brightness(monitor["monitor"])
+    selected_monitor = monitor["monitor"] if monitor_name is None else monitor_name
+    if selected_monitor:
+        percent, error = read_brightness(selected_monitor)
         brightness_state = {
             "available": percent is not None,
             "percent": percent,
-            "monitor": monitor["monitor"],
+            "monitor": selected_monitor,
             "error": error,
         }
     else:
@@ -1201,31 +1345,145 @@ def cmd_settings(args):
     return 0
 
 
+def _operation_success(result, *, monitor_name=None):
+    payload = read_status(monitor_name=monitor_name)
+    payload["ok"] = True
+    payload["result"] = result
+    if isinstance(result, dict) and result.get("operation"):
+        payload["operation"] = result["operation"]
+    return payload
+
+
+def _operation_failure(error_code, error, *, result=None):
+    payload = {
+        "ok": False,
+        "error_code": error_code,
+        "error": str(error) if error else "La operación no se pudo completar",
+    }
+    if result is not None:
+        payload["result"] = result
+    try:
+        payload["state"] = read_status()
+    except Exception:
+        pass
+    return payload
+
+
 def cmd_brightness(args):
+    monitor_state = read_monitor_state()
+    monitor, monitor_error = _resolve_monitor_target(args.monitor, monitor_state)
+    if monitor_error:
+        _emit(_operation_failure("monitor_unavailable", monitor_error))
+        return 1
     if args.value is None:
-        monitor_state = read_monitor_state()
-        percent, error = read_brightness(monitor_state["monitor"])
+        percent, error = read_brightness(monitor)
         _emit(
             {
                 "available": percent is not None,
                 "percent": percent,
-                "monitor": monitor_state["monitor"],
+                "monitor": monitor,
                 "error": error,
             }
         )
         return 0 if percent is not None else 1
-    # Delegate an absolute percentage to the Omarchy surface; the request is
-    # clamped to the 1..100 contract so a panel can never be asked below 1%.
     try:
         raw = int(args.value)
     except (TypeError, ValueError):
-        return _abort("El brillo debe ser un número entero")
+        _emit(_operation_failure("invalid_argument", "El brillo debe ser un número entero"))
+        return 1
     target = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, raw))
-    monitor_state = read_monitor_state()
-    state = apply_brightness(monitor_state["monitor"], target)
+    state = apply_brightness(monitor, target)
     ok = state["available"] and state["error"] is None
-    _emit(read_status() if ok else {"error": state["error"], "state": read_status()})
+    if ok:
+        _emit(read_status(monitor_name=monitor))
+    else:
+        _emit(_operation_failure("brightness_readback_failed", state["error"], result=state))
     return 0 if ok else 1
+
+
+def cmd_preset(args):
+    transition_seconds = getattr(args, "transition_seconds", 0) or 0
+    manager = _preset_manager(transition_seconds=transition_seconds)
+    if manager is None:
+        _emit(_operation_failure("helper_unavailable", "El gestor de perfiles no está disponible"))
+        return 1
+    try:
+        if args.action == "list":
+            result = {"operation": "preset_list", "presets": manager.list_presets()}
+        elif args.action == "save":
+            result = manager.save_preset(args.name, args.temperature, args.gamma, args.brightness)
+            result["operation"] = "preset_save"
+        elif args.action == "delete":
+            result = manager.delete_preset(args.name)
+            result["operation"] = "preset_delete"
+        else:
+            result = manager.apply_preset(
+                args.name,
+                monitor=args.monitor,
+                timeout=max(30, transition_seconds) if transition_seconds else None,
+            )
+            if not result.get("success"):
+                _emit(_operation_failure(result.get("error_code", "preset_failed"), "No se pudo aplicar el perfil", result=result))
+                return 1
+            result["operation"] = "preset_apply"
+            _emit(_operation_success(result, monitor_name=result.get("monitor")))
+            return 0
+        _emit(_operation_success(result))
+        return 0
+    except Exception as error:
+        code = getattr(error, "error_code", "preset_failed")
+        _emit(_operation_failure(code, str(error)))
+        return 1
+
+
+def cmd_snooze(args):
+    module, environment = _automation_environment()
+    if module is None or environment is None:
+        _emit(_operation_failure("helper_unavailable", "El automatizador no está disponible"))
+        return 1
+    try:
+        if args.action == "status":
+            result = module.snooze_status_current(environment)
+        elif args.action == "set":
+            result = module.snooze_set(args.minutes, environment)
+        elif args.action == "until-tomorrow":
+            result = module.snooze_until_tomorrow(environment)
+        else:
+            result = module.snooze_clear(environment)
+        if not result.get("success", True):
+            _emit(_operation_failure(result.get("error_code", "snooze_failed"), result.get("error"), result=result))
+            return 1
+        _emit(_operation_success(result))
+        return 0
+    except Exception as error:
+        _emit(_operation_failure(getattr(error, "error_code", "snooze_failed"), error))
+        return 1
+
+
+def cmd_transition(args):
+    module, environment = _automation_environment()
+    if module is None or environment is None:
+        _emit(_operation_failure("helper_unavailable", "El automatizador no está disponible"))
+        return 1
+    result = module.transition(args.temperature, args.gamma, args.seconds, environment)
+    if not result.get("success"):
+        _emit(_operation_failure(result.get("error_code", "transition_failed"), result.get("error"), result=result))
+        return 1
+    _emit(_operation_success(result))
+    return 0
+
+
+def cmd_reconcile(_args):
+    module, environment = _automation_environment()
+    if module is None or environment is None:
+        _emit(_operation_failure("helper_unavailable", "El automatizador no está disponible"))
+        return 1
+    result = module.reconcile(environment)
+    if not result.get("success"):
+        _emit(_operation_failure(result.get("error_code", "reconcile_failed"), result.get("error"), result=result))
+        return 1
+    _emit(_operation_success(result))
+    return 0
 
 
 def cmd_nightlight(args):
@@ -1251,10 +1509,43 @@ def cmd_nightlight(args):
 
 
 def cmd_schedule(args):
-    if args.action == "get":
+    if args.action in ("status", "get"):
+        if args.action == "status":
+            toggle = _utility_module("schedule_toggle_utils")
+            try:
+                if toggle is not None and config_path().is_file():
+                    toggle.HYPRSUNSET_CONFIG = config_path()
+                    toggle_state = toggle.schedule_status(config_path())
+                else:
+                    toggle_state = _state_module().read_state()
+                payload = read_status()
+                payload["ok"] = True
+                payload["result"] = {"operation": "schedule_status", **toggle_state}
+                _emit(payload)
+                return 0
+            except Exception as error:
+                _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
+                return 1
         state = schedule_get()
         _emit(state)
         return 0 if state["available"] else 1
+    if args.action in ("enable", "disable"):
+        toggle = _utility_module("schedule_toggle_utils")
+        if toggle is None:
+            _emit(_operation_failure("helper_unavailable", "El gestor de horario no está disponible"))
+            return 1
+        try:
+            toggle.HYPRSUNSET_CONFIG = config_path()
+            operation = toggle.enable_schedule if args.action == "enable" else toggle.disable_schedule
+            toggle_state = operation(config_path())
+            payload = read_status()
+            payload["ok"] = True
+            payload["result"] = {"operation": f"schedule_{args.action}", **toggle_state}
+            _emit(payload)
+            return 0
+        except Exception as error:
+            _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
+            return 1
     values = {
         "day_time": args.day_time,
         "day_temp": args.day_temp,
@@ -1350,6 +1641,7 @@ def build_parser():
         "brightness", help="Read or set display brightness (1-100)"
     )
     brightness.add_argument("value", nargs="?", type=str, help="Target brightness percentage")
+    brightness.add_argument("--monitor", default="focused", help="focused or an enabled monitor name")
     brightness.set_defaults(handler=cmd_brightness)
 
     nightlight = subparsers.add_parser(
@@ -1363,10 +1655,56 @@ def build_parser():
     nightlight.add_argument("value", nargs="?", type=str, help="Target temperature/gamma")
     nightlight.set_defaults(handler=cmd_nightlight)
 
+    preset = subparsers.add_parser("preset", help="List, save, delete or apply a preset")
+    preset_sub = preset.add_subparsers(dest="action", required=True)
+    preset_list_parser = preset_sub.add_parser("list", help="List built-in and custom presets")
+    preset_list_parser.set_defaults(handler=cmd_preset)
+    preset_save_parser = preset_sub.add_parser("save", help="Save a custom preset")
+    preset_save_parser.add_argument("name")
+    preset_save_parser.add_argument("--temperature", required=True, type=int)
+    preset_save_parser.add_argument("--gamma", required=True, type=int)
+    preset_save_parser.add_argument("--brightness", type=int)
+    preset_save_parser.set_defaults(handler=cmd_preset)
+    preset_delete_parser = preset_sub.add_parser("delete", help="Delete a custom preset")
+    preset_delete_parser.add_argument("name")
+    preset_delete_parser.set_defaults(handler=cmd_preset)
+    preset_apply_parser = preset_sub.add_parser("apply", help="Apply a preset")
+    preset_apply_parser.add_argument("name")
+    preset_apply_parser.add_argument("--monitor", default="focused")
+    preset_apply_parser.add_argument("--transition-seconds", type=int, default=0)
+    preset_apply_parser.set_defaults(handler=cmd_preset)
+
+    snooze = subparsers.add_parser("snooze", help="Manage natural-light snooze")
+    snooze_sub = snooze.add_subparsers(dest="action", required=True)
+    snooze_status_parser = snooze_sub.add_parser("status", help="Show snooze status")
+    snooze_status_parser.set_defaults(handler=cmd_snooze)
+    snooze_set_parser = snooze_sub.add_parser("set", help="Snooze for a number of minutes")
+    snooze_set_parser.add_argument("--minutes", required=True, type=int)
+    snooze_set_parser.set_defaults(handler=cmd_snooze)
+    snooze_tomorrow_parser = snooze_sub.add_parser("until-tomorrow", help="Snooze until local midnight")
+    snooze_tomorrow_parser.set_defaults(handler=cmd_snooze)
+    snooze_clear_parser = snooze_sub.add_parser("clear", help="Clear snooze")
+    snooze_clear_parser.set_defaults(handler=cmd_snooze)
+
+    transition = subparsers.add_parser("transition", help="Transition temperature and gamma")
+    transition.add_argument("--temperature", required=True, type=int)
+    transition.add_argument("--gamma", required=True, type=int)
+    transition.add_argument("--seconds", required=True, type=int)
+    transition.set_defaults(handler=cmd_transition)
+
+    reconcile = subparsers.add_parser("reconcile", help="Reconcile snooze and schedule")
+    reconcile.set_defaults(handler=cmd_reconcile)
+
     schedule = subparsers.add_parser("schedule", help="Get or set the hyprsunset schedule")
     schedule_sub = schedule.add_subparsers(dest="action", required=True)
+    schedule_status_parser = schedule_sub.add_parser("status", help="Show schedule and toggle status")
+    schedule_status_parser.set_defaults(handler=cmd_schedule)
     schedule_get_parser = schedule_sub.add_parser("get", help="Print the parsed schedule")
     schedule_get_parser.set_defaults(handler=cmd_schedule)
+    schedule_enable_parser = schedule_sub.add_parser("enable", help="Restore the managed schedule profiles")
+    schedule_enable_parser.set_defaults(handler=cmd_schedule)
+    schedule_disable_parser = schedule_sub.add_parser("disable", help="Remove the managed schedule profiles")
+    schedule_disable_parser.set_defaults(handler=cmd_schedule)
     schedule_set_parser = schedule_sub.add_parser("set", help="Atomically update the schedule")
     schedule_set_parser.add_argument("--day-time", required=True)
     schedule_set_parser.add_argument("--night-time", required=True)

@@ -511,6 +511,103 @@ class BrightnessTests(HelperModuleTests):
         self.assertEqual(error, "Salida de brillo no reconocida")
 
 
+class FinalIntegrationCliTests(HelperModuleTests):
+    def test_final_cli_grammar_matches_panel_commands(self):
+        parser = vc.build_parser()
+        commands = (
+            ("brightness", "60", "--monitor", "DP-1"),
+            ("preset", "list"),
+            ("preset", "save", "desk", "--temperature", "4200", "--gamma", "85"),
+            ("preset", "delete", "desk"),
+            ("preset", "apply", "reading", "--monitor", "focused", "--transition-seconds", "0"),
+            ("snooze", "status"),
+            ("snooze", "set", "--minutes", "30"),
+            ("snooze", "until-tomorrow"),
+            ("snooze", "clear"),
+            ("transition", "--temperature", "4200", "--gamma", "85", "--seconds", "0"),
+            ("schedule", "status"),
+            ("schedule", "get"),
+            ("schedule", "set", "--day-time", "06:00", "--night-time", "15:30", "--day-temp", "6000", "--night-temp", "3500"),
+            ("schedule", "enable"),
+            ("schedule", "disable"),
+            ("reconcile",),
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                args = parser.parse_args(command)
+                self.assertTrue(callable(args.handler))
+
+    def test_brightness_explicit_monitor_is_validated_and_wired_to_native_step(self):
+        code, output = self.run_cli("brightness", "60", "--monitor", "DP-1")
+        self.assertEqual(code, 0, output)
+        result = json.loads(output)
+        self.assertEqual(result["brightness"]["monitor"], "DP-1")
+        writes = self.sim.brightness_writes()
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0][3], "DP-1")
+        self.assertEqual(writes[0][4], "+1%")
+
+    def test_custom_preset_commands_return_status_compatible_payloads(self):
+        code, output = self.run_cli(
+            "preset", "save", "desk", "--temperature", "4200", "--gamma", "85", "--brightness", "45"
+        )
+        self.assertEqual(code, 0, output)
+        saved = json.loads(output)
+        self.assertTrue(saved["presets"]["available"])
+        self.assertEqual(saved["presets"]["user"][0]["name"], "desk")
+
+        code, output = self.run_cli("preset", "apply", "desk", "--monitor", "focused", "--transition-seconds", "0")
+        self.assertEqual(code, 0, output)
+        applied = json.loads(output)
+        self.assertEqual(applied["automation"]["origin"], "preset")
+        self.assertEqual(applied["automation"]["last_applied"]["preset"], "desk")
+        self.assertTrue(all(call[4] in ("+1%", "1%-") for call in self.sim.brightness_writes()))
+
+        code, output = self.run_cli("preset", "delete", "desk")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["presets"]["user"], [])
+
+    def test_snooze_transition_reconcile_and_schedule_toggle_are_structured(self):
+        schedule = vc.config_path()
+        schedule.parent.mkdir(parents=True, exist_ok=True)
+        schedule.write_text(
+            "profile {\n    time = 06:00\n    identity = true\n}\n\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n",
+            encoding="utf-8",
+        )
+
+        for command in (
+            ("snooze", "status"),
+            ("snooze", "set", "--minutes", "30"),
+            ("snooze", "clear"),
+            ("snooze", "until-tomorrow"),
+            ("transition", "--temperature", "4200", "--gamma", "85", "--seconds", "0"),
+            ("reconcile",),
+        ):
+            with self.subTest(command=command):
+                code, output = self.run_cli(*command)
+                self.assertEqual(code, 0, output)
+                payload = json.loads(output)
+                self.assertIn("automation", payload)
+                self.assertIn("nightlight", payload)
+
+        code, output = self.run_cli("schedule", "disable")
+        self.assertEqual(code, 0, output)
+        self.assertFalse(json.loads(output)["automation"]["schedule_enabled"])
+        code, output = self.run_cli("schedule", "enable")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(json.loads(output)["automation"]["schedule_enabled"])
+
+    def test_new_command_errors_have_stable_json_codes(self):
+        code, output = self.run_cli(
+            "preset", "save", "NotValid", "--temperature", "4200", "--gamma", "85"
+        )
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "invalid_preset")
+        self.assertTrue(payload["error"])
+
+
 class NightlightTests(HelperModuleTests):
     def test_temperature_set_applies_and_reads_back(self):
         code, output = self.run_cli("nightlight", "temperature", "4000")

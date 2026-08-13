@@ -15,6 +15,7 @@ Panel {
     property string applyScope: "session"
     property string selectedMonitor: "focused"
     property string preferredPreset: "reading"
+    property string customPresetName: ""
     property string shortcutKeys: "SUPER+SHIFT+N"
     property int transitionSeconds: 8
     property bool scheduleEditorOpen: false
@@ -112,6 +113,8 @@ Panel {
         if (input.preflight && typeof input.preflight === "object") next.preflight = input.preflight;
         if (input.origin) root.operationOrigin = String(input.origin);
         if (input.last_applied) root.lastAppliedText = root.formatLastApplied(input.last_applied);
+        if (input.automation && input.automation.last_applied)
+            root.lastAppliedText = root.formatLastApplied(input.automation.last_applied);
         return next;
     }
 
@@ -195,6 +198,23 @@ Panel {
         root.issue(["preset", "apply", String(name), "--monitor", root.selectedMonitor, "--transition-seconds", String(root.transitionSeconds)], "preset");
     }
 
+    function saveCustomPreset() {
+        var name = String(root.customPresetName || "").trim();
+        if (name === "" || !root.stateReady || root.actionPending)
+            return ;
+        root.request(["preset", "save", name,
+                      "--temperature", String(root.state.temperature),
+                      "--gamma", String(root.state.gamma),
+                      "--brightness", String(root.state.brightness.percent)], "preset-save");
+    }
+
+    function deleteSelectedCustomPreset() {
+        var name = String(root.preferredPreset || "");
+        if (["reading", "work", "cinema"].indexOf(name) !== -1 || name === "" || root.actionPending)
+            return ;
+        root.request(["preset", "delete", name], "preset-delete");
+    }
+
     function toggleSchedule(enabled) {
         root.issue(["schedule", enabled ? "enable" : "disable"], "schedule-toggle");
     }
@@ -234,7 +254,7 @@ Panel {
             return ;
 
         if (name === "brightness")
-            request(["brightness", String(Math.round(value))], name);
+            request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], name);
         else
             request(["nightlight", name, String(Math.round(value))], name);
     }
@@ -505,7 +525,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus
+            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }
@@ -706,6 +726,42 @@ Panel {
                             foreground: root.foreground
                             focusable: true
                             onClicked: root.settingsCommand("preset", ["list"])
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: Style.spacing.controlGap
+
+                        TextField {
+                            id: customPresetName
+                            width: parent.width - saveCustomPresetButton.implicitWidth - deleteCustomPresetButton.implicitWidth - Style.spacing.controlGap * 2
+                            text: root.customPresetName
+                            placeholderText: root.text("preset_name")
+                            foreground: root.foreground
+                            font.family: root.fontFamily
+                            onTextChanged: root.customPresetName = text
+                            onAccepted: root.saveCustomPreset()
+                        }
+
+                        Button {
+                            id: saveCustomPresetButton
+                            text: root.text("save_current_preset")
+                            focusable: true
+                            bordered: true
+                            foreground: root.foreground
+                            enabled: root.stateReady && !root.actionPending && customPresetName.text.trim() !== ""
+                            onClicked: root.saveCustomPreset()
+                        }
+
+                        Button {
+                            id: deleteCustomPresetButton
+                            text: root.text("delete_custom_preset")
+                            focusable: true
+                            bordered: true
+                            foreground: root.foreground
+                            enabled: root.stateReady && !root.actionPending && ["reading", "work", "cinema"].indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
+                            onClicked: root.deleteSelectedCustomPreset()
                         }
                     }
 

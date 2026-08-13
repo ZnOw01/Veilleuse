@@ -248,3 +248,11 @@ test('structured v2 status consumes nested automation provenance and preset list
   assert.match(qml, /root\.formatLastApplied\(data\.automation\.last_applied\)/);
   assert.match(qml, /root\.presetItems\s*=\s*Array\.isArray\(data\.presets\.list\)\s*\?\s*data\.presets\.list\s*:\s*\[\]/);
 });
+
+test('final integration passes the selected monitor and exposes custom preset controls', () => {
+  assert.match(qml, /request\(\["brightness",\s*String\(Math\.round\(value\)\),\s*"--monitor",\s*root\.selectedMonitor\],\s*name\)/);
+  assert.match(qml, /id:\s*customPresetName/);
+  assert.match(qml, /preset.*save|save.*preset/s);
+  assert.match(qml, /preset.*delete|delete.*preset/s);
+  assert.match(qml, /customPresetName\.activeFocus/);
+});
