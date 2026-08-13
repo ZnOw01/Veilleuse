@@ -276,7 +276,7 @@ Panel {
         }
         if (data.presets && typeof data.presets === "object") {
             root.state = root.mergeCombined(root.state, data);
-            root.presetItems = data.presets;
+            root.presetItems = Array.isArray(data.presets.list) ? data.presets.list : [];
             root.presetsLoaded = true;
             changed = true;
         }
@@ -286,7 +286,10 @@ Panel {
             root.historyLoaded = true;
             changed = true;
         }
-        if (data.last_applied) {
+        if (data.automation && data.automation.last_applied) {
+            root.lastAppliedText = root.formatLastApplied(data.automation.last_applied);
+            changed = true;
+        } else if (data.last_applied) {
             root.lastAppliedText = root.formatLastApplied(data.last_applied);
             changed = true;
         }

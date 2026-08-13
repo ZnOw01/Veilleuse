@@ -242,3 +242,9 @@ test('global shortcut IPC endpoint performs a real helper toggle', () => {
   assert.match(qml, /request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)/);
   assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
 });
+
+test('structured v2 status consumes nested automation provenance and preset lists', () => {
+  assert.match(qml, /data\.automation\s*&&\s*data\.automation\.last_applied/);
+  assert.match(qml, /root\.formatLastApplied\(data\.automation\.last_applied\)/);
+  assert.match(qml, /root\.presetItems\s*=\s*Array\.isArray\(data\.presets\.list\)\s*\?\s*data\.presets\.list\s*:\s*\[\]/);
+});
