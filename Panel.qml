@@ -502,7 +502,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus
+            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }
@@ -1044,7 +1044,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: !root.actionPending
-                            onClicked: root.settingsCommand("shortcut", ["install", "--keys", root.shortcutKeys])
+                            onClicked: {
+                                root.setInlineSetting("shortcutKeys", shortcutField.text);
+                                root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+                            }
                         }
 
                         Button {

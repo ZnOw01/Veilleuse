@@ -191,6 +191,8 @@ test('settings route persists only native inline settings and exposes preflight 
   assert.match(qml, /settingsCommand\("shortcut",\s*\["install"/);
   assert.match(qml, /settingsCommand\("shortcut",\s*\["remove"/);
   assert.match(qml, /shortcutKeys|SAFE_KEYS/);
+  assert.match(qml, /blocked:[^\n]*shortcutField\.activeFocus/);
+  assert.match(qml, /\["install",\s*"--keys",\s*shortcutField\.text\]/);
 });
 
 test('v2 actions use helper commands, native scrolling, and keyboard-visible native controls', () => {
