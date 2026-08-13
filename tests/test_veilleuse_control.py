@@ -69,6 +69,7 @@ class SimulatedCommands:
         self.monitor_state_text = None
         self.hyprsunset_available = True
         self.fail_identity_read = False
+        self.fail_identity_write = False
         self.brightness_output = None
 
     def __call__(self, args, *, timeout=None):
@@ -119,6 +120,8 @@ class SimulatedCommands:
                     return cp(tokens, 1, "", "identity unavailable")
                 return cp(tokens, 0, "true" if self.identity else "false\n", "")
             if command == "identity" and len(tokens) == 3:
+                if self.fail_identity_write:
+                    return cp(tokens, 1, "", "hyprsunset not running")
                 self.identity = True
                 return cp(tokens, 0, "", "")
             if command == "gamma" and len(tokens) == 3:
@@ -330,6 +333,32 @@ class NightlightTests(HelperModuleTests):
         code, output = self.run_cli("nightlight", "natural")
         self.assertNotEqual(code, 0)
         self.assertIn("error", output.lower())
+
+    def test_failed_nightlight_operation_preserves_error_in_nested_state(self):
+        self.sim.fail_identity_write = True
+        code, output = self.run_cli("nightlight", "natural")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error"], "hyprsunset not running")
+        self.assertEqual(payload["state"]["nightlight"]["error"], payload["error"])
+
+    def test_readback_deadline_is_shared_across_nightlight_queries(self):
+        calls = []
+        now = iter([10.0, 10.6, 11.2])
+
+        def slow_runner(args, *, timeout=None):
+            calls.append((list(args), timeout))
+            return cp(args, 0, "false\n", "")
+
+        with patch.object(vc, "run_command", side_effect=slow_runner):
+            with patch.object(vc.time, "monotonic", side_effect=lambda: next(now)):
+                state = vc.read_nightlight(deadline=11.0)
+
+        self.assertFalse(state["available"])
+        self.assertIn("Tiempo de espera agotado", state["error"])
+        self.assertEqual([call[0][2:] for call in calls], [["identity", "get"], ["temperature"]])
+        self.assertAlmostEqual(calls[0][1], 1.0)
+        self.assertAlmostEqual(calls[1][1], 0.4)
 
     def test_nightlight_fails_closed_when_identity_read_is_missing(self):
         self.sim.fail_identity_read = True

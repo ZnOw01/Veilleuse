@@ -10,8 +10,14 @@ TARGET=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 cd "$TARGET"
 
 [[ -x scripts/veilleuse-control ]]
-[[ $(jq -r '.id' manifest.json) == io.github.znow01.veilleuse ]]
-[[ $(jq -r '.entryPoints.barWidget' manifest.json) == BarWidget.qml ]]
+/usr/bin/python3 - <<'PY'
+import json
+from pathlib import Path
+
+manifest = json.loads(Path("manifest.json").read_text(encoding="utf-8"))
+assert manifest.get("id") == "io.github.znow01.veilleuse"
+assert manifest.get("entryPoints", {}).get("barWidget") == "BarWidget.qml"
+PY
 
 if find . -path ./.git -prune -o -type d \( -name .venv -o -name dist -o -name build -o -name .pytest_cache \) -prune -o -type l -print -quit | grep -q .; then
     echo "hygiene gate: symlink found in $TARGET" >&2

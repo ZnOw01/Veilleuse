@@ -334,14 +334,23 @@ def _nightlight_command_error(result):
     detail = f": {stderr}" if stderr else ""
     return f"hyprsunset no disponible{detail}"
 
-def read_nightlight():
+def read_nightlight(*, deadline=None):
     """Read identity, temperature and gamma through the hyprsunset IPC."""
-    results = {
-        "identity": run_command([*HYPRSUNSET_COMMAND, "identity", "get"]),
-        "temperature": run_command([*HYPRSUNSET_COMMAND, "temperature"]),
-        "gamma": run_command([*HYPRSUNSET_COMMAND, "gamma"]),
-    }
-    for result in results.values():
+    results = {}
+    queries = (
+        ("identity", [*HYPRSUNSET_COMMAND, "identity", "get"]),
+        ("temperature", [*HYPRSUNSET_COMMAND, "temperature"]),
+        ("gamma", [*HYPRSUNSET_COMMAND, "gamma"]),
+    )
+    for name, command in queries:
+        timeout = COMMAND_TIMEOUT
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return _nightlight_state("Tiempo de espera agotado al consultar hyprsunset")
+            timeout = min(COMMAND_TIMEOUT, remaining)
+        result = run_command(command, timeout=timeout)
+        results[name] = result
         if result.returncode != 0:
             return _nightlight_state(_nightlight_command_error(result))
 
@@ -386,15 +395,18 @@ def read_nightlight():
     }
 
 
-def _wait_readback(predicate, deadline):
+def _wait_readback(predicate, deadline, failure_message):
     """Poll a readback predicate until it holds or the deadline expires."""
     while True:
-        state = read_nightlight()
+        state = read_nightlight(deadline=deadline)
         if predicate(state):
+            return state
+        if state["error"]:
             return state
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return None
+            state["error"] = failure_message
+            return state
         time.sleep(min(POLL_INTERVAL, remaining))
 
 
@@ -410,8 +422,9 @@ def _apply_temperature(kelvin):
             and abs(current["temperature"] - target) <= READBACK_TOLERANCE_TEMP
         ),
         deadline,
+        "La temperatura aplicada no coincide con la solicitud",
     )
-    return state or _nightlight_failure("La temperatura aplicada no coincide con la solicitud")
+    return state
 
 
 def _apply_natural():
@@ -419,8 +432,12 @@ def _apply_natural():
     if result.returncode != 0:
         return _nightlight_failure(result.stderr.strip() or "No se pudo aplicar el color natural")
     deadline = time.monotonic() + WRITE_TIMEOUT
-    state = _wait_readback(lambda current: current["identity"] is True, deadline)
-    return state or _nightlight_failure("El color natural no se confirmó")
+    state = _wait_readback(
+        lambda current: current["identity"] is True,
+        deadline,
+        "El color natural no se confirmó",
+    )
+    return state
 
 
 def _apply_gamma(percent):
@@ -435,8 +452,9 @@ def _apply_gamma(percent):
             and abs(current["gamma"] - target) <= READBACK_TOLERANCE_GAMMA
         ),
         deadline,
+        "El brillo percibido aplicado no coincide con la solicitud",
     )
-    return state or _nightlight_failure("El brillo percibido aplicado no coincide con la solicitud")
+    return state
 
 
 def _nightlight_failure(message):
@@ -750,7 +768,7 @@ def _schedule_result(schedule, day_identity, error, period_value=None):
 # --------------------------------------------------------------------------- \
 # status + CLI
 
-def read_status():
+def read_status(*, nightlight=None):
     """Combine monitor/brightness, nightlight and schedule state in one JSON."""
     monitor = read_monitor_state()
     brightness = None
@@ -773,7 +791,7 @@ def read_status():
     return {
         "plugin": {"id": PLUGIN_ID, "root": str(root)},
         "brightness": brightness_state,
-        "nightlight": read_nightlight(),
+        "nightlight": nightlight if nightlight is not None else read_nightlight(),
         "schedule": schedule_get(),
         "monitors": monitor["monitors"],
     }
@@ -848,7 +866,8 @@ def cmd_nightlight(args):
     ok = state["available"] and state["error"] is None
     if ok:
         run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
-    _emit(read_status() if ok else {"error": state["error"], "state": read_status()})
+    status = read_status(nightlight=state)
+    _emit(status if ok else {"error": state["error"], "state": status})
     return 0 if ok else 1
 
 
