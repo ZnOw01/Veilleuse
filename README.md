@@ -6,9 +6,14 @@ Plugin de **Omarchy Quattro** para controlar brillo, luz nocturna y horarios des
 
 ## Funciones
 
-- Brillo del monitor enfocado, limitado a un punto por operación y confirmado mediante readback.
+- Panel rediseñado con vistas Inicio, Automatización y Ajustes, navegación directa e iconos de estado.
+- Brillo del monitor enfocado o seleccionado, limitado a un punto físico por operación y confirmado mediante readback.
 - Luz nocturna de 2500 a 6500 K y gamma de 0 a 100 %.
+- Perfiles integrados y personalizados con temperatura, gamma y brillo opcional.
+- Posposición temporal o hasta mañana, transición gradual cancelable y reconciliación del horario.
 - Horario día/noche con actualización atómica de `~/.config/hypr/hyprsunset.conf`; preserva comentarios, permisos, perfiles ajenos y una copia `.bak`.
+- Activación y desactivación transaccional del horario, con detección de conflictos.
+- Preflight visible, historial acotado, procedencia de operaciones e interfaz completa en español e inglés.
 - Atajo de teclado opcional y reversible en `bindings.lua` (instalación manual, nunca automática).
 - Navegación con ratón, flechas y `j/k/h/l`.
 
