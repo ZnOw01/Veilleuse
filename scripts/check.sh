@@ -6,7 +6,11 @@ cd "$ROOT"
 
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 - <<'PY'
 from pathlib import Path
-for path in (Path('scripts/veilleuse-control'), Path('scripts/schedule_utils.py')):
+for path in (
+    Path('scripts/veilleuse-control'),
+    Path('scripts/schedule_utils.py'),
+    Path('scripts/shortcut_utils.py'),
+):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
 PY
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_veilleuse_control.py'

@@ -23,7 +23,7 @@ Base: e6f1e5793101e941368530b808d8c6ffff064738. Preserve all 1.1 CLI/status fiel
 - `transition --temperature K --gamma N --seconds 0..1800`: cancelable helper process, bounded IPC calls, no second daemon.
 - `schedule enable|disable|status`: disable removes only selected managed day/night profile blocks, stores exact original/disabled hashes and text transactionally; enable restores only if current disabled hash matches, otherwise fails closed. Preserve unrelated profiles/comments/mode.
 - `history list|clear`
-- `shortcut status|install --keys SAFE_KEYS|remove`: edit only marker block in user `~/.config/hypr/bindings.lua`, validate keys, backup once, preserve mode, fixed command `omarchy-shell -q io.github.znow01.veilleuse toggleNightlight`, best-effort `hyprctl reload`. Never install automatically.
+- `shortcut status|install --keys SAFE_KEYS|remove`: edit only a marker block in the user `~/.config/hypr/bindings.lua` using Omarchy 4 Lua `o.bind("MODS + KEY", "Veilleuse", CMD)` syntax, validate keys, honor ordered bind/unbind state, fail closed on dynamic bindings, backup once, preserve mode, use the fixed command `omarchy-shell -q io.github.znow01.veilleuse toggleNightlight`, and reload best-effort with `hyprctl reload`. Never install automatically.
 - `reconcile`: used by loaded bar widget timer; enforces snooze or applies current schedule profile with configured transition. Idempotent.
 
 ## Presets
