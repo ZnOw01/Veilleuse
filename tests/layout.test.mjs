@@ -38,8 +38,9 @@ test('natural-day switch owns its value and is keyboard operable', () => {
   const toggle = schedule.slice(start, end);
   assert.doesNotMatch(toggle, /\bfocusable\s*:/);
   assert.match(toggle, /onToggled:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
-  assert.match(toggle, /Keys\.onReturnPressed:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
-  assert.match(toggle, /Keys\.onSpacePressed:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+  assert.match(toggle, /Keys\.onReturnPressed:\s*if \(!busy\) root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+  assert.match(toggle, /Keys\.onEnterPressed:\s*if \(!busy\) root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+  assert.match(toggle, /Keys\.onSpacePressed:\s*if \(!busy\) root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
 });
 
 test('schedule editor exposes the day and night temperature bounds and both identity flags', () => {
@@ -287,7 +288,7 @@ test('ToggleSwitch controls maintain stable geometry and never bind interactive 
   assert.match(heroSwitch, /Accessible\.name:\s*root\.text\("night_light"\)/);
 
   const schedSwitch = qml.slice(qml.indexOf('id: scheduleToggle'), qml.indexOf('id: transitionEditor'));
-  assert.match(schedSwitch, /busy:\s*!root\.stateReady\s*\|\|\s*root\.actionPending/);
+  assert.match(schedSwitch, /busy:\s*!root\.automationReady\s*\|\|\s*root\.actionPending/);
   assert.match(schedSwitch, /Accessible\.name:\s*root\.text\("schedule"\)/);
 
   const natStart = qml.indexOf('id: naturalDayEditor');
@@ -299,8 +300,16 @@ test('ToggleSwitch controls maintain stable geometry and never bind interactive 
 });
 
 test('schedule enabled state semantics stay honest before automation payload is available', () => {
+  const schedSwitch = qml.slice(qml.indexOf('id: scheduleToggle'), qml.indexOf('id: transitionEditor'));
   assert.doesNotMatch(qml, /scheduleEnabled:\s*!\(root\.state\.automation\s*&&\s*root\.state\.automation\.schedule_enabled === false\)/);
-  assert.match(qml, /readonly\s+property\s+bool\s+scheduleEnabled:\s*Boolean\(root\.stateReady\s*&&\s*root\.state\.automation\s*&&\s*root\.state\.automation\.schedule_enabled\s*!==\s*false\)/);
+  assert.match(qml, /readonly\s+property\s+bool\s+automationReady:\s*Boolean\(root\.state\.automation\s*&&\s*root\.state\.automation\.available\s*===\s*true\)/);
+  assert.match(qml, /readonly\s+property\s+bool\s+scheduleEnabled:\s*Boolean\(root\.automationReady\s*&&\s*root\.state\.automation\.schedule_enabled\s*!==\s*false\)/);
+  assert.match(schedSwitch, /busy:\s*!root\.automationReady\s*\|\|\s*root\.actionPending/);
+});
+
+test('natural-day keyboard activation respects the same busy gate as pointer input', () => {
+  for (const key of ['Return', 'Enter', 'Space'])
+    assert.match(qml, new RegExp(`Keys\\.on${key}Pressed:\\s*if \\(!busy\\)`));
 });
 
 test('keyCatcher isolates open dropdown popups to prevent key leakage', () => {

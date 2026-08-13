@@ -60,7 +60,8 @@ Panel {
     readonly property var monitorOptions: root.monitorChoices()
     readonly property var presetOptions: root.presetChoices()
     readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : root.operationOrigin
-    readonly property bool scheduleEnabled: Boolean(root.stateReady && root.state.automation && root.state.automation.schedule_enabled !== false)
+    readonly property bool automationReady: Boolean(root.state.automation && root.state.automation.available === true)
+    readonly property bool scheduleEnabled: Boolean(root.automationReady && root.state.automation.schedule_enabled !== false)
     readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
     readonly property string scopeText: I18n.t(root.applyScope === "persistent" ? "persistent" : "session", root.locale)
@@ -904,7 +905,7 @@ Panel {
                             ToggleSwitch {
                                 id: scheduleToggle
                                 checked: root.scheduleEnabled
-                                busy: !root.stateReady || root.actionPending
+                                busy: !root.automationReady || root.actionPending
                                 foreground: root.foreground
                                 Accessible.name: root.text("schedule")
                                 onToggled: root.toggleSchedule(!root.scheduleEnabled)
@@ -1497,9 +1498,9 @@ Panel {
                                         Accessible.name: root.text("natural_day")
                                         onToggled: root.editNaturalDay = !root.editNaturalDay
                                         Keys.onEscapePressed: root.leaveScheduleEditor(naturalDayEditor, 2)
-                                        Keys.onReturnPressed: root.editNaturalDay = !root.editNaturalDay
-                                        Keys.onEnterPressed: root.editNaturalDay = !root.editNaturalDay
-                                        Keys.onSpacePressed: root.editNaturalDay = !root.editNaturalDay
+                                        Keys.onReturnPressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
+                                        Keys.onEnterPressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
+                                        Keys.onSpacePressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
                                     }
 
                                 }
