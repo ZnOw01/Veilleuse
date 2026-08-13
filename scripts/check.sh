@@ -14,10 +14,14 @@ node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs
 /usr/bin/python3 -m json.tool manifest.json >/dev/null
 
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then
-  PACKAGE_TMP=$(mktemp -d)
-  trap 'rm -rf "$PACKAGE_TMP"' EXIT
-  git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$PACKAGE_TMP"
-  omarchy-plugin-validate "$PACKAGE_TMP"
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    PACKAGE_TMP=$(mktemp -d)
+    trap 'rm -rf "$PACKAGE_TMP"' EXIT
+    git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$PACKAGE_TMP"
+    omarchy-plugin-validate "$PACKAGE_TMP"
+  else
+    omarchy-plugin-validate "$ROOT"
+  fi
 fi
 if command -v qmllint >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell ]]; then
   qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml
@@ -25,5 +29,7 @@ fi
 
 ./scripts/check_hygiene.sh
 
-git diff --check
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git diff --check
+fi
 printf 'Veilleuse plugin checks passed.\n'
