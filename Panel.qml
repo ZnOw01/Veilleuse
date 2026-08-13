@@ -242,6 +242,15 @@ Panel {
         onTriggered: root.feedbackText = ""
     }
 
+    Timer {
+        id: backgroundStatusTimer
+
+        interval: 30000
+        repeat: true
+        running: !root.opened
+        onTriggered: if (!root.actionPending) root.requestStatus()
+    }
+
     Process {
         id: helperProcess
 

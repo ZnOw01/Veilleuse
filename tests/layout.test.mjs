@@ -123,6 +123,12 @@ test('bar activity follows actual night-light state without depending on panel v
   assert.doesNotMatch(barQml, /active:\s*root\.opened/);
 });
 
+test('closed panel refreshes status so scheduled bar activity cannot stay stale', () => {
+  assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
+  assert.match(qml, /running:\s*!root\.opened/);
+  assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.requestStatus\(\)/);
+});
+
 test('schedule summary stays a full-width left-aligned button like the reference', () => {
   const start = qml.indexOf('id: scheduleColumn');
   const summary = qml.slice(start, qml.indexOf('Column {', start));
