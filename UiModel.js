@@ -208,6 +208,12 @@ function commitResponse(previousState, response) {
   }
   var next = {};
   for (var key in current) next[key] = current[key];
+  var fullStatus = Object.prototype.hasOwnProperty.call(patch, 'brightness')
+    && Object.prototype.hasOwnProperty.call(patch, 'nightlight');
+  if (fullStatus) {
+    delete next.available;
+    delete next.error;
+  }
   for (var patchKey in patch) {
     if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
         && patch[patchKey] && typeof patch[patchKey] === 'object'

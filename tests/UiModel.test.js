@@ -83,6 +83,24 @@ test('accepts only the latest successful helper response', () => {
   assert.equal(current.state.enabled, true);
 });
 
+test('promotes the initial fail-closed state with a real full status payload', () => {
+  const initial = Model.normalizeState({});
+  const result = Model.commitResponse(initial, {
+    requestId: 1,
+    latestRequestId: 1,
+    ok: true,
+    state: {
+      brightness: { available: true, percent: 42, monitor: 'eDP-2', error: null },
+      nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100, error: null },
+      schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500, day_identity: true, period: 'day', error: null }
+    }
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(result.state.available, true);
+  assert.equal(result.state.enabled, true);
+  assert.equal(result.state.error, '');
+});
+
 test('rejects helper responses without a request identity', () => {
   const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
   const result = Model.commitResponse(state, { ok: true, state: { enabled: true } });

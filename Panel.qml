@@ -696,13 +696,14 @@ Panel {
 
                                         width: parent.width
                                         checked: root.editNaturalDay
-                                        focusable: true
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 2
                                         foreground: root.foreground
                                         interactive: root.stateReady && !root.actionPending
-                                        onToggled: root.editNaturalDay = checked
+                                        onToggled: root.editNaturalDay = !root.editNaturalDay
                                         Keys.onEscapePressed: root.leaveScheduleEditor(naturalDayEditor, 2)
-                                        Keys.onReturnPressed: dayTemperatureEditor.field.forceActiveFocus()
+                                        Keys.onReturnPressed: root.editNaturalDay = !root.editNaturalDay
+                                        Keys.onEnterPressed: root.editNaturalDay = !root.editNaturalDay
+                                        Keys.onSpacePressed: root.editNaturalDay = !root.editNaturalDay
                                     }
 
                                 }

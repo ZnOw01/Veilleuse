@@ -31,6 +31,16 @@ test('schedule editor uses native vertically centered fields', () => {
   assert.equal((schedule.match(/\bTextInput\s*\{/g) || []).length, 0);
 });
 
+test('natural-day switch owns its value and is keyboard operable', () => {
+  const start = schedule.indexOf('id: naturalDayEditor');
+  const end = schedule.indexOf('\n                                Column {', start);
+  const toggle = schedule.slice(start, end);
+  assert.doesNotMatch(toggle, /\bfocusable\s*:/);
+  assert.match(toggle, /onToggled:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+  assert.match(toggle, /Keys\.onReturnPressed:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+  assert.match(toggle, /Keys\.onSpacePressed:\s*root\.editNaturalDay\s*=\s*!root\.editNaturalDay/);
+});
+
 test('schedule editor exposes the day and night temperature bounds and both identity flags', () => {
   assert.match(schedule, /id:\s*dayTemperatureEditor[\s\S]*?from:\s*5900[\s\S]*?to:\s*6500/);
   assert.match(schedule, /id:\s*scheduleTemperatureEditor[\s\S]*?from:\s*2500[\s\S]*?to:\s*5000/);
