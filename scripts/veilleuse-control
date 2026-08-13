@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import types
+import shutil
 from pathlib import Path
 
 COMMAND_TIMEOUT = 1.0
@@ -51,6 +52,7 @@ _PERCENT_PATTERN = re.compile(r"\s*([0-9]{1,3})\s*")
 _INTEGER_PATTERN = re.compile(r"\s*([0-9]+)\s*")
 _SCHEDULE_MODULE_CACHE = {}
 _SHORTCUT_MODULE_CACHE = {}
+_STATE_MODULE_CACHE = {}
 
 
 # --------------------------------------------------------------------------- \
@@ -108,6 +110,26 @@ def _shortcut_module():
             code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
             exec(code, module.__dict__)
             _SHORTCUT_MODULE_CACHE[path] = module
+            return module
+        except Exception:
+            return None
+    return None
+
+
+def _state_module():
+    """Load the safe XDG persistence module without creating bytecode files."""
+    root = resolve_plugin_root()
+    path = root / "scripts" / "state_utils.py"
+    if path.is_file():
+        cached = _STATE_MODULE_CACHE.get(path)
+        if cached is not None:
+            return cached
+        try:
+            module = types.ModuleType("state_utils")
+            module.__file__ = str(path)
+            code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            exec(code, module.__dict__)
+            _STATE_MODULE_CACHE[path] = module
             return module
         except Exception:
             return None
@@ -789,6 +811,242 @@ def _schedule_result(schedule, day_identity, error, period_value=None):
 # --------------------------------------------------------------------------- \
 # status + CLI
 
+_PERSISTENCE_ERROR_MESSAGES = {
+    "invalid_json": "Los datos guardados no tienen un formato válido",
+    "invalid_schema": "El esquema de los datos guardados no es compatible",
+    "invalid_config": "La configuración guardada no es válida",
+    "invalid_state": "El estado guardado no es válido",
+    "invalid_history": "El historial guardado no es válido",
+    "unsafe_path": "La ruta de datos guardados no es segura",
+    "io_error": "No se pudieron leer los datos guardados",
+}
+
+
+def _persistence_error(error):
+    error_code = getattr(error, "error_code", "state_unavailable")
+    message = _PERSISTENCE_ERROR_MESSAGES.get(
+        error_code, "La persistencia de Veilleuse no está disponible"
+    )
+    return {"error_code": error_code, "error": message}
+
+
+def _failed_section(error, fields):
+    result = dict(fields)
+    result["available"] = False
+    result.update(_persistence_error(error))
+    return result
+
+
+def _automation_status(module):
+    fields = {
+        "schedule_enabled": None,
+        "snooze_until": None,
+        "snoozed": False,
+        "transition_seconds": None,
+        "origin": "unknown",
+        "last_applied": None,
+        "schedule_disabled": None,
+    }
+    try:
+        state = module.read_state()
+    except Exception as error:
+        return _failed_section(error, fields)
+    fields.update(
+        {
+            "available": True,
+            "schedule_enabled": state["schedule_enabled"],
+            "snooze_until": state["snooze_until"],
+            "snoozed": state["snooze_until"] is not None and state["snooze_until"] > time.time(),
+            "transition_seconds": state["transition_seconds"],
+            "origin": state["origin"],
+            "last_applied": state["last_applied"],
+            "schedule_disabled": state["schedule_disabled"],
+            "error_code": None,
+            "error": None,
+        }
+    )
+    return fields
+
+
+def _preset_entry(name, values, builtin):
+    result = {"name": name, "builtin": builtin}
+    result.update(values)
+    return result
+
+
+def _presets_status(module):
+    fields = {
+        "default_preset": None,
+        "builtins": [],
+        "user": [],
+        "list": [],
+    }
+    try:
+        config = module.read_config()
+    except Exception as error:
+        return _failed_section(error, fields)
+    builtins = [
+        _preset_entry(name, values, True)
+        for name, values in module.BUILTIN_PRESETS.items()
+    ]
+    user = [
+        _preset_entry(name, values, False)
+        for name, values in config["presets"].items()
+    ]
+    fields.update(
+        {
+            "available": True,
+            "default_preset": config["default_preset"],
+            "builtins": builtins,
+            "user": user,
+            "list": builtins + user,
+            "error_code": None,
+            "error": None,
+        }
+    )
+    return fields
+
+
+def _history_status(module):
+    try:
+        records = module.list_history()
+    except Exception as error:
+        return [], _failed_section(error, {})
+    return list(reversed(records)), {
+        "available": True,
+        "error_code": None,
+        "error": None,
+    }
+
+
+def _preflight_check(name, ok, error_code=None, error=None):
+    return {
+        "name": name,
+        "available": bool(ok),
+        "ok": bool(ok),
+        "error_code": error_code if not ok else None,
+        "error": error if not ok else None,
+    }
+
+
+def _probe_failure(name, result):
+    kind = getattr(result, "_veilleuse_error_kind", None)
+    stderr = _text(getattr(result, "stderr", "")).strip()
+    if kind == "missing_command" or result.returncode == 127:
+        return "missing_command", f"Comando ausente: {name}"
+    if kind == "timeout" or result.returncode == DEADLINE_EXIT_CODE:
+        return "timeout", f"Tiempo de espera agotado: {name}"
+    return "backend_unavailable", f"Backend no disponible: {name}"
+
+
+def _run_preflight_probe(name, command):
+    try:
+        result = run_command(command, timeout=COMMAND_TIMEOUT)
+    except Exception:
+        return (
+            _preflight_check(name, False, "backend_unavailable", f"Backend no disponible: {name}"),
+            None,
+        )
+    if result.returncode == 0:
+        return _preflight_check(name, True), result
+    error_code, error = _probe_failure(name, result)
+    return _preflight_check(name, False, error_code, error), result
+
+
+def preflight(*, monitor_state=None, brightness=None, nightlight=None):
+    """Perform bounded, read-only helper/backend availability checks."""
+    helper_path = Path(os.path.abspath(__file__))
+    executable = helper_path.is_file() and os.access(helper_path, os.X_OK)
+    helper = {
+        "name": "helper",
+        "path": str(helper_path),
+        "executable": executable,
+        "available": executable,
+        "ok": executable,
+        "error_code": None if executable else "not_executable",
+        "error": None if executable else "El helper no es ejecutable",
+    }
+
+    if monitor_state is None:
+        monitor_check, monitor_result = _run_preflight_probe(
+            "omarchy-monitor-state", MONITOR_STATE_COMMAND
+        )
+        if monitor_check["ok"] and monitor_result is not None:
+            lines = _text(monitor_result.stdout).splitlines()
+            while len(lines) < 8:
+                lines.append("")
+            monitor_state = {"monitor": lines[5].strip() or None}
+    else:
+        monitor_check = _preflight_check(
+            "omarchy-monitor-state",
+            bool(monitor_state.get("monitor")),
+            None if monitor_state.get("monitor") else "backend_unavailable",
+            None if monitor_state.get("monitor") else "Backend no disponible: omarchy-monitor-state",
+        )
+
+    monitor_name = monitor_state.get("monitor") if isinstance(monitor_state, dict) else None
+    if brightness is None:
+        if monitor_name:
+            brightness_check, _brightness_result = _run_preflight_probe(
+                "omarchy-brightness-display",
+                [*BRIGHTNESS_COMMAND, monitor_name],
+            )
+        else:
+            if shutil.which(BRIGHTNESS_COMMAND[0]) is None:
+                brightness_check = _preflight_check(
+                    "omarchy-brightness-display",
+                    False,
+                    "missing_command",
+                    "Comando ausente: omarchy-brightness-display",
+                )
+            else:
+                brightness_check = _preflight_check(
+                    "omarchy-brightness-display",
+                    False,
+                    "backend_unavailable",
+                    "Backend no disponible: omarchy-brightness-display",
+                )
+    else:
+        brightness_check = _preflight_check(
+            "omarchy-brightness-display",
+            brightness.get("available") is True,
+            None if brightness.get("available") is True else "backend_unavailable",
+            None if brightness.get("available") is True else "Backend no disponible: omarchy-brightness-display",
+        )
+
+    if nightlight is None:
+        nightlight_check, _nightlight_result = _run_preflight_probe(
+            "hyprctl/hyprsunset",
+            [*HYPRSUNSET_COMMAND, "identity", "get"],
+        )
+    else:
+        nightlight_check = _preflight_check(
+            "hyprctl/hyprsunset",
+            nightlight.get("available") is True,
+            None if nightlight.get("available") is True else "backend_unavailable",
+            None if nightlight.get("available") is True else "Backend no disponible: hyprctl/hyprsunset",
+        )
+
+    checks = [helper, monitor_check, brightness_check, nightlight_check]
+    commands = {
+        "omarchy-monitor-state": monitor_check,
+        "omarchy-brightness-display": brightness_check,
+        "hyprctl": nightlight_check,
+    }
+    backend = {
+        "monitor": monitor_check,
+        "brightness": brightness_check,
+        "hyprsunset": nightlight_check,
+    }
+    return {
+        "ok": all(check["ok"] for check in checks),
+        "helper": helper,
+        "commands": commands,
+        "backend": backend,
+        "checks": checks,
+    }
+
+
 def read_status(*, nightlight=None):
     """Combine monitor/brightness, nightlight and schedule state in one JSON."""
     monitor = read_monitor_state()
@@ -808,13 +1066,41 @@ def read_status(*, nightlight=None):
             "monitor": None,
             "error": "No se pudo resolver un monitor enfocado",
         }
+    nightlight_state = nightlight if nightlight is not None else read_nightlight()
+    module = _state_module()
+    if module is None:
+        state_error = RuntimeError("state_utils unavailable")
+        automation = _failed_section(state_error, {
+            "schedule_enabled": None,
+            "snooze_until": None,
+            "snoozed": False,
+            "transition_seconds": None,
+            "origin": "unknown",
+            "last_applied": None,
+            "schedule_disabled": None,
+        })
+        presets = _failed_section(state_error, {"default_preset": None, "builtins": [], "user": [], "list": []})
+        history, history_status = [], _failed_section(state_error, {})
+    else:
+        automation = _automation_status(module)
+        presets = _presets_status(module)
+        history, history_status = _history_status(module)
     root = resolve_plugin_root()
     return {
         "plugin": {"id": PLUGIN_ID, "root": str(root)},
         "brightness": brightness_state,
-        "nightlight": nightlight if nightlight is not None else read_nightlight(),
+        "nightlight": nightlight_state,
         "schedule": schedule_get(),
         "monitors": monitor["monitors"],
+        "preflight": preflight(
+            monitor_state=monitor,
+            brightness=brightness_state,
+            nightlight=nightlight_state,
+        ),
+        "automation": automation,
+        "presets": presets,
+        "history": history,
+        "history_status": history_status,
     }
 
 
@@ -825,6 +1111,12 @@ def _emit(payload):
 
 def _abort(message):
     _emit({"error": message})
+    return 1
+
+
+def _abort_persistence(error):
+    info = _persistence_error(error)
+    _emit({"error": info["error"], "error_code": info["error_code"]})
     return 1
 
 
@@ -840,6 +1132,72 @@ def _bounded(value, minimum, maximum, label):
 
 def cmd_status(_args):
     _emit(read_status())
+    return 0
+
+
+def _settings_payload(config):
+    settings = {
+        "default_preset": config["default_preset"],
+        "presets": config["presets"],
+    }
+    return {
+        "settings": settings,
+        "default_preset": settings["default_preset"],
+        "presets": settings["presets"],
+    }
+
+
+def settings_get():
+    module = _state_module()
+    if module is None:
+        raise RuntimeError("state_utils unavailable")
+    return _settings_payload(module.read_config())
+
+
+def settings_set(default_preset):
+    module = _state_module()
+    if module is None:
+        raise RuntimeError("state_utils unavailable")
+    config = module.update_config(
+        lambda current: dict(current, default_preset=default_preset)
+    )
+    return _settings_payload(config)
+
+
+def history_list():
+    module = _state_module()
+    if module is None:
+        raise RuntimeError("state_utils unavailable")
+    return {"history": list(reversed(module.list_history()))}
+
+
+def history_clear():
+    module = _state_module()
+    if module is None:
+        raise RuntimeError("state_utils unavailable")
+    return {"history": module.clear_history()}
+
+
+def cmd_preflight(_args):
+    _emit(preflight())
+    return 0
+
+
+def cmd_history(args):
+    try:
+        payload = history_list() if args.action == "list" else history_clear()
+    except Exception as error:
+        return _abort_persistence(error)
+    _emit(payload)
+    return 0
+
+
+def cmd_settings(args):
+    try:
+        payload = settings_get() if args.action == "get" else settings_set(args.default_preset)
+    except Exception as error:
+        return _abort_persistence(error)
+    _emit(payload)
     return 0
 
 
@@ -967,6 +1325,26 @@ def build_parser():
 
     status = subparsers.add_parser("status", help="Print combined status JSON")
     status.set_defaults(handler=cmd_status)
+
+    preflight_parser = subparsers.add_parser(
+        "preflight", help="Check helper and backend availability"
+    )
+    preflight_parser.set_defaults(handler=cmd_preflight)
+
+    history = subparsers.add_parser("history", help="List or clear operation history")
+    history_sub = history.add_subparsers(dest="action", required=True)
+    history_list_parser = history_sub.add_parser("list", help="List recent history")
+    history_list_parser.set_defaults(handler=cmd_history)
+    history_clear_parser = history_sub.add_parser("clear", help="Clear history explicitly")
+    history_clear_parser.set_defaults(handler=cmd_history)
+
+    settings = subparsers.add_parser("settings", help="Read or update Veilleuse settings")
+    settings_sub = settings.add_subparsers(dest="action", required=True)
+    settings_get_parser = settings_sub.add_parser("get", help="Print persisted settings")
+    settings_get_parser.set_defaults(handler=cmd_settings)
+    settings_set_parser = settings_sub.add_parser("set", help="Update persisted settings")
+    settings_set_parser.add_argument("--default-preset", required=True)
+    settings_set_parser.set_defaults(handler=cmd_settings)
 
     brightness = subparsers.add_parser(
         "brightness", help="Read or set display brightness (1-100)"

@@ -182,7 +182,11 @@ class HelperModuleTests(unittest.TestCase):
         self.xdg = Path(self.tmp.name)
         self.env_patch = patch.dict(
             os.environ,
-            {"XDG_CONFIG_HOME": str(self.xdg), "XDG_DATA_HOME": str(self.xdg / "data")},
+            {
+                "XDG_CONFIG_HOME": str(self.xdg),
+                "XDG_DATA_HOME": str(self.xdg / "data"),
+                "XDG_STATE_HOME": str(self.xdg / "state"),
+            },
         )
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
@@ -267,6 +271,198 @@ class StatusTests(HelperModuleTests):
         code, output = self.run_cli("status")
         status = json.loads(output)
         self.assertIn(status["schedule"]["period"], ("day", "night"))
+
+
+class StateControlSliceBTests(HelperModuleTests):
+    def state_module(self):
+        module = vc._state_module()
+        self.assertIsNotNone(module)
+        return module
+
+    def test_state_loader_is_bytecode_free_and_absent_documents_do_not_write(self):
+        module = self.state_module()
+        self.assertEqual(module.read_config(), module.DEFAULT_CONFIG)
+        self.assertEqual(module.read_state(), module.DEFAULT_STATE)
+        self.assertEqual(module.list_history(), [])
+        self.assertFalse((self.xdg / "veilleuse" / "config.json").exists())
+        self.assertFalse((self.xdg / "state" / "veilleuse" / "state.json").exists())
+        self.assertFalse((self.xdg / "state" / "veilleuse" / "history.jsonl").exists())
+
+    def test_status_adds_persistence_sections_without_dropping_live_fields(self):
+        module = self.state_module()
+        module.write_config(
+            {
+                "schema": 1,
+                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
+                "default_preset": "desk",
+            }
+        )
+        module.write_state(
+            dict(
+                module.DEFAULT_STATE,
+                schedule_enabled=False,
+                snooze_until=4102444800,
+                transition_seconds=45,
+                origin="preset",
+            )
+        )
+        module.append_history({"time": "2026-08-13T10:00:00Z", "operation": "old", "origin": "manual"})
+        module.append_history({"time": "2026-08-13T11:00:00Z", "operation": "new", "origin": "preset"})
+
+        code, output = self.run_cli("status")
+        self.assertEqual(code, 0)
+        status = json.loads(output)
+        self.assertEqual(status["plugin"]["id"], vc.PLUGIN_ID)
+        self.assertEqual(status["brightness"]["percent"], 42)
+        self.assertEqual(status["nightlight"]["temperature"], 3500)
+        self.assertIn("preflight", status)
+        self.assertEqual(status["automation"]["schedule_enabled"], False)
+        self.assertEqual(status["automation"]["transition_seconds"], 45)
+        self.assertEqual(status["automation"]["origin"], "preset")
+        self.assertEqual(status["presets"]["default_preset"], "desk")
+        self.assertEqual([item["name"] for item in status["presets"]["builtins"]], ["reading", "work", "cinema"])
+        self.assertEqual(status["presets"]["user"][0]["name"], "desk")
+        self.assertEqual([item["operation"] for item in status["history"]], ["new", "old"])
+
+    def test_corrupt_state_only_fails_automation_section(self):
+        module = self.state_module()
+        path = module.state_path()
+        path.parent.mkdir(parents=True)
+        path.write_text("{\"schema\": 1,", encoding="utf-8")
+
+        status = json.loads(self.run_cli("status")[1])
+        self.assertEqual(status["brightness"]["percent"], 42)
+        self.assertEqual(status["nightlight"]["temperature"], 3500)
+        self.assertFalse(status["automation"]["available"])
+        self.assertEqual(status["automation"]["error_code"], "invalid_json")
+        self.assertEqual(status["presets"]["default_preset"], "reading")
+        self.assertEqual(status["history"], [])
+
+    def test_corrupt_config_and_history_fail_only_their_sections(self):
+        module = self.state_module()
+        config = module.config_path()
+        config.parent.mkdir(parents=True)
+        config.write_text("{\"schema\": 1,", encoding="utf-8")
+        history = module.history_path()
+        history.parent.mkdir(parents=True, exist_ok=True)
+        history.write_text("not-json\n", encoding="utf-8")
+
+        status = json.loads(self.run_cli("status")[1])
+        self.assertEqual(status["brightness"]["percent"], 42)
+        self.assertEqual(status["nightlight"]["temperature"], 3500)
+        self.assertFalse(status["presets"]["available"])
+        self.assertEqual(status["presets"]["error_code"], "invalid_json")
+        self.assertEqual(status["history"], [])
+        self.assertFalse(status["history_status"]["available"])
+        self.assertEqual(status["history_status"]["error_code"], "invalid_json")
+
+    def test_preflight_reports_bounded_read_only_checks_with_stable_errors(self):
+        calls = []
+
+        def runner(args, *, timeout=None):
+            calls.append((list(args), timeout))
+            return cp(args, 127, "", "command not found")
+
+        with patch.object(vc, "run_command", side_effect=runner):
+            result = vc.preflight()
+
+        self.assertIn("helper", result)
+        self.assertIn("commands", result)
+        self.assertIn("backend", result)
+        self.assertIn("checks", result)
+        self.assertLessEqual(len(calls), 3)
+        self.assertTrue(all(timeout is not None and timeout <= vc.COMMAND_TIMEOUT for _, timeout in calls))
+        self.assertFalse(result["ok"])
+        failed = [check for check in result["checks"] if not check["ok"]]
+        self.assertTrue(failed)
+        self.assertTrue(all(check["error_code"] for check in failed))
+        self.assertTrue(all(check["error"] for check in failed))
+        self.assertTrue(all(any(token in check["error"] for token in ("Comando", "Backend", "Tiempo")) for check in failed))
+
+    def test_preflight_uses_one_monitor_probe_when_backend_is_healthy(self):
+        calls = []
+
+        def runner(args, *, timeout=None):
+            tokens = list(args)
+            calls.append((tokens, timeout))
+            if tokens == list(vc.MONITOR_STATE_COMMAND):
+                return cp(tokens, 0, monitor_state_text(), "")
+            if tokens[:3] == ["omarchy-brightness-display", "--no-osd", "--monitor"]:
+                return cp(tokens, 0, "42\n", "")
+            if tokens == ["hyprctl", "hyprsunset", "identity", "get"]:
+                return cp(tokens, 0, "false\n", "")
+            return cp(tokens, 127, "", "command not found")
+
+        with patch.object(vc, "run_command", side_effect=runner):
+            result = vc.preflight()
+
+        self.assertTrue(result["commands"]["omarchy-monitor-state"]["ok"])
+        self.assertEqual(
+            sum(tokens == list(vc.MONITOR_STATE_COMMAND) for tokens, _timeout in calls),
+            1,
+        )
+        self.assertEqual(len(calls), 3)
+
+    def test_preflight_reports_missing_brightness_command_without_a_monitor(self):
+        def runner(args, *, timeout=None):
+            tokens = list(args)
+            if tokens == list(vc.MONITOR_STATE_COMMAND):
+                return cp(tokens, 1, "", "no monitors")
+            if tokens == ["hyprctl", "hyprsunset", "identity", "get"]:
+                return cp(tokens, 127, "", "command not found")
+            return cp(tokens, 127, "", "command not found")
+
+        with patch.object(vc, "run_command", side_effect=runner):
+            with patch("shutil.which", return_value=None):
+                result = vc.preflight()
+
+        brightness = result["commands"]["omarchy-brightness-display"]
+        self.assertFalse(brightness["ok"])
+        self.assertEqual(brightness["error_code"], "missing_command")
+        self.assertIn("Comando ausente", brightness["error"])
+
+    def test_history_cli_lists_newest_first_and_clear_is_explicit(self):
+        module = self.state_module()
+        module.append_history({"time": "2026-08-13T10:00:00Z", "operation": "old"})
+        module.append_history({"time": "2026-08-13T11:00:00Z", "operation": "new"})
+
+        code, output = self.run_cli("history", "list")
+        self.assertEqual(code, 0)
+        self.assertEqual([item["operation"] for item in json.loads(output)["history"]], ["new", "old"])
+
+        code, output = self.run_cli("history", "clear")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["history"], [])
+        self.assertTrue(module.history_path().exists())
+        self.assertEqual(module.history_path().read_text(encoding="utf-8"), "")
+
+    def test_settings_get_set_validates_presets_and_does_not_touch_schedule(self):
+        module = self.state_module()
+        module.write_config(
+            {
+                "schema": 1,
+                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
+                "default_preset": "desk",
+            }
+        )
+        schedule = self.xdg / "hypr" / "hyprsunset.conf"
+        schedule.parent.mkdir(parents=True)
+        schedule.write_text("# untouched\n", encoding="utf-8")
+
+        code, output = self.run_cli("settings", "get")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["settings"]["default_preset"], "desk")
+
+        code, output = self.run_cli("settings", "set", "--default-preset", "work")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["settings"]["default_preset"], "work")
+        self.assertEqual(module.read_config()["default_preset"], "work")
+        self.assertEqual(schedule.read_text(encoding="utf-8"), "# untouched\n")
+
+        code, output = self.run_cli("settings", "set", "--default-preset", "missing")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(json.loads(output)["error_code"], "invalid_config")
+        self.assertEqual(module.read_config()["default_preset"], "work")
 
 
 class BrightnessTests(HelperModuleTests):
