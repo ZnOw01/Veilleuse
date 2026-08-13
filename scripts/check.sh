@@ -14,6 +14,7 @@ for path in (
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
 PY
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_veilleuse_control.py'
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -p test_state_utils.py
 node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs tests/i18n.test.js tests/uiModelV2.test.js
 /usr/bin/python3 -m json.tool manifest.json >/dev/null
 
