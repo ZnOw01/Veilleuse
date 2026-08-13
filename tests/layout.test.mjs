@@ -238,9 +238,13 @@ test('every translated QML key resolves in Spanish and English', async () => {
 });
 
 test('global shortcut IPC endpoint performs a real helper toggle', () => {
+  assert.match(qml, /manageIpc:\s*false/);
   assert.match(qml, /function toggleNightlight\(\)/);
   assert.match(qml, /request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)/);
   assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
+  for (const method of ['open', 'close', 'show', 'hide', 'toggle']) {
+    assert.match(qml, new RegExp(`function ${method}\\(\\)`));
+  }
 });
 
 test('structured v2 status consumes nested automation provenance and preset lists', () => {

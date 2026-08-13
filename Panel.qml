@@ -442,9 +442,16 @@ Panel {
 
     moduleName: "io.github.znow01.veilleuse"
     ipcTarget: "io.github.znow01.veilleuse"
+    manageIpc: false
 
     IpcHandler {
         target: root.ipcTarget
+
+        function open() { root.open(); }
+        function close() { root.close(); }
+        function show() { root.open(); }
+        function hide() { root.close(); }
+        function toggle() { root.toggle(); }
 
         function toggleNightlight() {
             root.toggleNightlight();
