@@ -274,3 +274,51 @@ test('final integration passes the selected monitor and exposes custom preset co
   assert.match(qml, /preset.*delete|delete.*preset/s);
   assert.match(qml, /customPresetName\.activeFocus/);
 });
+
+test('ToggleSwitch controls maintain stable geometry and never bind interactive to actionPending', () => {
+  const switchCount = (qml.match(/\bToggleSwitch\s*\{/g) || []).length;
+  assert.equal(switchCount, 3, 'expected exactly 3 ToggleSwitch instances in Panel.qml');
+
+  assert.doesNotMatch(qml, /ToggleSwitch\s*\{[^}]*interactive:\s*[^;\n]*actionPending/);
+  assert.doesNotMatch(qml, /ToggleSwitch\s*\{[^}]*interactive:\s*[^;\n]*stateReady/);
+
+  const heroSwitch = qml.slice(qml.indexOf('trailingControl: Component {'), qml.indexOf('id: homeRoute'));
+  assert.match(heroSwitch, /busy:\s*!root\.stateReady\s*\|\|\s*root\.actionPending/);
+  assert.match(heroSwitch, /Accessible\.name:\s*root\.text\("night_light"\)/);
+
+  const schedSwitch = qml.slice(qml.indexOf('id: scheduleToggle'), qml.indexOf('id: transitionEditor'));
+  assert.match(schedSwitch, /busy:\s*!root\.stateReady\s*\|\|\s*root\.actionPending/);
+  assert.match(schedSwitch, /Accessible\.name:\s*root\.text\("schedule"\)/);
+
+  const natStart = qml.indexOf('id: naturalDayEditor');
+  const natEnd = qml.indexOf('Column {', natStart);
+  const natSwitch = qml.slice(natStart, natEnd);
+  assert.match(natSwitch, /busy:\s*!root\.stateReady\s*\|\|\s*root\.actionPending/);
+  assert.match(natSwitch, /Accessible\.name:\s*root\.text\("natural_day"\)/);
+  assert.doesNotMatch(natSwitch, /width:\s*parent\.width/, 'natural-day switch must not stretch width over parent');
+});
+
+test('schedule enabled state semantics stay honest before automation payload is available', () => {
+  assert.doesNotMatch(qml, /scheduleEnabled:\s*!\(root\.state\.automation\s*&&\s*root\.state\.automation\.schedule_enabled === false\)/);
+  assert.match(qml, /readonly\s+property\s+bool\s+scheduleEnabled:\s*Boolean\(root\.stateReady\s*&&\s*root\.state\.automation\s*&&\s*root\.state\.automation\.schedule_enabled\s*!==\s*false\)/);
+});
+
+test('keyCatcher isolates open dropdown popups to prevent key leakage', () => {
+  assert.match(qml, /blocked:[^\n]*monitorSelector\.popupOpen/);
+  assert.match(qml, /blocked:[^\n]*localeSelector\.popupOpen/);
+  assert.match(qml, /blocked:[^\n]*scopeSelector\.popupOpen/);
+  assert.match(qml, /blocked:[^\n]*presetSelector\.popupOpen/);
+});
+
+test('slider mutations from keyboard cursor only occur on home route when schedule is collapsed', () => {
+  const moveCursorBlock = qml.slice(qml.indexOf('function moveCursor(dx, dy) {'), qml.indexOf('function handleCloseRequested()'));
+  assert.match(moveCursorBlock, /if\s*\(\s*dx\s*!==\s*0\s*&&\s*stateReady\s*&&\s*root\.route\s*===\s*"home"\s*&&\s*!root\.scheduleExpanded\s*\)/);
+});
+
+test('hero does not add MouseArea and custom preset deletion waits for confirmation', () => {
+  const heroSurface = qml.slice(qml.indexOf('id: heroSurface'), qml.indexOf('id: homeRoute'));
+  assert.doesNotMatch(heroSurface, /\bMouseArea\s*\{/);
+
+  const deleteFunc = qml.slice(qml.indexOf('function deleteSelectedCustomPreset()'), qml.indexOf('function toggleSchedule('));
+  assert.doesNotMatch(deleteFunc, /preferredPreset\s*=/);
+});

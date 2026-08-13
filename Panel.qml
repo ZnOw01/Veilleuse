@@ -60,7 +60,7 @@ Panel {
     readonly property var monitorOptions: root.monitorChoices()
     readonly property var presetOptions: root.presetChoices()
     readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : root.operationOrigin
-    readonly property bool scheduleEnabled: !(root.state.automation && root.state.automation.schedule_enabled === false)
+    readonly property bool scheduleEnabled: Boolean(root.stateReady && root.state.automation && root.state.automation.schedule_enabled !== false)
     readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
     readonly property string scopeText: I18n.t(root.applyScope === "persistent" ? "persistent" : "session", root.locale)
@@ -373,7 +373,7 @@ Panel {
     }
 
     function moveCursor(dx, dy) {
-        if (dx !== 0 && stateReady) {
+        if (dx !== 0 && stateReady && root.route === "home" && !root.scheduleExpanded) {
             var section = Model.sectionOrder()[cursor.section];
             if (section === "brightness")
                 queueMutation("brightness", state.brightness.percent + dx);
@@ -550,7 +550,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus
+            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus || monitorSelector.popupOpen || localeSelector.popupOpen || scopeSelector.popupOpen || presetSelector.popupOpen
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }
@@ -652,9 +652,9 @@ Panel {
                         trailingControl: Component {
                             ToggleSwitch {
                                 checked: root.stateReady && root.state.enabled
-                                busy: root.actionPending
-                                interactive: root.stateReady && !root.actionPending
+                                busy: !root.stateReady || root.actionPending
                                 foreground: root.foreground
+                                Accessible.name: root.text("night_light")
                                 onToggled: root.request(["nightlight", "toggle"], "toggle")
                             }
 
@@ -904,9 +904,9 @@ Panel {
                             ToggleSwitch {
                                 id: scheduleToggle
                                 checked: root.scheduleEnabled
-                                busy: root.actionPending
-                                interactive: !root.actionPending
+                                busy: !root.stateReady || root.actionPending
                                 foreground: root.foreground
+                                Accessible.name: root.text("schedule")
                                 onToggled: root.toggleSchedule(!root.scheduleEnabled)
                             }
                         }
@@ -1490,11 +1490,11 @@ Panel {
                                     ToggleSwitch {
                                         id: naturalDayEditor
 
-                                        width: parent.width
                                         checked: root.editNaturalDay
+                                        busy: !root.stateReady || root.actionPending
                                         hasCursor: root.cursor.section === 4 && root.cursor.field === 2
                                         foreground: root.foreground
-                                        interactive: root.stateReady && !root.actionPending
+                                        Accessible.name: root.text("natural_day")
                                         onToggled: root.editNaturalDay = !root.editNaturalDay
                                         Keys.onEscapePressed: root.leaveScheduleEditor(naturalDayEditor, 2)
                                         Keys.onReturnPressed: root.editNaturalDay = !root.editNaturalDay
