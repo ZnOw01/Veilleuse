@@ -662,14 +662,15 @@ class HelperArtifactTests(unittest.TestCase):
         self.assertEqual(list(self.fixture.rglob("*.pyc")), [])
         self.assertEqual(self.run_gate().returncode, 0, "clone must stay release-clean")
 
-    def test_helper_status_without_gate_leaves_artifacts_that_hygiene_rejects(self):
+    def test_helper_status_without_environment_gate_stays_release_clean(self):
         result = self.run_helper(bytecode_gate=False)
         self.assertEqual(result.returncode, 0, result.stderr)
-        gate = self.run_gate()
-        self.assertNotEqual(
-            gate.returncode,
+        self.assertEqual(list(self.fixture.rglob("__pycache__")), [])
+        self.assertEqual(list(self.fixture.rglob("*.pyc")), [])
+        self.assertEqual(
+            self.run_gate().returncode,
             0,
-            "helper bytecode artifacts must make the hygiene gate fail",
+            "the helper must keep an installed clone release-clean by itself",
         )
 
 
