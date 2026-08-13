@@ -68,6 +68,26 @@ var es = {
   presetSave: 'Guardar perfil',
   presetAll: 'Todos los perfiles',
   presetBuiltIn: 'Integrado',
+  presetReading: 'Lectura',
+  presetWork: 'Trabajo',
+  presetCinema: 'Cine',
+  focusedMonitor: 'Monitor enfocado',
+  monitor: 'Monitor',
+  lastApplied: 'Última aplicación',
+  openAutomation: 'Editar automatización',
+  scheduleEnabled: 'Horario activo',
+  scheduleDisabled: 'Horario pausado',
+  transitionTitle: 'Transición',
+  seconds: 'segundos',
+  snooze30: '30 minutos',
+  snooze120: '2 horas',
+  editSchedule: 'Editar horario',
+  cancel: 'Cancelar',
+  spanish: 'Español',
+  english: 'English',
+  runPreflight: 'Comprobar disponibilidad',
+  shortcutKeys: 'Teclas',
+  liveNow: 'Ahora',
   // Snooze.
   snoozeTitle: 'Posposición',
   snoozeSet: 'Posponer',
@@ -144,6 +164,26 @@ var en = {
   presetSave: 'Save preset',
   presetAll: 'All presets',
   presetBuiltIn: 'Built-in',
+  presetReading: 'Reading',
+  presetWork: 'Work',
+  presetCinema: 'Cinema',
+  focusedMonitor: 'Focused monitor',
+  monitor: 'Monitor',
+  lastApplied: 'Last applied',
+  openAutomation: 'Edit automation',
+  scheduleEnabled: 'Schedule on',
+  scheduleDisabled: 'Schedule paused',
+  transitionTitle: 'Transition',
+  seconds: 'seconds',
+  snooze30: '30 minutes',
+  snooze120: '2 hours',
+  editSchedule: 'Edit schedule',
+  cancel: 'Cancel',
+  spanish: 'Español',
+  english: 'English',
+  runPreflight: 'Check availability',
+  shortcutKeys: 'Keys',
+  liveNow: 'Now',
   snoozeTitle: 'Snooze',
   snoozeSet: 'Snooze',
   snoozeUntilTomorrow: 'Until tomorrow',
@@ -172,6 +212,31 @@ var KEYS = (function () {
   for (key in en) combined[key] = true;
   return Object.keys(combined);
 })();
+
+// QML-facing semantic aliases. Dictionaries keep the established camelCase
+// contract while the panel uses stable snake_case action keys.
+var ALIASES = {
+  home: 'routeHome', automation: 'routeAutomation', settings: 'routeSettings',
+  night_light: 'heroTitle', period_day: 'periodDay', period_night: 'periodNight',
+  manual_override: 'manualOverride', presets: 'presetTitle',
+  preset_reading: 'presetReading', preset_work: 'presetWork', preset_cinema: 'presetCinema',
+  focused_monitor: 'focusedMonitor', monitor: 'monitor', last_applied: 'lastApplied',
+  history: 'historyTitle', open_automation: 'openAutomation',
+  schedule_enabled: 'scheduleEnabled', schedule_disabled: 'scheduleDisabled',
+  transition: 'transitionTitle', seconds: 'seconds', snooze: 'snoozeTitle',
+  snooze_30: 'snooze30', snooze_120: 'snooze120', until_tomorrow: 'snoozeUntilTomorrow',
+  clear_snooze: 'snoozeClear', midnight_explanation: 'midnightExplanation',
+  edit_schedule: 'editSchedule', natural_day: 'naturalDay',
+  day_temperature: 'scheduleDayTemperature', night_temperature: 'scheduleTemperature',
+  cancel: 'cancel', language: 'language', spanish: 'spanish', english: 'english',
+  apply_scope: 'applyScope', session: 'applyScopeSession', persistent: 'applyScopePersistent',
+  default_preset: 'defaultPreset', preflight: 'preflightTitle', run_preflight: 'runPreflight',
+  shortcut: 'shortcut', shortcut_keys: 'shortcutKeys', install_shortcut: 'shortcutInstall',
+  remove_shortcut: 'shortcutRemove', live_now: 'liveNow', unknown: 'provenanceUnknown',
+  origin_automatic: 'provenanceAutomatic', origin_manual: 'provenanceManual',
+  origin_preset: 'provenancePreset', origin_snooze: 'provenanceSnooze',
+  origin_unknown: 'provenanceUnknown', not_confirmed: 'notConfirmed'
+};
 
 function locales() {
   return LOCALES.slice();
@@ -219,9 +284,14 @@ function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function resolveKey(key) {
+  return ALIASES[key] || key;
+}
+
 // Locale-aware lookup with a strict fallback chain: requested dictionary, then
 // en, then es, then the raw key itself. Unknown locales resolve to `es`.
 function t(key, locale) {
+  key = resolveKey(key);
   var resolved = resolveLocale(locale);
   var primary = resolved === 'en' ? en : es;
   if (hasOwn(primary, key)) return primary[key];
@@ -244,6 +314,7 @@ if (typeof module !== 'undefined' && module.exports) {
     keys: keys,
     missingKeys: missingKeys,
     keyParity: keyParity,
+    resolveKey: resolveKey,
     t: t
   };
 }

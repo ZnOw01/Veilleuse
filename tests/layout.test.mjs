@@ -4,6 +4,7 @@ import fs from 'node:fs';
 
 const qml = fs.readFileSync(new URL('../Panel.qml', import.meta.url), 'utf8');
 const barQml = fs.readFileSync(new URL('../BarWidget.qml', import.meta.url), 'utf8');
+const i18n = fs.readFileSync(new URL('../I18n.js', import.meta.url), 'utf8');
 const helper = fs.readFileSync(new URL('../scripts/veilleuse-control', import.meta.url), 'utf8');
 const workflow = fs.readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
@@ -26,7 +27,7 @@ test('slider handlers declare signal parameters explicitly', () => {
 test('schedule editor uses native vertically centered fields', () => {
   assert.equal((schedule.match(/\bTextField\s*\{/g) || []).length, 2);
   assert.equal((schedule.match(/\bNumberField\s*\{/g) || []).length, 2);
-  assert.match(schedule, /text:\s*Model\.copy\.naturalDay/);
+  assert.match(schedule, /text:\s*root\.text\("natural_day"\)/);
   assert.match(schedule, /id:\s*naturalDayEditor/);
   assert.equal((schedule.match(/\bTextInput\s*\{/g) || []).length, 0);
 });
@@ -53,7 +54,7 @@ test('schedule controls share full width and the save label is centered', () => 
   assert.match(schedule, /id:\s*startEditor[\s\S]*?width:\s*parent\.width/);
   assert.match(schedule, /id:\s*endEditor[\s\S]*?width:\s*parent\.width/);
   assert.match(schedule, /id:\s*scheduleTemperatureEditor[\s\S]*?fieldWidth:\s*parent\.width/);
-  assert.match(schedule, /text:\s*Model\.copy\.save[\s\S]*?width:\s*parent\.width[\s\S]*?leftAlign:\s*false/);
+  assert.match(schedule, /text:\s*root\.text\("save"\)[\s\S]*?width:\s*parent\.width[\s\S]*?leftAlign:\s*false/);
 });
 
 test('value column width is a single Style.space(54) token', () => {
@@ -106,7 +107,7 @@ test('successful schedule saves render short-lived feedback', () => {
 test('hero shows the scheduled period and only conditional manual override', () => {
   assert.match(qml, /state\.schedule\.period/);
   assert.match(qml, /Model\.isManualOverride\(root\.state\)/);
-  assert.match(qml, /Model\.copy\.manualOverride/);
+  assert.match(qml, /root\.text\("manual_override"\)/);
 });
 
 test('temperature slider is live across the full 2500..6500 range', () => {
@@ -147,4 +148,94 @@ test('schedule editors return focus before Escape can close the panel', () => {
 
   const editor = schedule.slice(schedule.indexOf('id: scheduleTemperatureEditor'));
   assert.match(editor, /field\.Keys\.onPressed:\s*function\(event\)\s*\{[\s\S]*?Qt\.Key_Escape[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*4\)[\s\S]*?Qt\.Key_Return[\s\S]*?root\.leaveScheduleEditor\(scheduleTemperatureEditor\.field,\s*5\)/);
+});
+
+test('v2 panel exposes three native routes and route navigation preserves context', () => {
+  assert.match(qml, /property string route:\s*"home"/);
+  assert.match(qml, /routeOptions|routeOrder/);
+  assert.match(i18n, /routeHome:\s*'Home'/);
+  assert.match(i18n, /routeAutomation:\s*'Automation'/);
+  assert.match(i18n, /routeSettings:\s*'Settings'/);
+  assert.match(qml, /function navigateToRoute\(/);
+  assert.doesNotMatch(qml, /state\s*=\s*Model\.normalizeState\(\{\s*\}\)\s*;\s*route/);
+});
+
+test('home route has live controls, presets, monitor selection, provenance, history, and direct automation navigation', () => {
+  assert.match(qml, /id:\s*homeRoute/);
+  assert.match(qml, /id:\s*heroGlyph/);
+  assert.match(qml, /automationOrigin|last_applied/);
+  assert.match(qml, /preset list|presetList|presets/);
+  assert.match(qml, /SearchableDropdown|Dropdown/);
+  assert.match(qml, /history.*list|\["history",\s*"list"\]/s);
+  assert.match(qml, /navigateToRoute\("automation"\)/);
+  assert.match(barQml, /heroGlyph|provenance|origin/);
+});
+
+test('automation route exposes schedule toggle, context-preserving editor, midnight explanation, transition, and snooze commands', () => {
+  assert.match(qml, /id:\s*automationRoute/);
+  assert.match(qml, /schedule_enabled/);
+  assert.match(qml, /\["schedule",\s*enabled \? "enable" : "disable"\]/);
+  assert.match(qml, /midnight|midnightExplanation|crossesMidnight/);
+  assert.match(qml, /\["transition",\s*"--temperature"/);
+  assert.match(qml, /snooze set|until-tomorrow|snooze clear/);
+  assert.match(qml, /scheduleEditorOpen|scheduleExpanded/);
+});
+
+test('settings route persists only native inline settings and exposes preflight and explicit shortcut actions', () => {
+  assert.match(qml, /id:\s*settingsRoute/);
+  assert.match(qml, /updateEntryInline/);
+  assert.match(qml, /locale/);
+  assert.match(qml, /applyScope|session.*persistent|persistent.*session/);
+  assert.match(qml, /default-preset/);
+  assert.match(qml, /preflight/);
+  assert.match(qml, /settingsCommand\("shortcut",\s*\["install"/);
+  assert.match(qml, /settingsCommand\("shortcut",\s*\["remove"/);
+  assert.match(qml, /shortcutKeys|SAFE_KEYS/);
+});
+
+test('v2 actions use helper commands, native scrolling, and keyboard-visible native controls', () => {
+  assert.match(qml, /function issue\(/);
+  assert.match(qml, /new Process|Process\s*\{/);
+  assert.match(qml, /Flickable\s*\{/);
+  assert.match(qml, /PanelKeyCatcher\s*\{/);
+  assert.match(qml, /ToggleSwitch\s*\{/);
+  assert.match(qml, /Button\s*\{/);
+  assert.match(qml, /PanelSlider\s*\{/);
+  assert.match(qml, /Dropdown|SearchableDropdown/);
+  assert.doesNotMatch(qml, /onClicked:\s*\{\s*\/\/\s*(TODO|fake|placeholder)/i);
+});
+
+test('bar glyph and tooltip are dynamic and expose live provenance', () => {
+  assert.match(barQml, /readonly property string barGlyph/);
+  assert.match(barQml, /readonly property string barTooltip/);
+  assert.match(barQml, /state\.automation|state\.schedule|state\.origin/);
+  assert.match(barQml, /text:\s*root\.barGlyph/);
+  assert.match(barQml, /tooltipText:\s*root\.barTooltip/);
+});
+
+test('i18n module has complete Spanish and English key parity', () => {
+  const es = [...i18n.matchAll(/var es = \{([\s\S]*?)\n\};/g)][0][1];
+  const en = [...i18n.matchAll(/var en = \{([\s\S]*?)\n\};/g)][0][1];
+  const keys = source => [...source.matchAll(/^\s*([A-Za-z0-9_]+):/gm)].map(match => match[1]).sort();
+  assert.deepEqual(keys(es), keys(en));
+  assert.match(i18n, /function t\(key, locale\)/);
+});
+
+test('every translated QML key resolves in Spanish and English', async () => {
+  const I18n = await import('../I18n.js');
+  const used = [...qml.matchAll(/(?:root\.)?text\("([^"]+)"\)/g)].map(match => match[1]);
+  for (const key of new Set(used)) {
+    const resolved = I18n.resolveKey(key);
+    assert.ok(Object.hasOwn(I18n.es, resolved), `missing es key: ${key}`);
+    assert.ok(Object.hasOwn(I18n.en, resolved), `missing en key: ${key}`);
+    assert.ok(I18n.t(key, 'es').length > 0);
+    assert.ok(I18n.t(key, 'en').length > 0);
+  }
+  assert.doesNotMatch(qml, /Model\.copy\./, 'QML must not bypass the active locale');
+});
+
+test('global shortcut IPC endpoint performs a real helper toggle', () => {
+  assert.match(qml, /function toggleNightlight\(\)/);
+  assert.match(qml, /request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)/);
+  assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
 });

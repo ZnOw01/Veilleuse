@@ -1,4 +1,5 @@
 import QtQuick
+import "I18n.js" as I18n
 import qs.Commons
 import qs.Ui
 
@@ -8,6 +9,25 @@ BarWidget {
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
     readonly property bool lightActive: panelLoader.item ? panelLoader.item.stateReady === true && panelLoader.item.state.enabled === true : false
     readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+    readonly property var liveState: panelLoader.item ? panelLoader.item.state : ({})
+    readonly property string barGlyph: root.glyphForState(root.liveState)
+    readonly property string barTooltip: root.tooltipForState(root.liveState)
+
+    function glyphForState(value) {
+        var state = value || {};
+        var automation = state.automation || {};
+        if (automation.snoozed === true) return "󰒲";
+        if (state.available !== true) return "󰌙";
+        if (state.enabled === true) return automation.origin === "preset" ? "󰏘" : "󰖙";
+        return automation.schedule_enabled === false ? "󰅙" : "󰖔";
+    }
+
+    function tooltipForState(value) {
+        var state = value || {};
+        var automation = state.automation || {};
+        var origin = automation.origin ? String(automation.origin) : "unknown";
+        return I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "es");
+    }
 
     function injectPanel() {
         var panel = panelLoader.item;
@@ -72,9 +92,9 @@ BarWidget {
 
         anchors.fill: parent
         bar: root.bar
-        text: "☾"
+        text: root.barGlyph
         active: root.lightActive
-        tooltipText: "Luz nocturna"
+        tooltipText: root.barTooltip
         onPressed: function(buttonCode) {
             if (buttonCode === Qt.RightButton) {
                 if (panelLoader.item)
