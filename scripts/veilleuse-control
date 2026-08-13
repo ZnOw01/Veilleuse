@@ -21,6 +21,7 @@ import re
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 COMMAND_TIMEOUT = 1.0
@@ -48,6 +49,7 @@ HYPRSUNSET_COMMAND = ("hyprctl", "hyprsunset")
 
 _PERCENT_PATTERN = re.compile(r"\s*([0-9]{1,3})\s*")
 _INTEGER_PATTERN = re.compile(r"\s*([0-9]+)\s*")
+_SCHEDULE_MODULE_CACHE = {}
 
 
 # --------------------------------------------------------------------------- \
@@ -74,14 +76,20 @@ def _schedule_module():
     """Import the shared conservative parser when it is part of the plugin."""
     root = resolve_plugin_root()
     source = root / "scripts"
-    if (source / "schedule_utils.py").is_file():
-        sys.path.insert(0, str(source))
+    path = source / "schedule_utils.py"
+    if path.is_file():
+        cached = _SCHEDULE_MODULE_CACHE.get(path)
+        if cached is not None:
+            return cached
         try:
-            import schedule_utils  # type: ignore
-
-            return schedule_utils
+            module = types.ModuleType("schedule_utils")
+            module.__file__ = str(path)
+            code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            exec(code, module.__dict__)
+            _SCHEDULE_MODULE_CACHE[path] = module
+            return module
         except Exception:
-            sys.path.pop(0)
+            return None
     return None
 
 
@@ -110,11 +118,19 @@ def run_command(args, *, timeout=COMMAND_TIMEOUT):
             timeout=float(timeout),
         )
     except subprocess.TimeoutExpired as error:
-        return subprocess.CompletedProcess(
+        result = subprocess.CompletedProcess(
             list(args), DEADLINE_EXIT_CODE, _text(error.stdout), _text(error.stderr) or str(error)
         )
+        result._veilleuse_error_kind = "timeout"
+        return result
+    except FileNotFoundError as error:
+        result = subprocess.CompletedProcess(list(args), 127, "", str(error))
+        result._veilleuse_error_kind = "missing_command"
+        return result
     except OSError as error:
-        return subprocess.CompletedProcess(list(args), 127, "", str(error))
+        result = subprocess.CompletedProcess(list(args), 127, "", str(error))
+        result._veilleuse_error_kind = "os_error"
+        return result
 
 
 def _text(value) -> str:
@@ -183,7 +199,7 @@ def _parse_monitors_json(text):
         if not isinstance(entry, dict):
             continue
         name = entry.get("name")
-        enabled_value = entry.get("enabled", True)
+        enabled_value = entry.get("enabled")
         disabled_value = entry.get("disabled", False)
         focused_value = entry.get("focused", False)
         if (
@@ -217,6 +233,18 @@ def read_brightness(monitor):
     return percent, None
 
 
+def _focused_monitor_write_error(monitor):
+    state = read_monitor_state()
+    if state["monitor"] != monitor:
+        return "El monitor enfocado no es coherente con el estado actual"
+    matches = [entry for entry in state["monitors"] if entry["name"] == monitor]
+    if not matches or not matches[0]["enabled"]:
+        return "El monitor enfocado no está habilitado"
+    if not matches[0]["focused"]:
+        return "El monitor enfocado no es coherente con la lista de monitores"
+    return None
+
+
 def apply_brightness(monitor, target):
     """Apply at most one physical percentage point toward ``target``.
 
@@ -237,6 +265,14 @@ def apply_brightness(monitor, target):
         return {"available": False, "percent": None, "monitor": monitor, "error": error}
     if target == before:
         return {"available": True, "percent": before, "monitor": monitor, "error": None}
+    monitor_error = _focused_monitor_write_error(monitor)
+    if monitor_error is not None:
+        return {
+            "available": False,
+            "percent": before,
+            "monitor": monitor,
+            "error": monitor_error,
+        }
     token = "+1%" if target > before else "1%-"
     expected = min(BRIGHTNESS_MAX, before + 1) if token == "+1%" else max(BRIGHTNESS_MIN, before - 1)
     result = run_command([*BRIGHTNESS_COMMAND, monitor, token], timeout=WRITE_TIMEOUT)
@@ -273,11 +309,45 @@ def apply_brightness(monitor, target):
 # --------------------------------------------------------------------------- \
 # hyprsunset night light
 
+
+def _nightlight_state(error=None):
+    return {
+        "available": False,
+        "enabled": False,
+        "temperature": None,
+        "identity": None,
+        "gamma": None,
+        "error": error,
+    }
+
+
+def _nightlight_command_error(result):
+    kind = getattr(result, "_veilleuse_error_kind", None)
+    stderr = _text(result.stderr).strip()
+    if kind == "missing_command" or (
+        result.returncode == 127
+        and re.search(r"no such file|not found", stderr, re.IGNORECASE)
+    ):
+        return "Comando ausente: hyprctl"
+    if kind == "timeout" or result.returncode == DEADLINE_EXIT_CODE:
+        return "Tiempo de espera agotado al consultar hyprsunset"
+    detail = f": {stderr}" if stderr else ""
+    return f"hyprsunset no disponible{detail}"
+
 def read_nightlight():
     """Read identity, temperature and gamma through the hyprsunset IPC."""
-    identity_result = run_command([*HYPRSUNSET_COMMAND, "identity", "get"])
-    temperature_result = run_command([*HYPRSUNSET_COMMAND, "temperature"])
-    gamma_result = run_command([*HYPRSUNSET_COMMAND, "gamma"])
+    results = {
+        "identity": run_command([*HYPRSUNSET_COMMAND, "identity", "get"]),
+        "temperature": run_command([*HYPRSUNSET_COMMAND, "temperature"]),
+        "gamma": run_command([*HYPRSUNSET_COMMAND, "gamma"]),
+    }
+    for result in results.values():
+        if result.returncode != 0:
+            return _nightlight_state(_nightlight_command_error(result))
+
+    identity_result = results["identity"]
+    temperature_result = results["temperature"]
+    gamma_result = results["gamma"]
 
     identity_value = _text(identity_result.stdout).strip().casefold()
     identity = None
@@ -301,10 +371,7 @@ def read_nightlight():
 
     available = identity is not None and temperature is not None and gamma is not None
     if not available:
-        identity = None
-        temperature = None
-        gamma = None
-        enabled = False
+        return _nightlight_state("Respuesta de hyprsunset no reconocida")
     elif identity is True:
         enabled = False
     else:
@@ -322,79 +389,62 @@ def read_nightlight():
 def _wait_readback(predicate, deadline):
     """Poll a readback predicate until it holds or the deadline expires."""
     while True:
-        if predicate():
-            return True
+        state = read_nightlight()
+        if predicate(state):
+            return state
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return False
+            return None
         time.sleep(min(POLL_INTERVAL, remaining))
 
 
 def _apply_temperature(kelvin):
     target = max(TEMPERATURE_MIN, min(TEMPERATURE_MAX, int(kelvin)))
+    result = run_command([*HYPRSUNSET_COMMAND, "temperature", str(target)], timeout=WRITE_TIMEOUT)
+    if result.returncode != 0:
+        return _nightlight_failure(result.stderr.strip() or "No se pudo aplicar la temperatura")
     deadline = time.monotonic() + WRITE_TIMEOUT
-    while True:
-        result = run_command([*HYPRSUNSET_COMMAND, "temperature", str(target)], timeout=WRITE_TIMEOUT)
-        if result.returncode != 0:
-            return _nightlight_failure(
-                result.stderr.strip() or "No se pudo aplicar la temperatura"
-            )
-        if _wait_readback(
-            lambda: (
-                read_nightlight()["temperature"] is not None
-                and abs(read_nightlight()["temperature"] - target) <= READBACK_TOLERANCE_TEMP
-            ),
-            deadline,
-        ):
-            return read_nightlight()
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return _nightlight_failure("La temperatura aplicada no coincide con la solicitud")
-        time.sleep(min(POLL_INTERVAL, remaining))
+    state = _wait_readback(
+        lambda current: (
+            current["temperature"] is not None
+            and abs(current["temperature"] - target) <= READBACK_TOLERANCE_TEMP
+        ),
+        deadline,
+    )
+    return state or _nightlight_failure("La temperatura aplicada no coincide con la solicitud")
 
 
 def _apply_natural():
+    result = run_command([*HYPRSUNSET_COMMAND, "identity"], timeout=WRITE_TIMEOUT)
+    if result.returncode != 0:
+        return _nightlight_failure(result.stderr.strip() or "No se pudo aplicar el color natural")
     deadline = time.monotonic() + WRITE_TIMEOUT
-    while True:
-        result = run_command([*HYPRSUNSET_COMMAND, "identity"], timeout=WRITE_TIMEOUT)
-        if result.returncode != 0:
-            return _nightlight_failure(
-                result.stderr.strip() or "No se pudo aplicar el color natural"
-            )
-        if _wait_readback(lambda: read_nightlight()["identity"] is True, deadline):
-            return read_nightlight()
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return _nightlight_failure("El color natural no se confirmó")
-        time.sleep(min(POLL_INTERVAL, remaining))
+    state = _wait_readback(lambda current: current["identity"] is True, deadline)
+    return state or _nightlight_failure("El color natural no se confirmó")
 
 
 def _apply_gamma(percent):
     target = max(GAMMA_MIN, min(GAMMA_MAX, int(percent)))
+    result = run_command([*HYPRSUNSET_COMMAND, "gamma", str(target)], timeout=WRITE_TIMEOUT)
+    if result.returncode != 0:
+        return _nightlight_failure(result.stderr.strip() or "No se pudo aplicar el brillo percibido")
     deadline = time.monotonic() + WRITE_TIMEOUT
-    while True:
-        result = run_command([*HYPRSUNSET_COMMAND, "gamma", str(target)], timeout=WRITE_TIMEOUT)
-        if result.returncode != 0:
-            return _nightlight_failure(
-                result.stderr.strip() or "No se pudo aplicar el brillo percibido"
-            )
-        if _wait_readback(
-            lambda: (
-                read_nightlight()["gamma"] is not None
-                and abs(read_nightlight()["gamma"] - target) <= READBACK_TOLERANCE_GAMMA
-            ),
-            deadline,
-        ):
-            return read_nightlight()
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return _nightlight_failure("El brillo percibido aplicado no coincide con la solicitud")
-        time.sleep(min(POLL_INTERVAL, remaining))
+    state = _wait_readback(
+        lambda current: (
+            current["gamma"] is not None
+            and abs(current["gamma"] - target) <= READBACK_TOLERANCE_GAMMA
+        ),
+        deadline,
+    )
+    return state or _nightlight_failure("El brillo percibido aplicado no coincide con la solicitud")
 
 
 def _nightlight_failure(message):
     state = read_nightlight()
-    state["error"] = message
+    if state["error"]:
+        state["error"] = f"{message}: {state['error']}"
+    else:
+        state["error"] = message
     return state
 
 
