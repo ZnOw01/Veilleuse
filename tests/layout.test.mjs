@@ -191,7 +191,8 @@ test('automation route exposes schedule toggle, context-preserving editor, midni
   assert.match(qml, /schedule_enabled/);
   assert.match(qml, /\["schedule",\s*enabled \? "enable" : "disable"\]/);
   assert.match(qml, /midnight|midnightExplanation|crossesMidnight/);
-  assert.match(qml, /\["transition",\s*"--temperature"/);
+  assert.match(qml, /\["transition-config",\s*"--seconds"/);
+  assert.doesNotMatch(qml, /\["transition",\s*"--temperature"/);
   assert.match(qml, /snooze set|until-tomorrow|snooze clear/);
   assert.match(qml, /scheduleEditorOpen|scheduleExpanded/);
 });
@@ -330,4 +331,14 @@ test('hero does not add MouseArea and custom preset deletion waits for confirmat
 
   const deleteFunc = qml.slice(qml.indexOf('function deleteSelectedCustomPreset()'), qml.indexOf('function toggleSchedule('));
   assert.doesNotMatch(deleteFunc, /preferredPreset\s*=/);
+});
+
+test('transition config sets seconds only', () => {
+  assert.match(qml, /\["transition-config"\s*,\s*"--seconds"/);
+  assert.match(qml, /setTransition\(root\.transitionSeconds\)/);
+});
+
+test('transition seconds field bounds', () => {
+  assert.match(qml, /id:\s*transitionEditor[\s\S]*?from:\s*0/);
+  assert.match(qml, /id:\s*transitionEditor[\s\S]*?to:\s*1800/);
 });

@@ -226,7 +226,7 @@ Panel {
     function setTransition(seconds) {
         root.transitionSeconds = Math.max(0, Math.min(1800, Number(seconds)));
         root.persistInline({ transitionSeconds: root.transitionSeconds });
-        root.issue(["transition", "--temperature", String(root.state.temperature || 3500), "--gamma", String(root.state.gamma || 0), "--seconds", String(root.transitionSeconds)], "transition");
+        root.issue(["transition-config", "--seconds", String(root.transitionSeconds)], "transition-config");
     }
 
     function settingsCommand(name, args) {

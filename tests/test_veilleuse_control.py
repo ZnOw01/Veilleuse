@@ -607,6 +607,62 @@ class FinalIntegrationCliTests(HelperModuleTests):
         self.assertEqual(payload["error_code"], "invalid_preset")
         self.assertTrue(payload["error"])
 
+    def test_transition_config_valid_seconds(self):
+        code, output = self.run_cli("transition-config", "--seconds", "45")
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertIn("automation", payload)
+        self.assertEqual(payload["automation"]["transition_seconds"], 45)
+
+    def test_transition_config_integer_out_of_range(self):
+        code, output = self.run_cli("transition-config", "--seconds", "2000")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "invalid_transition")
+
+    def test_transition_config_non_integer(self):
+        code, output = self.run_cli("transition-config", "--seconds", "abc")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "invalid_argument")
+
+    def test_transition_config_preserves_other_state(self):
+        module = vc._state_module()
+        module.write_config(
+            {
+                "schema": 1,
+                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
+                "default_preset": "desk",
+            }
+        )
+        module.write_state(
+            dict(
+                module.DEFAULT_STATE,
+                schedule_enabled=False,
+                snooze_until=4102444800,
+                transition_seconds=30,
+                origin="preset",
+            )
+        )
+        code, output = self.run_cli("transition-config", "--seconds", "60")
+        self.assertEqual(code, 0)
+        status = json.loads(output)
+        self.assertEqual(status["automation"]["transition_seconds"], 60)
+        self.assertEqual(status["automation"]["origin"], "preset")
+        self.assertEqual(status["automation"]["schedule_enabled"], False)
+
+    def test_transition_config_corrupt_state_emits_error(self):
+        module = vc._state_module()
+        path = module.state_path()
+        path.parent.mkdir(parents=True)
+        path.write_text("{\"schema\": 1,", encoding="utf-8")
+
+        code, output = self.run_cli("transition-config", "--seconds", "45")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertIn("error_code", payload)
+        self.assertTrue(payload["error"])
+
 
 class NightlightTests(HelperModuleTests):
     def test_temperature_set_applies_and_reads_back(self):

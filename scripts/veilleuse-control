@@ -1473,6 +1473,33 @@ def cmd_transition(args):
     return 0
 
 
+def cmd_transition_config(args):
+    try:
+        seconds = int(args.seconds)
+    except (TypeError, ValueError):
+        _emit(_operation_failure("invalid_argument", "transition_seconds debe ser un número entero"))
+        return 1
+    try:
+        seconds = _bounded(seconds, 0, 1800, "transition_seconds")
+    except ValueError as error:
+        _emit(_operation_failure("invalid_transition", str(error)))
+        return 1
+    module = _state_module()
+    if module is None:
+        _emit(_operation_failure("helper_unavailable", "state_utils unavailable"))
+        return 1
+    try:
+        module.update_state(
+            lambda current: dict(current, transition_seconds=seconds)
+        )
+        _emit(read_status(monitor_name=None))
+        return 0
+    except Exception as error:
+        code = getattr(error, "error_code", "state_update_failed")
+        _emit(_operation_failure(code, str(error)))
+        return 1
+
+
 def cmd_reconcile(_args):
     module, environment = _automation_environment()
     if module is None or environment is None:
@@ -1691,6 +1718,14 @@ def build_parser():
     transition.add_argument("--gamma", required=True, type=int)
     transition.add_argument("--seconds", required=True, type=int)
     transition.set_defaults(handler=cmd_transition)
+
+    transition_config = subparsers.add_parser(
+        "transition-config", help="Set transition seconds only"
+    )
+    transition_config.add_argument(
+        "--seconds", required=True, help="Transition seconds (0..1800)"
+    )
+    transition_config.set_defaults(handler=cmd_transition_config)
 
     reconcile = subparsers.add_parser("reconcile", help="Reconcile snooze and schedule")
     reconcile.set_defaults(handler=cmd_reconcile)
