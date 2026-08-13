@@ -278,6 +278,16 @@ def remove_block(text):
 # --------------------------------------------------------------------------- \
 # collision detection
 
+class UnparseableBindingError(ValueError):
+    """A live bind/unbind call outside the marker block cannot be analyzed.
+
+    Raised by :func:`collision` — and surfaced as an unavailable install
+    result by :func:`install_shortcut` — when a real ``o.bind``/``hl.bind``/
+    ``hl.unbind`` call has dynamic or malformed keys.  The requested shortcut
+    must never be silently treated as free when a binding could reference it.
+    """
+
+
 def _mask_lua(text):
     """Mask comments and string literals with spaces, preserving offsets."""
     if not isinstance(text, str):
@@ -393,44 +403,110 @@ def _parse_keys_string(keys_string):
     return mods, key
 
 
-def _external_bindelines(text, block):
-    """Yield ``(mods, key, original_line)`` for active binds outside the block.
+def _binding_call_kind(call_text):
+    """Return ``"bind"`` or ``"unbind"`` for a matched call like ``hl.unbind(``."""
+    return "unbind" if ".unbind(" in call_text else "bind"
 
-    Only calls that survive the comment/string mask count: a masked match means
-    the call name sits outside comments and string literals.  The key string is
-    then read from the original text so masking never destroys it.
+
+def _literal_string_first_arg(text, position):
+    """Return the first argument of a call when it is one static string literal.
+
+    ``position`` is right after the call's opening parenthesis.  A dynamic
+    first argument (a variable, a call, concatenation, anything that is not
+    exactly one self-contained string literal ending before a comma or the
+    closing parenthesis) returns ``None``: such a keys argument cannot be
+    analyzed statically, which the caller treats as a fail-closed condition.
+    A literal that is only the prefix of a longer expression (e.g.
+    ``"SUPER + " .. k``) is detected too, so a partial parse never guesses.
+    """
+    length = len(text)
+    probe = position
+    while probe < length and text[probe] in " \t\n\r":
+        probe += 1
+    if probe >= length or text[probe] not in ('"', "'"):
+        return None
+    quote = text[probe]
+    content = []
+    current = probe + 1
+    while current < length:
+        char = text[current]
+        if char == "\\":
+            if current + 1 < length:
+                content.append(text[current + 1])
+            current += 2
+            continue
+        if char == quote:
+            break
+        content.append(char)
+        current += 1
+    else:
+        return None
+    after = current + 1
+    while after < length and text[after] in " \t\n\r":
+        after += 1
+    if after >= length or text[after] not in (",", ")"):
+        return None
+    return "".join(content)
+
+
+def _external_binding_calls(text, block):
+    """Yield ``(kind, mods, key, original_line)`` for live calls outside the block.
+
+    Calls are yielded in source order, which drives the ordered bind/unbind
+    semantics of :func:`collision`.  Only calls that survive the comment/string
+    mask count: a masked match means the call name sits outside comments and
+    string literals; the key string is then read from the original text so
+    masking never destroys it.  A live call with a missing, dynamic or
+    malformed keys argument raises :class:`UnparseableBindingError` instead of
+    being skipped: a dynamic binding could reference the requested keys, so
+    they must not be marked free.
     """
     masked = _mask_lua(text)
     for match in _BIND_CALL.finditer(masked):
         if block is not None and match.start() >= block[0] and match.start() < block[1]:
             continue
-        keys_string = _first_string_arg(text, match.end())
+        keys_string = _literal_string_first_arg(text, match.end())
         parsed = _parse_keys_string(keys_string) if keys_string is not None else None
         if parsed is None:
-            continue
+            line_start = masked.rfind("\n", 0, match.start()) + 1
+            line_end = masked.find("\n", match.end())
+            if line_end < 0:
+                line_end = len(masked)
+            original_line = text[line_start:line_end].strip()
+            raise UnparseableBindingError(
+                f"No se pudo analizar el enlace en bindings.lua: {original_line}"
+            )
         mods, key = parsed
         line_start = masked.rfind("\n", 0, match.start()) + 1
         line_end = masked.find("\n", match.end())
         if line_end < 0:
             line_end = len(masked)
         original_line = text[line_start:line_end].strip()
-        yield mods, key, original_line
+        yield _binding_call_kind(match.group(0)), mods, key, original_line
 
 
 def collision(text, keys_spec):
     """Return the conflicting external bind line, or ``None``.
 
-    Every binding outside the Veilleuse marker block is compared against the
-    requested keys; bindings inside the block are the plugin's own and are
-    skipped.
+    Live bindings outside the Veilleuse marker block are analyzed in source
+    order: ``o.bind``/``hl.bind`` activate the requested keys, ``hl.unbind``
+    (or ``o.unbind``) deactivates them, so only the last call that mentions
+    the requested keys decides the outcome.  ``bind`` then ``unbind`` leaves
+    the keys free; ``unbind`` then ``bind`` (or ``bind`` then ``bind``)
+    collides with the last active bind.  Calls inside the marker block are
+    the plugin's own and never participate.  A live call with dynamic or
+    unparseable keys raises :class:`UnparseableBindingError` (fail closed)
+    instead of silently marking the keys as free.
     """
     mods, key = parse_keys(keys_spec)
     needle = (frozenset(mods), key)
     block = find_block(text)
-    for external_mods, external_key, original_line in _external_bindelines(text, block):
-        if (external_mods, external_key) == needle:
-            return original_line
-    return None
+    active_bind = None
+    for kind, call_mods, call_key, original_line in _external_binding_calls(text, block):
+        if (call_mods, call_key) != needle:
+            continue
+        active_bind = original_line if kind == "bind" else None
+    return active_bind
 
 
 # --------------------------------------------------------------------------- \

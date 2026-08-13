@@ -1045,8 +1045,38 @@ class ShortcutCollisionTests(unittest.TestCase):
         self.assertEqual(sc.collision('o.bind("SUPER + v", "x", "x")\n', "SUPER, V"),
                          'o.bind("SUPER + v", "x", "x")')
 
-    def test_detects_unbind_of_the_same_keys(self):
-        self.assertIsNotNone(sc.collision('hl.unbind("SUPER + V")\n', "SUPER, V"))
+    def test_lone_unbind_frees_the_keys(self):
+        self.assertIsNone(sc.collision('hl.unbind("SUPER + V")\n', "SUPER, V"))
+
+    def test_bind_then_unbind_frees_the_keys(self):
+        text = 'o.bind("SUPER + V", "kitty", "kitty")\nhl.unbind("SUPER + V")\n'
+        self.assertIsNone(sc.collision(text, "SUPER, V"))
+
+    def test_unbind_then_bind_collides_with_the_later_bind(self):
+        text = 'hl.unbind("SUPER + V")\no.bind("SUPER + V", "kitty", "kitty")\n'
+        self.assertEqual(
+            sc.collision(text, "SUPER, V"), 'o.bind("SUPER + V", "kitty", "kitty")'
+        )
+
+    def test_bind_then_bind_collides_with_the_active_bind(self):
+        text = (
+            'o.bind("SUPER + V", "one", "one-cmd")\n'
+            'o.bind("SUPER + V", "two", "two-cmd")\n'
+        )
+        self.assertEqual(
+            sc.collision(text, "SUPER, V"), 'o.bind("SUPER + V", "two", "two-cmd")'
+        )
+
+    def test_other_keys_do_not_affect_the_requested_key_order(self):
+        text = (
+            'o.bind("SUPER + V", "kitty", "kitty")\n'
+            'o.bind("CTRL + F1", "x", "x")\n'
+            'hl.unbind("SUPER + V")\n'
+        )
+        self.assertIsNone(sc.collision(text, "SUPER, V"))
+        self.assertEqual(
+            sc.collision(text, "CTRL, F1"), 'o.bind("CTRL + F1", "x", "x")'
+        )
 
     def test_different_keys_do_not_collide(self):
         self.assertIsNone(sc.collision('o.bind("SUPER + K", "x", "x")\n', "SUPER, V"))
@@ -1080,6 +1110,39 @@ class ShortcutCollisionTests(unittest.TestCase):
         self.assertEqual(
             sc.collision(installed, "CTRL, F1"), 'o.bind("CTRL + F1", "x", "x")'
         )
+
+    def test_marker_block_calls_do_not_participate_in_the_order(self):
+        text = 'hl.unbind("SUPER + V")\n' + sc.install_block("", "SUPER, V")
+        self.assertIsNone(sc.collision(text, "SUPER, V"))
+
+    def test_concatenated_keys_argument_fails_closed(self):
+        text = 'o.bind("SUPER + " .. k, "x", "x")\n'
+        with self.assertRaises(sc.UnparseableBindingError):
+            sc.collision(text, "SUPER, V")
+
+    def test_non_string_first_argument_fails_closed(self):
+        text = 'hl.bind(keys_var, "x", "x")\n'
+        with self.assertRaises(sc.UnparseableBindingError):
+            sc.collision(text, "SUPER, V")
+
+    def test_malformed_keys_string_fails_closed(self):
+        text = 'o.bind("SUPER + ;;;", "x", "x")\n'
+        with self.assertRaises(sc.UnparseableBindingError):
+            sc.collision(text, "SUPER, V")
+
+    def test_dynamic_calls_inside_comments_are_still_ignored(self):
+        text = (
+            '-- o.bind("SUPER + " .. k, "x", "x")\n'
+            'o.bind("SUPER + K", "y", "y")\n'
+        )
+        self.assertIsNone(sc.collision(text, "SUPER, V"))
+        self.assertEqual(
+            sc.collision(text, "SUPER, K"), 'o.bind("SUPER + K", "y", "y")'
+        )
+
+    def test_dynamic_calls_inside_long_strings_are_still_ignored(self):
+        text = 'x = [=[o.bind("SUPER + " .. k, "x", "x")]=]\n'
+        self.assertIsNone(sc.collision(text, "SUPER, V"))
 
 
 class ShortcutFilesystemTests(unittest.TestCase):
@@ -1183,6 +1246,32 @@ class ShortcutFilesystemTests(unittest.TestCase):
         self.assertEqual(
             path.read_text(encoding="utf-8"), 'o.bind("CTRL + F1", "kitty", "kitty")\n'
         )
+
+    def test_install_succeeds_after_external_unbind_frees_the_keys(self):
+        original = 'o.bind("SUPER + V", "kitty", "kitty")\nhl.unbind("SUPER + V")\n'
+        path = self.write_bindings(original)
+        result = sc.install_shortcut("SUPER, V")
+        self.assertTrue(result["available"], result)
+        self.assertIn("SUPER + V", path.read_text(encoding="utf-8"))
+
+    def test_install_rejects_keys_rebound_after_an_unbind(self):
+        original = 'hl.unbind("SUPER + V")\no.bind("SUPER + V", "kitty", "kitty")\n'
+        path = self.write_bindings(original)
+        result = sc.install_shortcut("SUPER, V")
+        self.assertFalse(result["available"])
+        self.assertIn("ya está asignado", result["error"])
+        self.assertIn('o.bind("SUPER + V", "kitty", "kitty")', result["error"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_install_fails_closed_on_unparseable_external_binding(self):
+        original = 'o.bind("SUPER + " .. k, "kitty", "kitty")\n'
+        path = self.write_bindings(original)
+        result = sc.install_shortcut("SUPER, V")
+        self.assertFalse(result["available"])
+        self.assertIn("No se pudo analizar", result["error"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertFalse(path.with_suffix(".lua.bak").exists())
+        self.assertEqual(self.reload.calls, [])
 
     def test_install_invalid_keys_raise_and_write_nothing(self):
         original = "# x\n"
