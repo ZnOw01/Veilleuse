@@ -60,9 +60,9 @@ Panel {
     readonly property var presetOptions: root.presetChoices()
     readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : root.operationOrigin
     readonly property bool scheduleEnabled: !(root.state.automation && root.state.automation.schedule_enabled === false)
-    readonly property string provenanceText: I18n.t(root.locale, "origin_" + root.automationOrigin)
+    readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
-    readonly property string scopeText: I18n.t(root.locale, root.applyScope === "persistent" ? "persistent" : "session")
+    readonly property string scopeText: I18n.t(root.applyScope === "persistent" ? "persistent" : "session", root.locale)
 
     function normalizedPath(value) {
         var candidate = String(value || "");
@@ -159,7 +159,7 @@ Panel {
     function formatLastApplied(value) {
         if (!value || typeof value !== "object") return "";
         var preset = value.preset ? String(value.preset) : "";
-        var origin = value.origin ? I18n.t(root.locale, "origin_" + String(value.origin)) : "";
+        var origin = value.origin ? I18n.t("origin_" + String(value.origin), root.locale) : "";
         var stamp = value.at ? String(value.at) : "";
         return [preset, origin, stamp].filter(function(part) { return part !== ""; }).join(" · ");
     }

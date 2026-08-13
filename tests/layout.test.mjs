@@ -232,6 +232,7 @@ test('every translated QML key resolves in Spanish and English', async () => {
     assert.ok(I18n.t(key, 'en').length > 0);
   }
   assert.doesNotMatch(qml, /Model\.copy\./, 'QML must not bypass the active locale');
+  assert.doesNotMatch(qml + barQml, /I18n\.t\(root\.locale,/, 'I18n uses t(key, locale)');
 });
 
 test('global shortcut IPC endpoint performs a real helper toggle', () => {
