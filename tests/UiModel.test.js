@@ -230,3 +230,49 @@ test('detects a manual override only when real light state contradicts schedule 
     state: { enabled: false }
   }).state), true);
 });
+
+test('three rapid Arrow presses accumulate three steps without waiting for three readbacks', () => {
+  const state = Model.normalizeState({
+    available: true,
+    enabled: false,
+    brightness: { available: true, percent: 50, monitor: 'eDP-2', error: null },
+    nightlight: { available: true, enabled: false, identity: true, temperature: 6000, gamma: 100, error: null },
+    schedule: { available: false }
+  });
+  let pending = 0;
+  const requested = [];
+  for (let i = 0; i < 3; i++) {
+    const step = Model.keyboardStep('brightness', 1, state.brightness.percent, pending);
+    pending = step.pending;
+    requested.push(step.value);
+  }
+  assert.deepEqual(requested, [51, 52, 53]);
+  assert.equal(pending, 3);
+});
+
+test('temperature and gamma keyboard steps scale by their own magnitudes', () => {
+  const temp = Model.keyboardStep('temperature', 1, 3500, 0);
+  assert.equal(temp.value, 3600);
+  assert.equal(Model.keyboardStep('temperature', 1, 3500, temp.pending).value, 3700);
+  assert.equal(Model.keyboardStep('gamma', -1, 40, 0).value, 39);
+});
+
+test('keyboard steps clamp at the section boundary and stop accumulating', () => {
+  assert.equal(Model.keyboardStep('brightness', 1, 100, 0).value, 100);
+  assert.equal(Model.keyboardStep('brightness', 1, 100, 0).pending, 0);
+  assert.equal(Model.keyboardStep('brightness', -1, 1, 0).value, 1);
+  assert.equal(Model.keyboardStep('brightness', -1, 1, 0).pending, 0);
+  assert.equal(Model.stepTargetValue('gamma', 95, 10), 100);
+  assert.equal(Model.stepTargetValue('brightness', 2, -5), 1);
+});
+
+test('pending steps are drained toward the confirmed value by the realized delta', () => {
+  const first = Model.keyboardStep('brightness', 1, 50, 0);
+  const second = Model.keyboardStep('brightness', 1, 50, first.pending);
+  const third = Model.keyboardStep('brightness', 1, 50, second.pending);
+  const realized = 1;
+  const remaining = third.pending - realized;
+  const drainTarget = Model.stepTargetValue('brightness', 51, remaining);
+  assert.equal(remaining, 2);
+  assert.equal(drainTarget, 53);
+});

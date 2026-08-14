@@ -129,6 +129,50 @@ function moveCursor(cursor, key, scheduleExpanded) {
   return { section: section, field: field };
 }
 
+// Per-section keyboard step magnitudes and ranges. The panel mutates sliders
+// from ArrowRight/ArrowLeft; each press counts as one step so the slider
+// moves by SECTION_STEP (temperature scales each step by 100 K).
+var SECTION_STEP = {
+  brightness: 1,
+  temperature: 100,
+  gamma: 1
+};
+
+var SECTION_RANGES = {
+  brightness: { min: 1, max: 100 },
+  temperature: { min: 2500, max: 6500 },
+  gamma: { min: 0, max: 100 }
+};
+
+function sectionStep(section) {
+  return SECTION_STEP[section] || 0;
+}
+
+// Absolute value to request for a section when `pending` steps still sit ahead
+// of the last confirmed `confirmed` readback. Clamped to the section range so
+// requests never aim beyond a reachable physical value.
+function stepTargetValue(section, confirmed, pending) {
+  var range = SECTION_RANGES[section];
+  if (!range || typeof confirmed !== 'number' || !isFinite(confirmed)) return confirmed;
+  var magnitude = SECTION_STEP[section] || 0;
+  var steps = typeof pending === 'number' && isFinite(pending) ? pending : 0;
+  return Math.max(range.min, Math.min(range.max, confirmed + steps * magnitude));
+}
+
+// One rapid keyboard step. `delta` is +1 (ArrowRight) or -1 (ArrowLeft) and
+// `pending` is the number of steps already requested ahead of the last
+// confirmed readback. Accumulating `pending` across presses lets N rapid Arrow
+// presses request N steps without waiting for N sequential helper readbacks;
+// a step that is clamped away at a range boundary is not accumulated.
+function keyboardStep(section, delta, confirmed, pending) {
+  var steps = typeof pending === 'number' && isFinite(pending) ? pending : 0;
+  if (delta > 0) steps += 1;
+  else if (delta < 0) steps -= 1;
+  var value = stepTargetValue(section, confirmed, steps);
+  if (value === confirmed && steps !== 0) steps = 0;
+  return { value: value, pending: steps };
+}
+
 function validTime(value) {
   return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : null;
 }
@@ -482,6 +526,9 @@ if (typeof module !== 'undefined' && module.exports) {
     sectionOrder: sectionOrder,
     cursorStart: cursorStart,
     moveCursor: moveCursor,
+    sectionStep: sectionStep,
+    stepTargetValue: stepTargetValue,
+    keyboardStep: keyboardStep,
     normalizeState: normalizeState,
     validateScheduleFields: validateScheduleFields,
     isManualOverride: isManualOverride,

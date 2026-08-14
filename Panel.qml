@@ -40,6 +40,7 @@ Panel {
     property int latestRequestId: 0
     property int queuedRequestId: 0
     property int processRequestId: 0
+    property var pendingSteps: { "brightness": 0, "temperature": 0, "gamma": 0 }
     property string queuedOperation: ""
     property var queuedCommand: []
     property bool stoppingForLatest: false
@@ -250,7 +251,12 @@ Panel {
         actionPending = true;
         lastError = "";
         feedbackText = "";
-        debounce.restart();
+        if (root.helperProcess.running || root.stoppingForLatest || debounce.running) {
+            debounce.restart();
+        } else {
+            debounce.stop();
+            root.launchLatest();
+        }
     }
 
     function queueMutation(name, value) {
@@ -328,6 +334,7 @@ Panel {
             return ;
         }
         if (requestId !== latestRequestId) {
+            debounce.stop();
             Qt.callLater(root.launchLatest);
             return ;
         }
@@ -346,10 +353,12 @@ Panel {
             "state": responseState
         });
         if (result.accepted) {
+            var previousState = state;
             state = root.mergeCombined(result.state, responseState);
             root.historyItems = Array.isArray(state.history) ? state.history : root.historyItems;
             actionPending = false;
             lastError = result.state.error || "";
+            root.reconcilePending(previousState);
             if (queuedOperation === "schedule") {
                 feedbackText = root.text("saved");
                 feedbackTimer.restart();
@@ -376,15 +385,54 @@ Panel {
     function moveCursor(dx, dy) {
         if (dx !== 0 && stateReady && root.route === "home" && !root.scheduleExpanded) {
             var section = Model.sectionOrder()[cursor.section];
+            var confirmed = null;
             if (section === "brightness")
-                queueMutation("brightness", state.brightness.percent + dx);
+                confirmed = state.brightness.percent;
             else if (section === "temperature")
-                queueMutation("temperature", state.temperature + dx * 100);
+                confirmed = state.temperature;
             else if (section === "gamma")
-                queueMutation("gamma", state.gamma + dx);
+                confirmed = state.gamma;
+            if (typeof confirmed === "number") {
+                var step = Model.keyboardStep(section, dx, confirmed, root.pendingSteps[section]);
+                root.pendingSteps[section] = step.pending;
+                queueMutation(section, step.value);
+            }
         }
         var key = dy > 0 ? "j" : (dy < 0 ? "k" : (dx > 0 ? "l" : "h"));
         cursor = Model.moveCursor(cursor, key, root.scheduleExpanded);
+    }
+
+    function reconcilePending(previous) {
+        if (root.route !== "home" || root.scheduleExpanded) {
+            root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
+            return ;
+        }
+        var sections = ["brightness", "temperature", "gamma"];
+        for (var i = 0; i < sections.length; i++) {
+            var section = sections[i];
+            var before = section === "brightness" ? previous.brightness.percent : (section === "temperature" ? previous.temperature : previous.gamma);
+            var after = section === "brightness" ? state.brightness.percent : (section === "temperature" ? state.temperature : state.gamma);
+            if (typeof before !== "number" || typeof after !== "number")
+                continue;
+            var magnitude = Model.sectionStep(section);
+            if (magnitude <= 0)
+                continue;
+            var realized = Math.round((after - before) / magnitude);
+            if (realized === 0)
+                continue;
+            var remaining = (root.pendingSteps[section] || 0) - realized;
+            if (remaining === 0) {
+                root.pendingSteps[section] = 0;
+                continue;
+            }
+            var target = Model.stepTargetValue(section, after, remaining);
+            if (target === after) {
+                root.pendingSteps[section] = 0;
+                continue;
+            }
+            root.pendingSteps[section] = remaining;
+            root.queueMutation(section, target);
+        }
     }
 
     function handleCloseRequested() {
@@ -551,7 +599,7 @@ Panel {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus || monitorSelector.popupOpen || localeSelector.popupOpen || scopeSelector.popupOpen || presetSelector.popupOpen
+            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || transitionEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus || monitorSelector.popupOpen || localeSelector.popupOpen || scopeSelector.popupOpen || presetSelector.popupOpen
             onMoveRequested: function(dx, dy) {
                 root.moveCursor(dx, dy);
             }

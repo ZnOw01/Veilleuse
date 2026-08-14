@@ -348,3 +348,31 @@ test('last-applied provenance owns the remaining row width and elides cleanly', 
   assert.match(qml, /width:\s*parent\.width\s*-\s*lastAppliedLabel\.implicitWidth\s*-\s*parent\.spacing/);
   assert.match(qml, /elide:\s*Text\.ElideRight/);
 });
+
+test('keyboard slider steps accumulate pending offsets instead of recomputing from stale confirmed state', () => {
+  const moveCursorBlock = qml.slice(qml.indexOf('function moveCursor(dx, dy) {'), qml.indexOf('function handleCloseRequested()'));
+  assert.match(moveCursorBlock, /Model\.keyboardStep\(section,\s*dx,\s*confirmed,\s*root\.pendingSteps\[section\]\)/);
+  assert.match(moveCursorBlock, /root\.pendingSteps\[section\]\s*=\s*step\.pending/);
+  assert.match(moveCursorBlock, /function reconcilePending\(previous\)/);
+});
+
+test('confirmed readbacks reconcile pending steps and drain the remaining distance', () => {
+  assert.match(qml, /function reconcilePending\(previous\)[\s\S]*?root\.queueMutation\(section,\s*target\)/);
+  assert.match(qml, /var\s+previousState\s*=\s*state;[\s\S]*?root\.reconcilePending\(previousState\)/);
+});
+
+test('requests launch immediately when idle and only debounce bursts to preserve latest-wins', () => {
+  const requestBlock = qml.slice(qml.indexOf('function request(command, operation) {'), qml.indexOf('function queueMutation(name, value) {'));
+  assert.match(requestBlock, /if\s*\(\s*root\.helperProcess\.running\s*\|\|\s*root\.stoppingForLatest\s*\|\|\s*debounce\.running\s*\)/);
+  assert.match(requestBlock, /debounce\.restart\(\)/);
+  assert.match(requestBlock, /debounce\.stop\(\)/);
+  assert.match(requestBlock, /root\.launchLatest\(\)/);
+});
+
+test('keyCatcher yields to the transition editor so arrows edit the field instead of moving the cursor', () => {
+  assert.match(qml, /blocked:[^\n]*transitionEditor\.field\.activeFocus/);
+});
+
+test('a superseded helper exit cancels the stale burst debounce before relaunching the latest', () => {
+  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\)\s*\{\s*debounce\.stop\(\);\s*Qt\.callLater\(root\.launchLatest\);/);
+});
