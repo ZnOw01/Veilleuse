@@ -220,6 +220,95 @@ def _natural_values(state: Mapping) -> dict:
     return values
 
 
+def _profile_fingerprint(profile) -> dict | None:
+    """Normalize a schedule profile to the stable period fingerprint.
+
+    The fingerprint is constant for the whole day (identity or a single day
+    temperature) and for the whole night (a single night temperature), so
+    equality between the fingerprint captured at a manual action and the
+    current profile tells reconcile whether the manual intent belongs to the
+    same schedule period or a stale one.
+    """
+    if not isinstance(profile, Mapping) or profile.get("available") is not True:
+        return None
+    if profile.get("kind") == "identity":
+        return {"kind": "identity"}
+    if profile.get("kind") == "temperature":
+        temperature = profile.get("temperature")
+        if (
+            isinstance(temperature, int)
+            and not isinstance(temperature, bool)
+            and TEMPERATURE_MIN <= temperature <= TEMPERATURE_MAX
+        ):
+            return {"kind": "temperature", "temperature": temperature}
+    return None
+
+
+def build_manual_override(profile, now, operation, values=None) -> dict | None:
+    """Best-effort manual-intent record tied to the current schedule period.
+
+    Returns ``None`` when no schedule profile is available (reconcile would
+    fail closed on ``schedule_unavailable`` anyway, so no override is needed).
+    """
+    fingerprint = _profile_fingerprint(profile)
+    if fingerprint is None:
+        return None
+    record = {
+        "at": _iso_timestamp(now),
+        "operation": operation,
+        "profile": fingerprint,
+    }
+    if values:
+        normalized = {}
+        for field in ("temperature", "gamma"):
+            if values.get(field) is not None:
+                normalized[field] = int(values[field])
+        if normalized:
+            record["values"] = normalized
+    return record
+
+
+def _manual_override_active(override, profile) -> bool:
+    """True while the manual override belongs to the current schedule period."""
+    fingerprint = _profile_fingerprint(profile)
+    if override is None or fingerprint is None:
+        return False
+    if not isinstance(override, Mapping):
+        return False
+    return override.get("profile") == fingerprint
+
+
+def commit_manual_apply(env, operation, values=None) -> dict:
+    """Persist provenance and manual intent for a successful manual apply.
+
+    The provenance entry and the ``manual_override`` (tied to the schedule
+    period active at apply time) are written atomically in the same state
+    update so reconcile can preserve the manual filter within the period.
+    """
+    env = _resolve_env(env)
+    now = env["now"]()
+    try:
+        profile = env["current_profile"]()
+    except Exception:
+        profile = None
+    override = build_manual_override(profile, now, operation, values)
+    entry = {
+        "at": _iso_timestamp(now),
+        "origin": "manual",
+        "operation": operation,
+    }
+    if values:
+        entry["values"] = dict(values)
+    return env["update_state"](
+        lambda current: {
+            **current,
+            "origin": "manual",
+            "last_applied": entry,
+            "manual_override": override,
+        }
+    )
+
+
 def _append_history(env, record) -> str | None:
     """Append one history record, returning a history error code or None."""
     try:
@@ -351,6 +440,7 @@ def _snooze_set_expiry(target_epoch: float, operation: str, env: dict, minutes=N
             lambda current: {
                 **current,
                 "snooze_until": float(target_epoch),
+                "manual_override": None,
                 "last_applied": {
                     "at": at,
                     "origin": "snooze",
@@ -616,6 +706,11 @@ def transition(target_temperature, target_gamma, seconds, env=None) -> dict:
     now = env["now"]()
     values = {"temperature": temperature, "gamma": gamma}
     try:
+        profile = env["current_profile"]()
+    except Exception:
+        profile = None
+    override = build_manual_override(profile, now, "transition", values)
+    try:
         env["update_state"](
             lambda current: {
                 **current,
@@ -625,6 +720,7 @@ def transition(target_temperature, target_gamma, seconds, env=None) -> dict:
                     "operation": "transition",
                     "values": values,
                 },
+                "manual_override": override,
             }
         )
     except Exception as error:
@@ -742,6 +838,7 @@ def _commit_reconcile(env: dict, values: dict) -> tuple[bool, str | None]:
                     "operation": "reconcile_schedule",
                     "values": values,
                 },
+                "manual_override": None,
             }
         )
     except Exception:
@@ -799,6 +896,7 @@ def reconcile(env=None) -> dict:
             env["update_state"](
                 lambda current_state: {
                     **current_state,
+                    "manual_override": None,
                     "last_applied": {
                         "at": _iso_timestamp(now),
                         "origin": "snooze",
@@ -873,7 +971,8 @@ def reconcile(env=None) -> dict:
             history_error=history_error,
         )
 
-    # Otherwise: apply the current period only when drift exists.
+    # Otherwise: apply the current period only when drift exists, honoring a
+    # manual intent recorded in the same schedule period.
     if state.get("schedule_enabled") is not True:
         return _success(operation="reconcile", applied=False, snoozed=False)
 
@@ -884,6 +983,12 @@ def reconcile(env=None) -> dict:
             profile.get("error") or "El perfil de horario no está disponible",
             operation="reconcile", applied=False, snoozed=False,
         )
+    override = state.get("manual_override")
+    if _manual_override_active(override, profile):
+        return _success(
+            operation="reconcile", applied=False, snoozed=False,
+            manual_override=True,
+        )
     current = env["read_nightlight"]()
     if not current.get("available"):
         return _failure(
@@ -892,6 +997,17 @@ def reconcile(env=None) -> dict:
             operation="reconcile", applied=False, snoozed=False,
         )
     if not _profile_drift(profile, current):
+        if override is not None:
+            try:
+                env["update_state"](
+                    lambda current_state: {**current_state, "manual_override": None}
+                )
+            except Exception:
+                return _failure(
+                    "state_failed",
+                    "No se pudo limpiar el modo manual del período anterior",
+                    operation="reconcile", applied=False, snoozed=False,
+                )
         return _success(operation="reconcile", applied=False, snoozed=False)
 
     result, values = _apply_profile(
@@ -922,6 +1038,7 @@ __all__ = [
     "TRANSITION_SECONDS_MIN", "TRANSITION_SECONDS_MAX",
     "STEP_INTERVAL_SECONDS", "IDENTITY_TEMPERATURE",
     "DRIFT_TOLERANCE_TEMPERATURE",
+    "build_manual_override", "commit_manual_apply",
     "default_env", "ramp_schedule", "snooze_status",
     "snooze_status_current", "snooze_set", "snooze_until_tomorrow",
     "snooze_clear", "transition", "reconcile", "until_tomorrow_epoch",

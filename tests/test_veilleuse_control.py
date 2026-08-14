@@ -751,6 +751,85 @@ class NightlightTests(HelperModuleTests):
         self.assertIsNone(state["temperature"])
 
 
+class ManualIntentTests(HelperModuleTests):
+    def test_toggle_persists_manual_intent_for_current_period(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "toggle")
+        self.assertEqual(code, 0)
+        state = module.read_state()
+        override = state["manual_override"]
+        self.assertEqual(override["profile"], {"kind": "identity"})
+        self.assertEqual(override["operation"], "nightlight_toggle")
+        self.assertEqual(state["origin"], "manual")
+        self.assertEqual(state["last_applied"]["origin"], "manual")
+        self.assertEqual(state["last_applied"]["operation"], "nightlight_toggle")
+
+    def test_temperature_set_persists_manual_intent_for_current_period(self):
+        module = vc._state_module()
+        with patch.object(
+            vc, "_current_profile",
+            return_value={"available": True, "kind": "temperature", "temperature": 3500},
+        ):
+            code, output = self.run_cli("nightlight", "temperature", "4000")
+        self.assertEqual(code, 0)
+        state = module.read_state()
+        self.assertEqual(
+            state["manual_override"]["profile"],
+            {"kind": "temperature", "temperature": 3500},
+        )
+
+    def test_gamma_set_persists_manual_intent(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "gamma", "60")
+        self.assertEqual(code, 0)
+        state = module.read_state()
+        self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
+
+    def test_natural_set_persists_manual_intent(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "natural")
+        self.assertEqual(code, 0)
+        state = module.read_state()
+        self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
+
+    def test_direct_temperature_then_reconcile_same_period_preserves_warm(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "temperature", "4500")
+            self.assertEqual(code, 0)
+            code, output = self.run_cli("reconcile")
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertFalse(payload["result"]["applied"])
+        # The manually applied warm filter survived reconcile in this period.
+        self.assertFalse(self.sim.identity)
+        self.assertEqual(self.sim.temperature, 4500)
+        state = module.read_state()
+        self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
+
+    def test_manual_override_status_section_exposes_field(self):
+        module = vc._state_module()
+        module.write_state(
+            dict(
+                module.DEFAULT_STATE,
+                manual_override={
+                    "at": "2026-08-13T10:00:00Z",
+                    "operation": "nightlight_toggle",
+                    "profile": {"kind": "identity"},
+                },
+            )
+        )
+        code, output = self.run_cli("status")
+        self.assertEqual(code, 0)
+        status = json.loads(output)
+        self.assertEqual(
+            status["automation"]["manual_override"]["profile"], {"kind": "identity"}
+        )
+
+
 class ScheduleTests(HelperModuleTests):
     def write_config(self, text):
         path = vc.config_path()

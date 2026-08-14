@@ -96,6 +96,7 @@ class StateUtilsTest(unittest.TestCase):
                 "values": {"temperature": 3500, "gamma": 90, "brightness": 60},
             },
             "schedule_disabled": None,
+            "manual_override": None,
         }
         state_utils.write_config(config)
         state_utils.write_state(state)
@@ -146,6 +147,79 @@ class StateUtilsTest(unittest.TestCase):
                         dict(state_utils.DEFAULT_STATE, last_applied=last_applied)
                     )
                 self.assertEqual(error.exception.error_code, "invalid_state")
+
+    def test_manual_override_is_validated_and_defaults_to_none(self):
+        valid = {
+            "at": "2026-08-13T10:00:00Z",
+            "operation": "nightlight_toggle",
+            "profile": {"kind": "identity"},
+            "values": {"temperature": 4500, "gamma": 90},
+        }
+        self.assertEqual(
+            state_utils.write_state(
+                dict(state_utils.DEFAULT_STATE, manual_override=valid)
+            )["manual_override"],
+            valid,
+        )
+
+        temp_valid = dict(valid, profile={"kind": "temperature", "temperature": 3500})
+        self.assertEqual(
+            state_utils.write_state(
+                dict(state_utils.DEFAULT_STATE, manual_override=temp_valid)
+            )["manual_override"],
+            temp_valid,
+        )
+
+        minimal = {"at": "2026-08-13T10:00:00Z", "operation": "transition", "profile": {"kind": "identity"}}
+        self.assertEqual(
+            state_utils.write_state(
+                dict(state_utils.DEFAULT_STATE, manual_override=minimal)
+            )["manual_override"],
+            minimal,
+        )
+
+        invalid_values = [
+            dict(valid, at="not-an-iso-time"),
+            dict(valid, at="2026-99-99T99:99:99Z"),
+            dict(valid, operation="nightlight toggle"),
+            dict(valid, operation=""),
+            dict(valid, profile={"kind": "identity", "temperature": 4000}),
+            dict(valid, profile={"kind": "temperature", "temperature": 7000}),
+            dict(valid, profile={"kind": "temperature"}),
+            dict(valid, profile="identity"),
+            dict(valid, values={"temperature": 7000, "gamma": 90}),
+            dict(valid, unexpected=True),
+        ]
+        for manual_override in invalid_values:
+            with self.subTest(manual_override=manual_override):
+                with self.assertRaises(state_utils.StateError) as error:
+                    state_utils.write_state(
+                        dict(state_utils.DEFAULT_STATE, manual_override=manual_override)
+                    )
+                self.assertEqual(error.exception.error_code, "invalid_state")
+
+    def test_schema_one_state_without_manual_override_loads_with_default(self):
+        state = {
+            "schema": 1,
+            "schedule_enabled": True,
+            "snooze_until": None,
+            "transition_seconds": 45,
+            "origin": "manual",
+            "last_applied": None,
+            "schedule_disabled": None,
+        }
+        self.state_file().parent.mkdir(parents=True)
+        self.state_file().write_text(json.dumps(state), encoding="utf-8")
+        loaded = state_utils.read_state()
+        self.assertEqual(loaded["manual_override"], None)
+        self.assertEqual(loaded["transition_seconds"], 45)
+        self.assertEqual(loaded["origin"], "manual")
+        # Reading does not rewrite the on-disk schema-1 document.
+        self.assertEqual(json.loads(self.state_file().read_text()), state)
+        # Once a write happens the optional field is materialized.
+        written = state_utils.write_state(loaded)
+        self.assertIn("manual_override", written)
+        self.assertIn("manual_override", json.loads(self.state_file().read_text()))
 
     def test_corrupt_json_has_stable_error_and_is_never_overwritten(self):
         path = self.config_file()

@@ -902,6 +902,7 @@ def _automation_status(module):
         "origin": "unknown",
         "last_applied": None,
         "schedule_disabled": None,
+        "manual_override": None,
     }
     try:
         state = module.read_state()
@@ -917,6 +918,7 @@ def _automation_status(module):
             "origin": state["origin"],
             "last_applied": state["last_applied"],
             "schedule_disabled": state["schedule_disabled"],
+            "manual_override": state["manual_override"],
             "error_code": None,
             "error": None,
         }
@@ -1222,6 +1224,7 @@ def read_status(*, nightlight=None, monitor_name=None):
             "origin": "unknown",
             "last_applied": None,
             "schedule_disabled": None,
+            "manual_override": None,
         })
         presets = _failed_section(state_error, {"default_preset": None, "builtins": [], "user": [], "list": []})
         history, history_status = [], _failed_section(state_error, {})
@@ -1513,6 +1516,28 @@ def cmd_reconcile(_args):
     return 0
 
 
+def _persist_manual_intent(operation, state):
+    """Record a successful manual nightlight operation as manual intent.
+
+    Best-effort: the hardware change already succeeded, so a persistence
+    failure must never mask it or turn the operation into an error.
+    """
+    module, environment = _automation_environment()
+    if module is None or environment is None:
+        return
+    values = {}
+    temperature = state.get("temperature")
+    gamma = state.get("gamma")
+    if isinstance(temperature, int) and not isinstance(temperature, bool):
+        values["temperature"] = temperature
+    if isinstance(gamma, int) and not isinstance(gamma, bool):
+        values["gamma"] = gamma
+    try:
+        module.commit_manual_apply(environment, f"nightlight_{operation}", values or None)
+    except Exception:
+        pass
+
+
 def cmd_nightlight(args):
     operation = args.operation
     if operation == "toggle":
@@ -1529,6 +1554,7 @@ def cmd_nightlight(args):
         return _abort(f"Operación de luz nocturna desconocida: {operation}")
     ok = state["available"] and state["error"] is None
     if ok:
+        _persist_manual_intent(operation, state)
         run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
     status = read_status(nightlight=state)
     _emit(status if ok else {"error": state["error"], "state": status})

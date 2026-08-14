@@ -772,6 +772,134 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(result["error_code"], "state_failed")
 
     # ------------------------------------------------------------------ \
+    # manual override / manual intent
+
+    def manual_override(self, **changes):
+        record = {
+            "at": ISO,
+            "operation": "nightlight_toggle",
+            "profile": {"kind": "identity"},
+            "values": {"temperature": 4500, "gamma": 90},
+        }
+        record.update(changes)
+        return record
+
+    def test_transition_records_manual_override_for_identity_period(self):
+        self.profile = {"available": True, "kind": "identity"}
+        result = automation.transition(4500, 90, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        state = self.read_state()
+        self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
+        self.assertEqual(state["manual_override"]["operation"], "transition")
+        self.assertEqual(
+            state["manual_override"]["values"], {"temperature": 4500, "gamma": 90}
+        )
+        self.assertIn("at", state["manual_override"])
+
+    def test_transition_records_manual_override_for_temperature_period(self):
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        result = automation.transition(4000, 80, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        state = self.read_state()
+        self.assertEqual(
+            state["manual_override"]["profile"],
+            {"kind": "temperature", "temperature": 3500},
+        )
+
+    def test_transition_with_unavailable_profile_records_no_override(self):
+        self.profile = {"available": False, "error": "no schedule"}
+        result = automation.transition(4000, 80, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_reconcile_preserves_manual_override_within_same_period(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.initial_state(manual_override=self.manual_override())
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertTrue(result["manual_override"])
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertEqual(self.nightlight.applications, [])
+        self.assertEqual(self.read_history(), [])
+        self.assertEqual(self.read_state()["manual_override"], self.manual_override())
+        # Idempotent: a second reconcile in the same period still preserves it.
+        again = automation.reconcile(env=self.env())
+        self.assertTrue(again["success"], again)
+        self.assertFalse(again["applied"])
+        self.assertEqual(self.nightlight.naturals, 0)
+
+    def test_reconcile_preserves_manual_override_within_temperature_period(self):
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        self.nightlight = FakeNightlight(temperature=4500, gamma=90)
+        self.initial_state(
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            )
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertEqual(self.nightlight.applications, [])
+        self.assertEqual(self.read_history(), [])
+
+    def test_reconcile_resumes_schedule_when_period_changes(self):
+        self.nightlight = FakeNightlight(temperature=4500, gamma=90)
+        self.initial_state(manual_override=self.manual_override(), transition_seconds=0)
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.applications, [(3500, 90)])
+        state = self.read_state()
+        self.assertIsNone(state["manual_override"])
+        self.assertEqual(state["last_applied"]["origin"], "automatic")
+        self.assertEqual(state["last_applied"]["operation"], "reconcile_schedule")
+        # Once resumed, later reconciles enforce drift normally.
+        again = automation.reconcile(env=self.env())
+        self.assertTrue(again["success"], again)
+        self.assertFalse(again["applied"])
+
+    def test_reconcile_clears_stale_override_when_period_changed_without_drift(self):
+        self.initial_state(manual_override=self.manual_override())
+        self.nightlight = FakeNightlight(temperature=3500, gamma=90)
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertIsNone(self.read_state()["manual_override"])
+        self.assertEqual(self.read_history(), [])
+
+    def test_snooze_set_clears_manual_override(self):
+        self.initial_state(manual_override=self.manual_override())
+        result = automation.snooze_set(30, env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_reconcile_snoozed_clears_manual_override(self):
+        self.initial_state(
+            snooze_until=2800.0,
+            manual_override=self.manual_override(),
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertTrue(result["snoozed"])
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_reconcile_expiry_applies_profile_and_clears_override(self):
+        self.initial_state(
+            snooze_until=900.0,
+            manual_override=self.manual_override(),
+            transition_seconds=0,
+        )
+        self.profile = {"available": True, "kind": "temperature", "temperature": 4000}
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    # ------------------------------------------------------------------ \
     # fail-closed defaults
 
     def test_defaults_fail_closed_without_live_commands(self):

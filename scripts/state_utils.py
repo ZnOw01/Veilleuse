@@ -52,6 +52,7 @@ DEFAULT_STATE = {
     "origin": "unknown",
     "last_applied": None,
     "schedule_disabled": None,
+    "manual_override": None,
 }
 
 
@@ -334,22 +335,71 @@ def _validate_last_applied(value: object) -> dict | None:
     return normalized
 
 
+def _validate_manual_override(value: object) -> dict | None:
+    """Validate the optional manual-intent override persisted with a manual apply.
+
+    ``None`` means no manual intent is active.  Otherwise the record ties the
+    manual operation to the schedule profile (``profile`` fingerprint) that
+    was active when it happened, so reconcile can skip scheduled enforcement
+    while that same period lasts and resume automatically at the next one.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise StateError("invalid_state", "manual_override is invalid")
+    if set(value) - {"at", "operation", "profile", "values"}:
+        raise StateError("invalid_state", "manual_override is invalid")
+    if not {"at", "operation", "profile"} <= set(value):
+        raise StateError("invalid_state", "manual_override is invalid")
+    timestamp = value["at"]
+    if not isinstance(timestamp, str) or not timestamp or _ISO_LIKE_PATTERN.fullmatch(timestamp) is None:
+        raise StateError("invalid_state", "manual_override.at is invalid")
+    try:
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise StateError("invalid_state", "manual_override.at is invalid") from error
+    try:
+        operation = _name(value["operation"], "manual_override.operation")
+    except StateError as error:
+        raise StateError("invalid_state", "manual_override.operation is invalid") from error
+    profile = value["profile"]
+    if not isinstance(profile, dict) or set(profile) - {"kind", "temperature"}:
+        raise StateError("invalid_state", "manual_override.profile is invalid")
+    kind = profile.get("kind")
+    if kind == "identity":
+        if "temperature" in profile:
+            raise StateError("invalid_state", "manual_override.profile is invalid")
+        normalized_profile = {"kind": "identity"}
+    elif kind == "temperature":
+        try:
+            temperature = _integer(
+                profile.get("temperature"), minimum=2500, maximum=6500, field="temperature"
+            )
+        except StateError as error:
+            raise StateError("invalid_state", "manual_override.profile is invalid") from error
+        normalized_profile = {"kind": "temperature", "temperature": temperature}
+    else:
+        raise StateError("invalid_state", "manual_override.profile is invalid")
+    normalized = {
+        "at": timestamp,
+        "operation": operation,
+        "profile": normalized_profile,
+    }
+    if "values" in value:
+        try:
+            normalized["values"] = _validate_applied_values(value["values"])
+        except StateError as error:
+            raise StateError("invalid_state", "manual_override.values is invalid") from error
+    return normalized
+
+
 def _validate_state(raw: object) -> dict:
     data, version = _schema(raw, "state")
-    if version == 0:
-        allowed = {
-            "schema", "schedule_enabled", "snooze_until", "transition_seconds",
-            "origin", "last_applied", "schedule_disabled",
-        }
-        if set(data) - allowed:
-            raise StateError("invalid_state", "State fields are invalid")
-        data["schema"] = SCHEMA_VERSION
-        for key, default in DEFAULT_STATE.items():
-            data.setdefault(key, copy.deepcopy(default))
-    if set(data) != set(DEFAULT_STATE):
+    if set(data) - set(DEFAULT_STATE):
         raise StateError("invalid_state", "State fields are invalid")
-    if data["schema"] != SCHEMA_VERSION:
-        raise StateError("invalid_schema", "Unsupported state schema")
+    data["schema"] = SCHEMA_VERSION
+    for key, default in DEFAULT_STATE.items():
+        data.setdefault(key, copy.deepcopy(default))
     if not isinstance(data["schedule_enabled"], bool):
         raise StateError("invalid_state", "schedule_enabled must be boolean")
     snooze = data["snooze_until"]
@@ -377,6 +427,7 @@ def _validate_state(raw: object) -> dict:
         "origin": origin,
         "last_applied": _validate_last_applied(data["last_applied"]),
         "schedule_disabled": _validate_schedule_disabled(data["schedule_disabled"]),
+        "manual_override": _validate_manual_override(data["manual_override"]),
     }
 
 
