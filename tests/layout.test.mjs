@@ -359,6 +359,15 @@ test('ids are never accessed through the root object', () => {
   assert.match(qml, /if \(helperProcess\.running \|\| root\.stoppingForLatest \|\| debounce\.running\) \{/);
 });
 
+test('every live slider keeps its section header', () => {
+  // The home restructure once dropped these: sliders rendered as bare rows
+  // with a value and no label.
+  const home = qml.slice(qml.indexOf('id: homeRoute'), qml.indexOf('id: automationRoute'));
+  for (const key of ['brightness', 'temperature', 'gamma']) {
+    assert.match(home, new RegExp(`PanelSectionHeader\\s*\\{\\s*text:\\s*root\\.text\\("${key}"\\)`));
+  }
+});
+
 test('slider value labels track the drag target like the knob does', () => {
   // The knob shows displayValue() while a chase is in flight; the numeric
   // label must too, or the number lags the pointer and then snaps.

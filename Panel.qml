@@ -956,6 +956,12 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
+                    PanelSectionHeader {
+                        text: root.text("brightness")
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
+                    }
+
                     CursorSurface {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
@@ -1002,6 +1008,12 @@ Panel {
                         foreground: root.foreground
                     }
 
+                    PanelSectionHeader {
+                        text: root.text("temperature")
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
+                    }
+
                     CursorSurface {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
@@ -1046,6 +1058,12 @@ Panel {
 
                     PanelSeparator {
                         foreground: root.foreground
+                    }
+
+                    PanelSectionHeader {
+                        text: root.text("gamma")
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
                     }
 
                     CursorSurface {
