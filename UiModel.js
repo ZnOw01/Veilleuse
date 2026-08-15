@@ -337,17 +337,17 @@ function normalizeState(raw) {
   };
 }
 
-function validateScheduleFields(start, end, naturalDay, dayTemperature, nightTemperature) {
+function validateScheduleFields(start, end, naturalDay, dayTemperature, nightTemperature, locale) {
   if (validTime(start) === null)
-    return { valid: false, error: 'La hora diurna debe usar el formato HH:MM' };
+    return { valid: false, error: t('scheduleDayTimeFormat', locale) };
   if (validTime(end) === null)
-    return { valid: false, error: 'La hora nocturna debe usar el formato HH:MM' };
+    return { valid: false, error: t('scheduleNightTimeFormat', locale) };
   if (start === end)
-    return { valid: false, error: 'Las horas de día y noche deben ser diferentes' };
+    return { valid: false, error: t('scheduleDayNightEqual', locale) };
   if (validNumber(dayTemperature, 5900, 6500) === null)
-    return { valid: false, error: 'La temperatura diurna debe estar entre 5900 y 6500 K' };
+    return { valid: false, error: t('scheduleDayTemperatureRange', locale) };
   if (validNumber(nightTemperature, 2500, 5000) === null)
-    return { valid: false, error: 'La temperatura nocturna debe estar entre 2500 y 5000 K' };
+    return { valid: false, error: t('scheduleNightTemperatureRange', locale) };
   return { valid: true, error: '' };
 }
 
@@ -426,6 +426,7 @@ function copyFor(locale) {
 }
 
 var ERROR_CODE_KEYS = {
+  // camelCase aliases (backward-compatible with the original contract).
   helperMissing: 'errHelperMissing',
   brightnessUnavailable: 'errBrightnessUnavailable',
   nightlightUnavailable: 'errNightlightUnavailable',
@@ -436,7 +437,60 @@ var ERROR_CODE_KEYS = {
   presetInvalid: 'errPresetInvalid',
   historyUnreadable: 'errHistoryUnreadable',
   settingsWrite: 'errSettingsWrite',
-  shortcutWrite: 'errShortcutWrite'
+  shortcutWrite: 'errShortcutWrite',
+  // snake_case codes actually emitted by the Python helper, mapped to the
+  // same localized dictionaries so no emitted code degrades to errUnknown.
+  helper_unavailable: 'errHelperMissing',
+  monitor_unavailable: 'errMonitorUnavailable',
+  invalid_argument: 'errInvalidValue',
+  invalid_transition: 'errInvalidValue',
+  invalid_brightness_step: 'errInvalidValue',
+  invalid_value: 'errInvalidValue',
+  invalid_preset: 'errPresetInvalid',
+  builtin_immutable: 'errPresetInvalid',
+  default_conflict: 'errPresetInvalid',
+  invalid_json: 'errInvalidJson',
+  invalid_schema: 'errInvalidConfig',
+  invalid_config: 'errInvalidConfig',
+  invalid_state: 'errInvalidState',
+  invalid_history: 'errInvalidHistory',
+  brightness_readback_failed: 'errReadbackFailed',
+  temperature_readback_failed: 'errReadbackFailed',
+  gamma_readback_failed: 'errReadbackFailed',
+  readback_mismatch: 'errReadbackFailed',
+  brightness_write_failed: 'errBrightnessWrite',
+  schedule_unavailable: 'errScheduleUnavailable',
+  schedule_failed: 'errScheduleFailed',
+  state_unavailable: 'errStateFailed',
+  state_failed: 'errStateFailed',
+  state_update_failed: 'errStateFailed',
+  unsafe_path: 'errUnsafePath',
+  io_error: 'errIoError',
+  not_executable: 'errNotExecutable',
+  missing_command: 'errMissingCommand',
+  timeout: 'errTimeout',
+  backend_unavailable: 'errBackendUnavailable',
+  preset_failed: 'errPresetFailed',
+  preset_not_found: 'errPresetNotFound',
+  deadline_exceeded: 'errDeadline',
+  deadline: 'errDeadline',
+  cancelled: 'errCancelled',
+  snooze_failed: 'errSnoozeFailed',
+  transition_failed: 'errTransitionFailed',
+  reconcile_failed: 'errReconcileFailed',
+  apply_failed: 'errApplyFailed',
+  nightlight_failure: 'errApplyFailed',
+  read_failed: 'errReadFailed',
+  native_failure: 'errNativeFailure',
+  native_operation_missing: 'errNativeFailure',
+  conflict: 'errScheduleConflict',
+  missing_config: 'errScheduleConflict',
+  malformed_config: 'errScheduleConflict',
+  ambiguous_config: 'errScheduleConflict',
+  rollback_failed: 'errScheduleConflict',
+  malformed_state: 'errScheduleConflict',
+  history_error: 'errInvalidHistory',
+  history_failed: 'errInvalidHistory'
 };
 
 function errorCodeMessage(code, locale) {
@@ -450,6 +504,15 @@ function localizeError(error, locale) {
     return errorCodeMessage(error, locale);
   }
   return error;
+}
+
+// Localize a state error diagnostic: known codes map through the dictionaries,
+// the model's Spanish "not confirmed" fallback maps to the active locale, and
+// every other literal passes through verbatim.
+function localizeStateError(error, locale) {
+  var text = error ? String(error) : '';
+  if (text === copy.notConfirmed) return t('notConfirmed', locale);
+  return localizeError(text, locale);
 }
 
 function routeOrder() {
@@ -611,6 +674,7 @@ if (typeof module !== 'undefined' && module.exports) {
     copyFor: copyFor,
     errorCodeMessage: errorCodeMessage,
     localizeError: localizeError,
+    localizeStateError: localizeStateError,
     routeOrder: routeOrder,
     routeStart: routeStart,
     moveRoute: moveRoute,

@@ -51,8 +51,8 @@ Panel {
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool stateReady: state.available === true
     readonly property string statusText: !stateReady ? root.text("unavailable") : (state.enabled ? root.text("enabled") : root.text("disabled"))
-    readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature).error
-    readonly property string errorText: root.lastError !== "" ? root.lastError : (root.scheduleExpanded && root.scheduleValidationError !== "" ? root.scheduleValidationError : String(root.state.error || ""))
+    readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature, root.locale).error
+    readonly property string errorText: root.lastError !== "" ? root.lastError : (root.scheduleExpanded && root.scheduleValidationError !== "" ? root.scheduleValidationError : root.localizeErrorString(root.state.error || ""))
     readonly property string periodText: root.stateReady && root.state.schedule.period === "day" ? root.text("period_day") : (root.stateReady && root.state.schedule.period === "night" ? root.text("period_night") : root.statusText)
     readonly property string manualOverrideText: root.text("manual_override")
     readonly property string heroMeta: root.periodText + (Model.isManualOverride(root.state) ? " · " + root.manualOverrideText : "")
@@ -80,6 +80,14 @@ Panel {
 
     function text(key) {
         return I18n.t(key, root.locale);
+    }
+
+    // Localize a structured diagnostic without mangling an already-localized
+    // literal: known error codes map through the dictionaries, the model's
+    // Spanish "not confirmed" fallback maps to the active locale, and every
+    // other literal passes through verbatim.
+    function localizeErrorString(value) {
+        return Model.localizeStateError(value, root.locale);
     }
 
     function toggleNightlight() {
@@ -359,7 +367,7 @@ Panel {
             state = root.mergeCombined(result.state, responseState);
             root.historyItems = Array.isArray(state.history) ? state.history : root.historyItems;
             actionPending = false;
-            lastError = result.state.error || "";
+            lastError = root.localizeErrorString(result.state.error);
             root.reconcilePending(previousState);
             if (queuedOperation === "schedule") {
                 feedbackText = root.text("saved");
@@ -380,8 +388,12 @@ Panel {
             state = root.normalizeCombined({});
 
         var payloadError = payload && payload.error ? String(payload.error) : "";
+        var payloadCode = payload && payload.error_code ? String(payload.error_code) : "";
         var failedState = responseState && typeof responseState === "object" ? Model.normalizeState(responseState) : null;
-        lastError = payloadError || (failedState && failedState.error ? failedState.error : "") || processError || root.text("not_confirmed");
+        if (payloadCode !== "")
+            lastError = Model.errorCodeMessage(payloadCode, root.locale);
+        else
+            lastError = root.localizeErrorString(payloadError || (failedState && failedState.error ? failedState.error : "")) || processError || root.text("not_confirmed");
     }
 
     function moveCursor(dx, dy) {
