@@ -1,7 +1,29 @@
+# Internal planning/spec material — never shipped.
+docs/
+.agent-review-input/
+.superpowers/
+
+# Python bytecode and tool caches.
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtualenvs and build output.
 .venv/
+venv/
 dist/
 build/
+
+# Editors, OS and logs.
 *.log
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# Local screenshots and editor backups of user config files.
+*.png.bak
+screenshots/
