@@ -347,7 +347,7 @@ def _validate_manual_override(value: object) -> dict | None:
         return None
     if not isinstance(value, dict):
         raise StateError("invalid_state", "manual_override is invalid")
-    if set(value) - {"at", "operation", "profile", "values"}:
+    if set(value) - {"at", "until", "operation", "profile", "values"}:
         raise StateError("invalid_state", "manual_override is invalid")
     if not {"at", "operation", "profile"} <= set(value):
         raise StateError("invalid_state", "manual_override is invalid")
@@ -358,6 +358,14 @@ def _validate_manual_override(value: object) -> dict | None:
         datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as error:
         raise StateError("invalid_state", "manual_override.at is invalid") from error
+    if "until" in value:
+        until = value["until"]
+        if not isinstance(until, str) or not until or _ISO_LIKE_PATTERN.fullmatch(until) is None:
+            raise StateError("invalid_state", "manual_override.until is invalid")
+        try:
+            datetime.fromisoformat(until.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise StateError("invalid_state", "manual_override.until is invalid") from error
     try:
         operation = _name(value["operation"], "manual_override.operation")
     except StateError as error:
@@ -385,6 +393,8 @@ def _validate_manual_override(value: object) -> dict | None:
         "operation": operation,
         "profile": normalized_profile,
     }
+    if "until" in value:
+        normalized["until"] = value["until"]
     if "values" in value:
         try:
             normalized["values"] = _validate_applied_values(value["values"])

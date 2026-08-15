@@ -797,6 +797,61 @@ class ManualIntentTests(HelperModuleTests):
         state = module.read_state()
         self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
 
+    def test_temperature_set_records_only_requested_temperature(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "temperature", "4000")
+        self.assertEqual(code, 0)
+        override = module.read_state()["manual_override"]
+        self.assertEqual(override["values"], {"temperature": 4000})
+
+    def test_gamma_set_records_only_requested_gamma(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "gamma", "60")
+        self.assertEqual(code, 0)
+        override = module.read_state()["manual_override"]
+        self.assertEqual(override["values"], {"gamma": 60})
+
+    def test_toggle_records_no_fabricated_values(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "toggle")
+        self.assertEqual(code, 0)
+        override = module.read_state()["manual_override"]
+        self.assertNotIn("values", override)
+
+    def test_natural_records_no_fabricated_values(self):
+        module = vc._state_module()
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "natural")
+        self.assertEqual(code, 0)
+        override = module.read_state()["manual_override"]
+        self.assertNotIn("values", override)
+
+    def test_manual_persist_failure_is_surfaced_not_silent(self):
+        module = vc._state_module()
+        automation_module = vc._utility_module("automation_utils")
+
+        def failing_commit(env, operation, values=None):
+            raise module.StateError("state_failed", "disk full")
+
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            with patch.object(automation_module, "commit_manual_apply", side_effect=failing_commit):
+                code, output = self.run_cli("nightlight", "temperature", "4000")
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["manual_persist_error"], "state_failed")
+        self.assertIsNone(module.read_state()["manual_override"])
+        self.assertEqual(payload["nightlight"]["temperature"], 4000)
+
+    def test_manual_persist_success_has_no_error_field(self):
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli("nightlight", "temperature", "4000")
+        self.assertEqual(code, 0)
+        payload = json.loads(output)
+        self.assertNotIn("manual_persist_error", payload)
+
     def test_direct_temperature_then_reconcile_same_period_preserves_warm(self):
         module = vc._state_module()
         with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):

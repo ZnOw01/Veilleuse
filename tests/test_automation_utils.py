@@ -413,6 +413,51 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(result["error_code"], "state_failed")
         self.assertEqual(self.read_state()["snooze_until"], 2800.0)
 
+    def test_snooze_clear_clears_manual_override(self):
+        self.initial_state(
+            snooze_until=2800.0,
+            manual_override=self.manual_override(),
+        )
+        result = automation.snooze_clear(env=self.env())
+        self.assertTrue(result["success"], result)
+        state = self.read_state()
+        self.assertIsNone(state["snooze_until"])
+        self.assertIsNone(state["manual_override"])
+
+    def test_snooze_clear_clears_override_in_single_atomic_write(self):
+        self.initial_state(
+            snooze_until=2800.0,
+            manual_override=self.manual_override(),
+        )
+        calls = []
+
+        def tracking_update(mutator):
+            calls.append(mutator)
+            return state_utils.update_state(mutator)
+
+        result = automation.snooze_clear(env=self.env(update_state=tracking_update))
+        self.assertTrue(result["success"], result)
+        self.assertEqual(len(calls), 1)
+        mutated = calls[0](self.read_state())
+        self.assertIsNone(mutated["snooze_until"])
+        self.assertIsNone(mutated["manual_override"])
+
+    def test_snooze_clear_failure_preserves_both_snooze_and_override(self):
+        self.initial_state(
+            snooze_until=2800.0,
+            manual_override=self.manual_override(),
+        )
+
+        def failing_update(mutator):
+            raise state_utils.StateError("io_error", "disk full")
+
+        result = automation.snooze_clear(env=self.env(update_state=failing_update))
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "state_failed")
+        state = self.read_state()
+        self.assertEqual(state["snooze_until"], 2800.0)
+        self.assertEqual(state["manual_override"], self.manual_override())
+
     # ------------------------------------------------------------------ \
     # transition
 
@@ -812,6 +857,83 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertTrue(result["success"], result)
         self.assertIsNone(self.read_state()["manual_override"])
 
+    def test_identity_override_gets_deterministic_finite_boundary(self):
+        self.profile = {"available": True, "kind": "identity"}
+        result = automation.transition(4500, 90, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        override = self.read_state()["manual_override"]
+        self.assertIn("until", override)
+        expected = datetime.datetime.fromtimestamp(
+            1000.0 + 24 * 60 * 60, tz=datetime.timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.assertEqual(override["until"], expected)
+
+    def test_temperature_override_has_no_time_boundary(self):
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        result = automation.transition(4000, 80, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        override = self.read_state()["manual_override"]
+        self.assertEqual(override["profile"], {"kind": "temperature", "temperature": 3500})
+        self.assertNotIn("until", override)
+
+    def test_reconcile_identity_override_honored_within_boundary(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.initial_state(
+            manual_override=self.manual_override(until="1970-01-01T00:20:00Z")
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertTrue(result["manual_override"])
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertEqual(self.read_state()["manual_override"]["until"], "1970-01-01T00:20:00Z")
+
+    def test_reconcile_identity_override_expired_at_boundary_resumes_schedule(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.nightlight = FakeNightlight(temperature=4500, gamma=90)
+        self.initial_state(
+            manual_override=self.manual_override(until="1970-01-01T00:00:00Z")
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.naturals, 1)
+        self.assertIsNone(self.read_state()["manual_override"])
+        self.assertEqual(self.read_state()["last_applied"]["origin"], "automatic")
+
+    def test_reconcile_identity_expired_override_cleared_without_drift(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.nightlight = FakeNightlight(temperature=6000, gamma=90, identity=True)
+        self.initial_state(
+            manual_override=self.manual_override(until="1970-01-01T00:00:00Z")
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_legacy_identity_override_without_boundary_stays_active_while_fresh(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.initial_state(manual_override=self.manual_override())
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertTrue(result["manual_override"])
+        self.assertEqual(self.read_state()["manual_override"], self.manual_override())
+
+    def test_legacy_identity_override_older_than_fallback_boundary_expires(self):
+        self.profile = {"available": True, "kind": "identity"}
+        self.nightlight = FakeNightlight(temperature=4500, gamma=90)
+        self.initial_state(
+            manual_override=self.manual_override(at="1969-12-31T00:00:00Z")
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.naturals, 1)
+        self.assertIsNone(self.read_state()["manual_override"])
+
     def test_reconcile_preserves_manual_override_within_same_period(self):
         self.profile = {"available": True, "kind": "identity"}
         self.initial_state(manual_override=self.manual_override())
@@ -869,6 +991,51 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertFalse(result["applied"])
         self.assertIsNone(self.read_state()["manual_override"])
         self.assertEqual(self.read_history(), [])
+
+    def test_reconcile_schedule_disabled_clears_stale_override(self):
+        self.initial_state(
+            schedule_enabled=False,
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            ),
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertIsNone(self.read_state()["manual_override"])
+        self.assertEqual(self.read_history(), [])
+
+    def test_reconcile_schedule_disabled_state_failure_is_honest(self):
+        self.initial_state(
+            schedule_enabled=False,
+            manual_override=self.manual_override(),
+        )
+
+        def failing_update(mutator):
+            raise state_utils.StateError("io_error", "disk full")
+
+        result = automation.reconcile(env=self.env(update_state=failing_update))
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "state_failed")
+
+    def test_reconcile_reenable_after_disabled_clears_does_not_suppress_enforcement(self):
+        self.nightlight = FakeNightlight(temperature=4500, gamma=90)
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        self.initial_state(
+            schedule_enabled=False,
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            ),
+            transition_seconds=0,
+        )
+        cleared = automation.reconcile(env=self.env())
+        self.assertTrue(cleared["success"], cleared)
+        self.assertIsNone(self.read_state()["manual_override"])
+        state_utils.update_state(lambda current: {**current, "schedule_enabled": True})
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.applications, [(3500, 90)])
 
     def test_snooze_set_clears_manual_override(self):
         self.initial_state(manual_override=self.manual_override())

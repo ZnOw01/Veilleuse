@@ -240,6 +240,20 @@ def _state_with_schedule(state: dict, *, enabled: bool, disabled: dict | None) -
     return updated
 
 
+def _clear_stale_override(old_state: dict) -> dict:
+    """Drop a manual-intent override while the schedule stays disabled.
+
+    A stale override recorded before or during the disabled window must never
+    survive re-enable and suppress schedule enforcement, so the disabled
+    state is written without it.
+    """
+    if old_state.get("manual_override") is None:
+        return old_state
+    cleared = dict(old_state, manual_override=None)
+    state_utils.write_state(cleared)
+    return cleared
+
+
 def _rollback_file(path: Path, data: bytes, mode: int, expected: bytes) -> None:
     try:
         _atomic_write_bytes(path, data, mode, expected=expected)
@@ -302,7 +316,7 @@ def _disable_locked(path: Path) -> dict:
     recorded = old_state["schedule_disabled"]
     if recorded is not None:
         if not old_state["schedule_enabled"] and current_hash == recorded["disabled_hash"]:
-            return old_state
+            return _clear_stale_override(old_state)
         raise _error("conflict", "Schedule state and file disagree")
     if not old_state["schedule_enabled"]:
         raise _error("conflict", "Schedule state is disabled without a transaction")
@@ -319,6 +333,8 @@ def _disable_locked(path: Path) -> dict:
     new_state = _state_with_schedule(
         old_state, enabled=False, disabled=transaction
     )
+    if old_state.get("manual_override") is not None:
+        new_state["manual_override"] = None
     try:
         _atomic_write_bytes(path, disabled, mode, expected=data)
     except BaseException as caught:

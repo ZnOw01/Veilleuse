@@ -178,9 +178,22 @@ class StateUtilsTest(unittest.TestCase):
             minimal,
         )
 
+        with_boundary = dict(
+            minimal,
+            until="2026-08-14T10:00:00Z",
+        )
+        self.assertEqual(
+            state_utils.write_state(
+                dict(state_utils.DEFAULT_STATE, manual_override=with_boundary)
+            )["manual_override"],
+            with_boundary,
+        )
+
         invalid_values = [
             dict(valid, at="not-an-iso-time"),
             dict(valid, at="2026-99-99T99:99:99Z"),
+            dict(valid, until="not-an-iso-time"),
+            dict(valid, until="2026-99-99T99:99:99Z"),
             dict(valid, operation="nightlight toggle"),
             dict(valid, operation=""),
             dict(valid, profile={"kind": "identity", "temperature": 4000}),

@@ -1516,30 +1516,28 @@ def cmd_reconcile(_args):
     return 0
 
 
-def _persist_manual_intent(operation, state):
+def _persist_manual_intent(operation, values):
     """Record a successful manual nightlight operation as manual intent.
 
-    Best-effort: the hardware change already succeeded, so a persistence
-    failure must never mask it or turn the operation into an error.
+    Only the explicitly requested values are recorded (``None`` for
+    toggle/natural).  The hardware change already succeeded, so a persistence
+    failure must never mask it or turn the operation into an error; it is
+    instead surfaced to the caller as a stable error code so the panel knows
+    the schedule may still revert the manual setting.
     """
     module, environment = _automation_environment()
     if module is None or environment is None:
-        return
-    values = {}
-    temperature = state.get("temperature")
-    gamma = state.get("gamma")
-    if isinstance(temperature, int) and not isinstance(temperature, bool):
-        values["temperature"] = temperature
-    if isinstance(gamma, int) and not isinstance(gamma, bool):
-        values["gamma"] = gamma
+        return "state_unavailable"
     try:
-        module.commit_manual_apply(environment, f"nightlight_{operation}", values or None)
-    except Exception:
-        pass
+        module.commit_manual_apply(environment, f"nightlight_{operation}", values)
+    except Exception as error:
+        return str(getattr(error, "error_code", "state_failed"))
+    return None
 
 
 def cmd_nightlight(args):
     operation = args.operation
+    requested = None
     if operation == "toggle":
         state = toggle_nightlight()
     elif operation == "natural":
@@ -1547,18 +1545,26 @@ def cmd_nightlight(args):
     elif operation == "temperature":
         kelvin = _bounded(args.value, TEMPERATURE_MIN, TEMPERATURE_MAX, "La temperatura")
         state = _apply_temperature(kelvin)
+        requested = {"temperature": kelvin}
     elif operation == "gamma":
         percent = _bounded(args.value, GAMMA_MIN, GAMMA_MAX, "La gamma")
         state = _apply_gamma(percent)
+        requested = {"gamma": percent}
     else:
         return _abort(f"Operación de luz nocturna desconocida: {operation}")
     ok = state["available"] and state["error"] is None
+    persist_error = None
     if ok:
-        _persist_manual_intent(operation, state)
+        persist_error = _persist_manual_intent(operation, requested)
         run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
     status = read_status(nightlight=state)
-    _emit(status if ok else {"error": state["error"], "state": status})
-    return 0 if ok else 1
+    if not ok:
+        _emit({"error": state["error"], "state": status})
+        return 1
+    if persist_error:
+        status["manual_persist_error"] = persist_error
+    _emit(status)
+    return 0
 
 
 def cmd_schedule(args):

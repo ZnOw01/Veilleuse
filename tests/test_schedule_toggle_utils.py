@@ -141,6 +141,45 @@ class ScheduleToggleTests(unittest.TestCase):
         self.assertTrue(second_enabled["schedule_enabled"])
         self.assertEqual(restored, REALISTIC_CONFIG.encode())
 
+    def manual_override(self):
+        return {
+            "at": "2026-08-13T10:00:00Z",
+            "operation": "nightlight_temperature",
+            "profile": {"kind": "temperature", "temperature": 3500},
+            "values": {"temperature": 4000},
+        }
+
+    def test_disable_clears_stale_manual_override(self):
+        state_utils.write_state(
+            dict(state_utils.DEFAULT_STATE, manual_override=self.manual_override())
+        )
+        result = toggle.disable_schedule()
+        self.assertFalse(result["schedule_enabled"])
+        self.assertIsNone(result["manual_override"])
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_disable_then_enable_cannot_suppress_schedule_enforcement(self):
+        state_utils.write_state(
+            dict(state_utils.DEFAULT_STATE, manual_override=self.manual_override())
+        )
+        disabled = toggle.disable_schedule()
+        self.assertIsNone(disabled["manual_override"])
+        enabled = toggle.enable_schedule()
+        self.assertTrue(enabled["schedule_enabled"])
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_repeated_disable_clears_override_added_while_disabled(self):
+        state_utils.write_state(
+            dict(state_utils.DEFAULT_STATE, manual_override=self.manual_override())
+        )
+        toggle.disable_schedule()
+        state_utils.write_state(
+            dict(self.read_state(), manual_override=self.manual_override())
+        )
+        again = toggle.disable_schedule()
+        self.assertIsNone(again["manual_override"])
+        self.assertIsNone(self.read_state()["manual_override"])
+
     def test_enable_restores_exact_original_bytes_and_mode(self):
         self.config.chmod(0o640)
         original = self.config.read_bytes()

@@ -41,6 +41,12 @@ TRANSITION_SECONDS_MAX = 1800
 STEP_INTERVAL_SECONDS = 1.0
 IDENTITY_TEMPERATURE = 6000
 DRIFT_TOLERANCE_TEMPERATURE = 50
+# Deterministic cap for a manual override tied to the time-invariant identity
+# profile: the longest possible identity period is under 24 hours, so a
+# 24-hour boundary preserves the same-period semantics while guaranteeing the
+# override can never persist forever.  Legacy identity overrides without an
+# explicit ``until`` use the same duration from their ``at`` timestamp.
+IDENTITY_OVERRIDE_DURATION_SECONDS = 24 * 60 * 60
 
 
 class AutomationError(Exception):
@@ -106,6 +112,18 @@ def _iso_timestamp(epoch) -> str:
     return datetime.datetime.fromtimestamp(
         float(epoch), tz=datetime.timezone.utc
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _iso_epoch(value) -> float | None:
+    """UTC epoch for an ISO-like timestamp, or ``None`` when malformed."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        ).timestamp()
+    except ValueError:
+        return None
 
 
 def _default_local_now() -> datetime.datetime:
@@ -249,6 +267,9 @@ def build_manual_override(profile, now, operation, values=None) -> dict | None:
 
     Returns ``None`` when no schedule profile is available (reconcile would
     fail closed on ``schedule_unavailable`` anyway, so no override is needed).
+    Identity profiles are time-invariant, so their override carries a
+    deterministic ``until`` boundary (see
+    :data:`IDENTITY_OVERRIDE_DURATION_SECONDS`) instead of persisting forever.
     """
     fingerprint = _profile_fingerprint(profile)
     if fingerprint is None:
@@ -258,6 +279,8 @@ def build_manual_override(profile, now, operation, values=None) -> dict | None:
         "operation": operation,
         "profile": fingerprint,
     }
+    if fingerprint.get("kind") == "identity":
+        record["until"] = _iso_timestamp(now + IDENTITY_OVERRIDE_DURATION_SECONDS)
     if values:
         normalized = {}
         for field in ("temperature", "gamma"):
@@ -268,14 +291,46 @@ def build_manual_override(profile, now, operation, values=None) -> dict | None:
     return record
 
 
-def _manual_override_active(override, profile) -> bool:
-    """True while the manual override belongs to the current schedule period."""
+def _identity_override_active(override: Mapping, now: float) -> bool:
+    """True while an identity override is inside its deterministic boundary.
+
+    Records written without an ``until`` (schema-1 migration) derive the
+    boundary from their ``at`` timestamp plus the fixed duration, so a stale
+    legacy identity override can never survive indefinitely.
+    """
+    until = override.get("until")
+    if until is None:
+        at = override.get("at")
+        if at is None:
+            return False
+        until_epoch = _iso_epoch(at)
+        if until_epoch is None:
+            return False
+        until_epoch += IDENTITY_OVERRIDE_DURATION_SECONDS
+    else:
+        until_epoch = _iso_epoch(until)
+        if until_epoch is None:
+            return False
+    return float(now) < until_epoch
+
+
+def _manual_override_active(override, profile, now) -> bool:
+    """True while the manual override belongs to the current schedule period.
+
+    Identity overrides additionally expire at their deterministic boundary;
+    temperature overrides keep the period-bound semantics (active as long as
+    the period fingerprint matches).
+    """
     fingerprint = _profile_fingerprint(profile)
     if override is None or fingerprint is None:
         return False
     if not isinstance(override, Mapping):
         return False
-    return override.get("profile") == fingerprint
+    if override.get("profile") != fingerprint:
+        return False
+    if fingerprint.get("kind") == "identity" and not _identity_override_active(override, now):
+        return False
+    return True
 
 
 def commit_manual_apply(env, operation, values=None) -> dict:
@@ -542,7 +597,11 @@ def snooze_clear(env=None) -> dict:
     now = env["now"]()
     try:
         env["update_state"](
-            lambda current: {**current, "snooze_until": None}
+            lambda current: {
+                **current,
+                "snooze_until": None,
+                "manual_override": None,
+            }
         )
     except Exception as error:
         code = "state_failed"
@@ -994,6 +1053,20 @@ def reconcile(env=None) -> dict:
     # Otherwise: apply the current period only when drift exists, honoring a
     # manual intent recorded in the same schedule period.
     if state.get("schedule_enabled") is not True:
+        if state.get("manual_override") is not None:
+            try:
+                env["update_state"](
+                    lambda current_state: {
+                        **current_state,
+                        "manual_override": None,
+                    }
+                )
+            except Exception as error:
+                return _failure(
+                    "state_failed",
+                    str(error) if str(error) else "No se pudo limpiar el modo manual con el horario desactivado",
+                    operation="reconcile", applied=False, snoozed=False,
+                )
         return _success(operation="reconcile", applied=False, snoozed=False)
 
     profile = env["current_profile"]()
@@ -1004,7 +1077,7 @@ def reconcile(env=None) -> dict:
             operation="reconcile", applied=False, snoozed=False,
         )
     override = state.get("manual_override")
-    if _manual_override_active(override, profile):
+    if _manual_override_active(override, profile, env["now"]()):
         return _success(
             operation="reconcile", applied=False, snoozed=False,
             manual_override=True,
@@ -1057,7 +1130,7 @@ __all__ = [
     "TEMPERATURE_MIN", "TEMPERATURE_MAX", "GAMMA_MIN", "GAMMA_MAX",
     "TRANSITION_SECONDS_MIN", "TRANSITION_SECONDS_MAX",
     "STEP_INTERVAL_SECONDS", "IDENTITY_TEMPERATURE",
-    "DRIFT_TOLERANCE_TEMPERATURE",
+    "DRIFT_TOLERANCE_TEMPERATURE", "IDENTITY_OVERRIDE_DURATION_SECONDS",
     "build_manual_override", "commit_manual_apply",
     "default_env", "ramp_schedule", "snooze_status",
     "snooze_status_current", "snooze_set", "snooze_until_tomorrow",

@@ -368,6 +368,9 @@ Panel {
             root.historyItems = Array.isArray(state.history) ? state.history : root.historyItems;
             actionPending = false;
             lastError = root.localizeErrorString(result.state.error);
+            if (responseState && responseState.manual_persist_error) {
+                lastError = root.text("manualPersistError");
+            }
             root.reconcilePending(previousState);
             if (queuedOperation === "schedule") {
                 feedbackText = root.text("saved");
