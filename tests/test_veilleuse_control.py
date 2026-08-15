@@ -1361,21 +1361,21 @@ class ReadmeLimitsTests(unittest.TestCase):
 
     def test_readme_temperature_range_matches_the_panel_slider(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"Luz nocturna de (\d+) a (\d+) K", readme)
+        claim = re.search(r"Night light from (\d+) to (\d+) K", readme)
         self.assertIsNotNone(claim, "README must state the night-light temperature range")
         slider = self.panel_slider_range("id: temperatureRow", "id: gammaRow")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
 
     def test_readme_gamma_range_matches_the_panel_slider(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"gamma de (\d+) a (\d+)\s*%", readme)
+        claim = re.search(r"gamma from (\d+) to (\d+)\s*%", readme)
         self.assertIsNotNone(claim, "README must state the gamma range")
         slider = self.panel_slider_range("id: gammaRow", "id: scheduleSurface")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
 
     def test_readme_does_not_state_a_brightness_range_the_panel_does_not_share(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"Brillo del monitor enfocado[^\n]*\d+\s*%", readme))
+        self.assertIsNone(re.search(r"Brightness for the focused monitor[^\n]*\d+\s*%", readme))
 
 
 class SchedulePeriodTests(unittest.TestCase):
@@ -2213,7 +2213,7 @@ class ReadmeShortcutTests(unittest.TestCase):
             self.assertIn(needle, self.readme, f"README must mention {needle!r}")
 
     def test_readme_states_installation_is_never_automatic(self):
-        self.assertIn("nunca instala atajos automáticamente", self.readme)
+        self.assertIn("never installs shortcuts automatically", self.readme)
 
     def test_readme_documents_fixed_command_and_marker_block(self):
         self.assertIn("omarchy-shell -q io.github.znow01.veilleuse toggleNightlight", self.readme)
@@ -2221,7 +2221,7 @@ class ReadmeShortcutTests(unittest.TestCase):
 
     def test_readme_documents_single_backup_and_exact_removal(self):
         self.assertIn("bindings.lua.bak", self.readme)
-        self.assertIn("revierte el archivo a su contenido previo", self.readme)
+        self.assertIn("reverts the file to its previous content", self.readme)
 
 
 if __name__ == "__main__":
