@@ -158,6 +158,19 @@ test('expanded schedule keeps vertical cursor movement in the schedule section',
   assert.match(qml, /cursor\s*=\s*Model\.moveCursor\(cursor, key, root\.scheduleExpanded\)/);
 });
 
+test('vertical boundary presses wrap to the neighboring route and reset the cursor', () => {
+  const moveCursorBlock = qml.slice(qml.indexOf('function moveCursor(dx, dy) {'), qml.indexOf('function handleCloseRequested()'));
+  assert.match(moveCursorBlock, /Model\.navigateCursorRoute\(root\.route,\s*cursor,\s*key,\s*root\.scheduleExpanded\)/);
+  assert.match(moveCursorBlock, /routeJump\.route\s*!==\s*root\.route/);
+  assert.match(moveCursorBlock, /root\.navigateToRoute\(routeJump\.route\)/);
+  assert.match(moveCursorBlock, /cursor\s*=\s*Model\.cursorStart\(\)/);
+});
+
+test('opening the schedule editor from the home route navigates to automation so the editor is visible', () => {
+  const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('function setScheduleEditorFocus'));
+  assert.match(activate, /if\s*\(\s*root\.route\s*!==\s*"automation"\s*\)\s*root\.navigateToRoute\("automation"\)/);
+});
+
 test('schedule editors return focus before Escape can close the panel', () => {
   assert.match(qml, /function handleCloseRequested\(\)\s*\{[\s\S]*?if \(scheduleExpanded\)[\s\S]*?scheduleExpanded\s*=\s*false;[\s\S]*?keyCatcher\.forceActiveFocus\(\);[\s\S]*?return ;[\s\S]*?root\.close\(\);/);
 
@@ -357,8 +370,19 @@ test('keyboard slider steps accumulate pending offsets instead of recomputing fr
 });
 
 test('confirmed readbacks reconcile pending steps and drain the remaining distance', () => {
-  assert.match(qml, /function reconcilePending\(previous\)[\s\S]*?root\.queueMutation\(section,\s*target\)/);
+  assert.match(qml, /function reconcilePending\(previous\)[\s\S]*?Model\.reconcilePendingSteps\(previous,\s*root\.state,\s*root\.pendingSteps,\s*root\.queuedOperation\)/);
+  assert.match(qml, /root\.pendingSteps\s*=\s*result\.pending/);
+  assert.match(qml, /root\.queueMutation\(result\.requests\[i\]\.section,\s*result\.requests\[i\]\.value\)/);
   assert.match(qml, /var\s+previousState\s*=\s*state;[\s\S]*?root\.reconcilePending\(previousState\)/);
+});
+
+test('pointer slider drags clear pending keyboard steps so they are never re-queued', () => {
+  const brightness = qml.slice(qml.indexOf('id: brightnessRow'), qml.indexOf('id: temperatureRow'));
+  assert.match(brightness, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["brightness"\]\s*=\s*0;\s*root\.queueMutation\("brightness",\s*v\)\s*\}/);
+  const temperature = qml.slice(qml.indexOf('id: temperatureRow'), qml.indexOf('id: gammaRow'));
+  assert.match(temperature, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["temperature"\]\s*=\s*0;\s*root\.queueMutation\("temperature",\s*v\)\s*\}/);
+  const gamma = qml.slice(qml.indexOf('id: gammaRow'));
+  assert.match(gamma, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["gamma"\]\s*=\s*0;\s*root\.queueMutation\("gamma",\s*v\)\s*\}/);
 });
 
 test('requests launch immediately when idle and only debounce bursts to preserve latest-wins', () => {

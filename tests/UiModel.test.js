@@ -276,3 +276,112 @@ test('pending steps are drained toward the confirmed value by the realized delta
   assert.equal(remaining, 2);
   assert.equal(drainTarget, 53);
 });
+
+function stepState(sections) {
+  return Model.normalizeState({
+    available: true,
+    enabled: false,
+    brightness: sections.brightness !== undefined
+      ? { available: true, percent: sections.brightness, monitor: 'eDP-2', error: null }
+      : { available: false, percent: null, monitor: null, error: null },
+    nightlight: {
+      available: true,
+      enabled: false,
+      identity: true,
+      temperature: sections.temperature !== undefined ? sections.temperature : 6000,
+      gamma: sections.gamma !== undefined ? sections.gamma : 100,
+      error: null
+    },
+    schedule: { available: false }
+  });
+}
+
+const zeroPending = { brightness: 0, temperature: 0, gamma: 0 };
+
+test('reconcilePendingSteps never re-queues a section with no keyboard steps pending', () => {
+  const result = Model.reconcilePendingSteps(stepState({ brightness: 50 }), stepState({ brightness: 80 }), zeroPending, 'brightness');
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, zeroPending);
+});
+
+test('a readback from a different operation clears stale keyboard pending instead of draining', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 80 }),
+    { brightness: 3, temperature: 0, gamma: 0 },
+    'preset'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, { brightness: 0, temperature: 0, gamma: 0 });
+});
+
+test('a same-section confirmed readback drains keyboard pending fully', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 53 }),
+    { brightness: 3, temperature: 0, gamma: 0 },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, zeroPending);
+});
+
+test('a same-section partial readback re-queues only the remaining distance', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 51 }),
+    { brightness: 3, temperature: 0, gamma: 0 },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, [{ section: 'brightness', value: 53 }]);
+  assert.deepEqual(result.pending, { brightness: 2, temperature: 0, gamma: 0 });
+});
+
+test('negative realized delta from a foreign change clears pending without a revert', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 80 }),
+    stepState({ brightness: 50 }),
+    { brightness: 3, temperature: 0, gamma: 0 },
+    'reconcile'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, zeroPending);
+});
+
+test('superseded keyboard steps in another section clear instead of over-shooting later', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 50, temperature: 3500 }),
+    stepState({ brightness: 50, temperature: 3600 }),
+    { brightness: 3, temperature: 1, gamma: 0 },
+    'temperature'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, { brightness: 0, temperature: 0, gamma: 0 });
+});
+
+test('temperature pending drains with its own 100 K magnitude', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ temperature: 3500 }),
+    stepState({ temperature: 3800 }),
+    { brightness: 0, temperature: 4, gamma: 0 },
+    'temperature'
+  );
+  assert.deepEqual(result.requests, [{ section: 'temperature', value: 3900 }]);
+  assert.deepEqual(result.pending, { brightness: 0, temperature: 1, gamma: 0 });
+});
+
+test('navigateCursorRoute wraps routes at the vertical cursor boundaries', () => {
+  assert.deepEqual(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'k', false), { route: 'settings' });
+  assert.deepEqual(Model.navigateCursorRoute('home', { section: 4, field: 0 }, 'j', false), { route: 'automation' });
+  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 0, field: 0 }, 'k', false), { route: 'home' });
+  assert.deepEqual(Model.navigateCursorRoute('settings', { section: 4, field: 0 }, 'j', false), { route: 'home' });
+  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 4, field: 0 }, 'j', false), { route: 'settings' });
+});
+
+test('navigateCursorRoute leaves interior navigation and expanded editors alone', () => {
+  assert.equal(Model.navigateCursorRoute('home', { section: 1, field: 0 }, 'k', false), null);
+  assert.equal(Model.navigateCursorRoute('home', { section: 3, field: 0 }, 'j', false), null);
+  assert.equal(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'k', true), null);
+  assert.equal(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'j', false), null);
+  assert.equal(Model.navigateCursorRoute('home', { section: 4, field: 0 }, 'k', false), null);
+});

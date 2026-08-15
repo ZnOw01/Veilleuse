@@ -173,6 +173,78 @@ function keyboardStep(section, delta, confirmed, pending) {
   return { value: value, pending: steps };
 }
 
+// Reconcile accumulated keyboard steps against a confirmed readback.
+//
+// `previous` is the state before the readback, `current` the state after it,
+// `pending` the per-section keyboard-step offsets and `lastOperation` the
+// operation tag of the request that produced the readback. Pointer slider
+// drags and foreign operations (preset apply, reconcile, another section's
+// request) move a section's value without keyboard intent, so draining must
+// be gated: only a same-section request drains; anything else clears the
+// stale pending offset instead of re-queueing a revert.
+function reconcilePendingSteps(previous, current, pending, lastOperation) {
+  var out = {
+    brightness: pending && typeof pending.brightness === 'number' ? pending.brightness : 0,
+    temperature: pending && typeof pending.temperature === 'number' ? pending.temperature : 0,
+    gamma: pending && typeof pending.gamma === 'number' ? pending.gamma : 0
+  };
+  var requests = [];
+  var sections = ['brightness', 'temperature', 'gamma'];
+  for (var i = 0; i < sections.length; i++) {
+    var section = sections[i];
+    if (out[section] === 0)
+      continue;
+    var before = section === 'brightness' ? previous.brightness.percent : (section === 'temperature' ? previous.nightlight.temperature : previous.nightlight.gamma);
+    var after = section === 'brightness' ? current.brightness.percent : (section === 'temperature' ? current.nightlight.temperature : current.nightlight.gamma);
+    if (typeof before !== 'number' || typeof after !== 'number')
+      continue;
+    var magnitude = sectionStep(section);
+    if (magnitude <= 0)
+      continue;
+    var realized = Math.round((after - before) / magnitude);
+    if (lastOperation !== section) {
+      out[section] = 0;
+      continue;
+    }
+    if (realized === 0)
+      continue;
+    var remaining = out[section] - realized;
+    if (remaining === 0) {
+      out[section] = 0;
+      continue;
+    }
+    var target = stepTargetValue(section, after, remaining);
+    if (target === after) {
+      out[section] = 0;
+      continue;
+    }
+    out[section] = remaining;
+    requests.push({ section: section, value: target });
+  }
+  return { pending: out, requests: requests };
+}
+
+// Vertical route wrapping for the panel cursor: pressing Up on the first
+// section moves to the previous route, pressing Down on the last section
+// moves to the next route, both wrapping around the route list. Interior
+// navigation and expanded editors return null so the cursor model keeps its
+// existing behavior.
+function navigateCursorRoute(route, cursor, key, scheduleExpanded) {
+  if (scheduleExpanded === true)
+    return null;
+  var section = boundedInteger(cursor && cursor.section, 0, SECTION_ORDER.length - 1);
+  if (section === null)
+    return null;
+  var index = ROUTES.indexOf(route);
+  if (index === -1)
+    index = 0;
+  if ((key === 'k' || key === 'ArrowUp') && section === 0)
+    return { route: ROUTES[(index - 1 + ROUTES.length) % ROUTES.length] };
+  if ((key === 'j' || key === 'ArrowDown') && section === SECTION_ORDER.length - 1)
+    return { route: ROUTES[(index + 1) % ROUTES.length] };
+  return null;
+}
+
 function validTime(value) {
   return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : null;
 }
@@ -529,6 +601,8 @@ if (typeof module !== 'undefined' && module.exports) {
     sectionStep: sectionStep,
     stepTargetValue: stepTargetValue,
     keyboardStep: keyboardStep,
+    reconcilePendingSteps: reconcilePendingSteps,
+    navigateCursorRoute: navigateCursorRoute,
     normalizeState: normalizeState,
     validateScheduleFields: validateScheduleFields,
     isManualOverride: isManualOverride,

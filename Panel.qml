@@ -121,6 +121,8 @@ Panel {
 
     function navigateToRoute(nextRoute) {
         if (root.routeOptions.indexOf(nextRoute) === -1) return;
+        if (nextRoute !== root.route)
+            root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
         root.route = nextRoute;
         if (nextRoute === "automation" && !root.scheduleEditorOpen) root.request(["schedule", "status"], "schedule-status");
         if (nextRoute === "settings" && !root.preflightLoaded) root.request(["preflight"], "preflight");
@@ -399,6 +401,12 @@ Panel {
             }
         }
         var key = dy > 0 ? "j" : (dy < 0 ? "k" : (dx > 0 ? "l" : "h"));
+        var routeJump = Model.navigateCursorRoute(root.route, cursor, key, root.scheduleExpanded);
+        if (routeJump && routeJump.route !== root.route) {
+            root.navigateToRoute(routeJump.route);
+            cursor = Model.cursorStart();
+            return ;
+        }
         cursor = Model.moveCursor(cursor, key, root.scheduleExpanded);
     }
 
@@ -407,32 +415,10 @@ Panel {
             root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
             return ;
         }
-        var sections = ["brightness", "temperature", "gamma"];
-        for (var i = 0; i < sections.length; i++) {
-            var section = sections[i];
-            var before = section === "brightness" ? previous.brightness.percent : (section === "temperature" ? previous.temperature : previous.gamma);
-            var after = section === "brightness" ? state.brightness.percent : (section === "temperature" ? state.temperature : state.gamma);
-            if (typeof before !== "number" || typeof after !== "number")
-                continue;
-            var magnitude = Model.sectionStep(section);
-            if (magnitude <= 0)
-                continue;
-            var realized = Math.round((after - before) / magnitude);
-            if (realized === 0)
-                continue;
-            var remaining = (root.pendingSteps[section] || 0) - realized;
-            if (remaining === 0) {
-                root.pendingSteps[section] = 0;
-                continue;
-            }
-            var target = Model.stepTargetValue(section, after, remaining);
-            if (target === after) {
-                root.pendingSteps[section] = 0;
-                continue;
-            }
-            root.pendingSteps[section] = remaining;
-            root.queueMutation(section, target);
-        }
+        var result = Model.reconcilePendingSteps(previous, root.state, root.pendingSteps, root.queuedOperation);
+        root.pendingSteps = result.pending;
+        for (var i = 0; i < result.requests.length; i++)
+            root.queueMutation(result.requests[i].section, result.requests[i].value);
     }
 
     function handleCloseRequested() {
@@ -462,6 +448,8 @@ Panel {
         }
         if (section === "schedule") {
             if (!scheduleExpanded) {
+                if (root.route !== "automation")
+                    root.navigateToRoute("automation");
                 scheduleExpanded = true;
                 scheduleEditorOpen = true;
                 editStart = state.schedule.start || "06:00";
@@ -1273,7 +1261,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.queueMutation("brightness", v) }
+                                onMoved: function(v) { root.pendingSteps["brightness"] = 0; root.queueMutation("brightness", v) }
                             }
 
                         }
@@ -1333,7 +1321,7 @@ Panel {
                                 step: 100
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.queueMutation("temperature", v) }
+                                onMoved: function(v) { root.pendingSteps["temperature"] = 0; root.queueMutation("temperature", v) }
                             }
 
                         }
@@ -1393,7 +1381,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.queueMutation("gamma", v) }
+                                onMoved: function(v) { root.pendingSteps["gamma"] = 0; root.queueMutation("gamma", v) }
                             }
 
                         }
