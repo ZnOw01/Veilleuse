@@ -18,6 +18,10 @@ NIGHT_TEMP_MIN = 2500
 NIGHT_TEMP_MAX = 5000
 DAY_TEMP_MIN = 5900
 DAY_TEMP_MAX = 6500
+# Single lock file serializing every Veilleuse writer of hyprsunset.conf
+# (schedule set, enable and disable).  A divergent name here would let two
+# writers interleave and desynchronize the stored disabled hash.
+SCHEDULE_LOCK_NAME = ".veilleuse-schedule.lock"
 
 
 def xdg_config_home() -> Path:

@@ -39,6 +39,10 @@ GAMMA_MAX = 100
 TRANSITION_SECONDS_MIN = 0
 TRANSITION_SECONDS_MAX = 1800
 STEP_INTERVAL_SECONDS = 1.0
+# Bounded grace for the final exact-target step: a slow environment must
+# never drop the requested target, only genuinely expired ramps report
+# "deadline".
+RAMP_FINAL_GRACE_SECONDS = 5.0
 IDENTITY_TEMPERATURE = 6000
 DRIFT_TOLERANCE_TEMPERATURE = 50
 # Deterministic cap for a manual override tied to the time-invariant identity
@@ -136,7 +140,9 @@ def until_tomorrow_epoch(now_local: datetime.datetime) -> float:
     Correct across midnight and DST: the wall-clock ``tomorrow 00:00`` is
     built inside ``now_local``'s timezone, then converted with that zone's
     UTC offset for the resulting date (spring forward shortens the real
-    interval, fall back lengthens it).
+    interval, fall back lengthens it). Fixed-offset zones (from
+    ``astimezone()``) cannot re-resolve their offset, so the system zone
+    database resolves the midnight for them.
     """
     if not isinstance(now_local, datetime.datetime) or now_local.tzinfo is None:
         raise AutomationError(
@@ -146,6 +152,15 @@ def until_tomorrow_epoch(now_local: datetime.datetime) -> float:
     midnight = (naive + datetime.timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+    if isinstance(now_local.tzinfo, datetime.timezone):
+        # Fixed offset captured at *now* (e.g. datetime.now().astimezone()):
+        # it is stale once the local zone crosses a DST boundary before that
+        # midnight. Resolve the wall time with the system zone database,
+        # which knows the offset in effect for the resulting date.
+        try:
+            return float(time.mktime(midnight.timetuple()))
+        except (OverflowError, ValueError):
+            pass
     return midnight.replace(tzinfo=now_local.tzinfo).timestamp()
 
 
@@ -683,21 +698,28 @@ def _run_ramp(
 ) -> tuple[bool, object]:
     """Drive one gradual ramp: monotonic bounded steps, shared deadline.
 
-    Returns ``(success, detail)`` where ``detail`` is the list of applied
-    steps on success or the honest partial-failure dict otherwise.  No step
-    is applied after the shared deadline or once the token is set.
+    Steps are scheduled at absolute times so the per-step IPC cost of
+    ``apply_values`` is absorbed by shorter sleeps instead of burning the
+    shared deadline. The deadline stays hard for sleeping clocks, but the
+    final exact-target step gets a bounded grace: a slow environment must
+    never drop the requested target. No step is applied once the token is
+    set.
     """
-    deadline = env["monotonic"]() + seconds
+    started = env["monotonic"]()
+    deadline = started + seconds
     steps = max(1, int(seconds / STEP_INTERVAL_SECONDS))
+    step_interval = seconds / steps
     schedule = ramp_schedule(
         start["temperature"], start["gamma"],
         target_temperature, target_gamma, steps,
     )
     applied = []
     last_values = None
+    last_index = len(schedule) - 1
     for index, values in enumerate(schedule):
-        remaining = deadline - env["monotonic"]()
-        if remaining <= 0:
+        now = env["monotonic"]()
+        if now >= (deadline + RAMP_FINAL_GRACE_SECONDS
+                   if index == last_index else deadline):
             return False, _failure(
                 "deadline", "El plazo de la transición ha expirado",
                 operation=operation, applied=False,
@@ -726,8 +748,10 @@ def _run_ramp(
                 )
             applied.append(values)
             last_values = values
-        if index < len(schedule) - 1:
-            env["sleep"](min(STEP_INTERVAL_SECONDS, remaining))
+        if index < last_index:
+            target_time = started + (index + 2) * step_interval
+            delay = target_time - env["monotonic"]()
+            env["sleep"](max(0.0, min(STEP_INTERVAL_SECONDS, delay)))
     return True, applied
 
 
@@ -781,20 +805,32 @@ def transition(target_temperature, target_gamma, seconds, env=None) -> dict:
     except Exception:
         profile = None
     override = build_manual_override(profile, now, "transition", values)
-    try:
-        env["update_state"](
-            lambda current: {
-                **current,
+
+    def _commit(current):
+        next_state = {
+            **current,
+            "origin": "manual",
+            "last_applied": {
+                "at": _iso_timestamp(now),
                 "origin": "manual",
-                "last_applied": {
-                    "at": _iso_timestamp(now),
-                    "origin": "manual",
-                    "operation": "transition",
-                    "values": values,
-                },
-                "manual_override": override,
-            }
-        )
+                "operation": "transition",
+                "values": values,
+            },
+        }
+        if override is not None:
+            next_state["manual_override"] = override
+        elif current.get("manual_override") is not None:
+            # The current schedule profile is temporarily unavailable, so a
+            # fresh period fingerprint cannot be captured. Keep the existing
+            # manual intent instead of clobbering it with None: reconcile is
+            # the authority on whether that override is still current.
+            next_state["manual_override"] = current["manual_override"]
+        else:
+            next_state["manual_override"] = None
+        return next_state
+
+    try:
+        env["update_state"](_commit)
     except Exception as error:
         code = "state_failed"
         history_error = _append_history(

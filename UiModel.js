@@ -28,8 +28,9 @@ if (typeof module !== 'undefined' && module.exports) {
   I18n = require('./I18n.js');
 }
 
-// Bundled Spanish default used only as a Quickshell fallback; in Node the
-// `copy` surface is the exact I18n.es dictionary so both stay in parity.
+// Bundled Spanish default used only as a Quickshell fallback; it mirrors the
+// exact I18n.es dictionary key-for-key (enforced by the parity test) so the
+// panel never shows a raw key before the locale library is wired in.
 var DEFAULT_COPY = {
   heroTitle: 'Luz nocturna',
   brightness: 'Brillo',
@@ -75,12 +76,67 @@ var DEFAULT_COPY = {
   errSettingsWrite: 'No se pudieron guardar los ajustes.',
   errShortcutWrite: 'No se pudo actualizar el acceso directo.',
   errUnknown: 'Se produjo un error desconocido.',
+  errInvalidValue: 'El valor solicitado no es válido.',
+  errInvalidJson: 'Los datos guardados no tienen un formato válido.',
+  errInvalidConfig: 'La configuración guardada no es válida.',
+  errInvalidState: 'El estado guardado no es válido.',
+  errInvalidHistory: 'El historial guardado no es válido.',
+  errReadbackFailed: 'No se pudo confirmar el cambio.',
+  errBrightnessWrite: 'No se pudo escribir el brillo del monitor.',
+  errScheduleUnavailable: 'El horario configurado no está disponible.',
+  errScheduleFailed: 'No se pudo actualizar el horario.',
+  errStateFailed: 'No se pudo guardar el estado.',
+  errUnsafePath: 'La ruta de datos guardados no es segura.',
+  errIoError: 'No se pudieron leer o escribir los datos guardados.',
+  errNotExecutable: 'El asistente de control no es ejecutable.',
+  errMissingCommand: 'Falta un comando necesario del sistema.',
+  errTimeout: 'Se agotó el tiempo de espera del comando.',
+  errBackendUnavailable: 'El backend de control no está disponible.',
+  errPresetFailed: 'No se pudo aplicar el perfil.',
+  errDeadline: 'Se superó el plazo de la operación.',
+  errCancelled: 'La operación fue cancelada.',
+  errSnoozeFailed: 'No se pudo aplicar la posposición.',
+  errTransitionFailed: 'No se pudo completar la transición.',
+  errReconcileFailed: 'No se pudo reconciliar el horario.',
+  errApplyFailed: 'No se pudo aplicar la luz nocturna.',
+  errReadFailed: 'No se pudo leer el estado actual.',
+  errNativeFailure: 'La operación nativa no se pudo completar.',
+  errScheduleConflict: 'El archivo de horario cambió durante la operación.',
+  manualPersistError: 'El ajuste manual se aplicó, pero no se pudo guardar la preferencia; el horario podría revertirlo al próximo ciclo.',
+  scheduleDayTimeFormat: 'La hora diurna debe usar el formato HH:MM',
+  scheduleNightTimeFormat: 'La hora nocturna debe usar el formato HH:MM',
+  scheduleDayNightEqual: 'Las horas de día y noche deben ser diferentes',
+  scheduleDayTemperatureRange: 'La temperatura diurna debe estar entre 5900 y 6500 K',
+  scheduleNightTemperatureRange: 'La temperatura nocturna debe estar entre 2500 y 5000 K',
   presetTitle: 'Perfiles',
   presetApply: 'Aplicar',
   presetDelete: 'Eliminar',
   presetSave: 'Guardar perfil',
   presetAll: 'Todos los perfiles',
   presetBuiltIn: 'Integrado',
+  presetName: 'Nombre del perfil',
+  saveCurrentPreset: 'Guardar actual',
+  deleteCustomPreset: 'Eliminar perfil',
+  presetReading: 'Lectura',
+  presetWork: 'Trabajo',
+  presetCinema: 'Cine',
+  focusedMonitor: 'Monitor enfocado',
+  monitor: 'Monitor',
+  lastApplied: 'Última aplicación',
+  openAutomation: 'Editar automatización',
+  scheduleEnabled: 'Horario activo',
+  scheduleDisabled: 'Horario pausado',
+  transitionTitle: 'Transición',
+  seconds: 'segundos',
+  snooze30: '30 minutos',
+  snooze120: '2 horas',
+  editSchedule: 'Editar horario',
+  cancel: 'Cancelar',
+  spanish: 'Español',
+  english: 'English',
+  runPreflight: 'Comprobar disponibilidad',
+  shortcutKeys: 'Teclas',
+  liveNow: 'Ahora',
   snoozeTitle: 'Posposición',
   snoozeSet: 'Posponer',
   snoozeUntilTomorrow: 'Hasta mañana',
@@ -103,6 +159,16 @@ var DEFAULT_COPY = {
 };
 
 var copy = (I18n && I18n.es) ? I18n.es : DEFAULT_COPY;
+
+// Wire the real locale library at runtime. Quickshell has no `module` or
+// `require`, so the Node bootstrap above cannot run there; the panel calls
+// this from Component.onCompleted with its imported I18n.js namespace to give
+// t() the locale-aware dictionaries instead of the bundled Spanish fallback.
+// Passing null unwires the library and falls back to DEFAULT_COPY again.
+function setI18n(lib) {
+  I18n = lib || null;
+  copy = I18n && I18n.es ? I18n.es : DEFAULT_COPY;
+}
 
 
 function routeSections(route) {
@@ -480,6 +546,44 @@ function isManualOverride(state) {
   return false;
 }
 
+// Superficial state merge: nested brightness/nightlight/schedule objects merge
+// key-by-key, every other patch key overwrites, a full status patch (brightness
+// plus nightlight) re-derives availability, `enabled` and nightlight.enabled
+// stay in sync, and the result re-normalizes so no unvalidated value renders.
+// Shared by commitResponse and by the panel when it adopts the state of a
+// superseded write that still physically applied.
+function mergeStatePatch(previous, patch) {
+  var current = normalizeState(previous);
+  var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  var next = {};
+  for (var key in current) next[key] = current[key];
+  var fullStatus = Object.prototype.hasOwnProperty.call(validPatch, 'brightness')
+    && Object.prototype.hasOwnProperty.call(validPatch, 'nightlight');
+  if (fullStatus) {
+    delete next.available;
+    delete next.error;
+  }
+  for (var patchKey in validPatch) {
+    if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
+        && validPatch[patchKey] && typeof validPatch[patchKey] === 'object'
+        && current[patchKey] && typeof current[patchKey] === 'object') {
+      next[patchKey] = {};
+      for (var currentNestedKey in current[patchKey]) next[patchKey][currentNestedKey] = current[patchKey][currentNestedKey];
+      for (var patchNestedKey in validPatch[patchKey]) next[patchKey][patchNestedKey] = validPatch[patchKey][patchNestedKey];
+    } else {
+      next[patchKey] = validPatch[patchKey];
+    }
+  }
+  if (validPatch.enabled !== undefined && validPatch.nightlight === undefined) {
+    next.nightlight = {};
+    for (var nightlightKey in current.nightlight) next.nightlight[nightlightKey] = current.nightlight[nightlightKey];
+    next.nightlight.enabled = validPatch.enabled === true;
+  } else if (validPatch.nightlight && validPatch.enabled === undefined && validPatch.nightlight.enabled !== undefined) {
+    next.enabled = validPatch.nightlight.enabled === true;
+  }
+  return normalizeState(next);
+}
+
 function commitResponse(previousState, response) {
   var current = normalizeState(previousState);
   var requestId = response && response.requestId;
@@ -501,33 +605,7 @@ function commitResponse(previousState, response) {
   if (!response || !validRequestId || !validLatestRequestId || requestId !== latestRequestId || response.ok !== true || !validPatch || !hasStateField) {
     return { accepted: false, state: current };
   }
-  var next = {};
-  for (var key in current) next[key] = current[key];
-  var fullStatus = Object.prototype.hasOwnProperty.call(patch, 'brightness')
-    && Object.prototype.hasOwnProperty.call(patch, 'nightlight');
-  if (fullStatus) {
-    delete next.available;
-    delete next.error;
-  }
-  for (var patchKey in patch) {
-    if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
-        && patch[patchKey] && typeof patch[patchKey] === 'object'
-        && current[patchKey] && typeof current[patchKey] === 'object') {
-      next[patchKey] = {};
-      for (var currentNestedKey in current[patchKey]) next[patchKey][currentNestedKey] = current[patchKey][currentNestedKey];
-      for (var patchNestedKey in patch[patchKey]) next[patchKey][patchNestedKey] = patch[patchKey][patchNestedKey];
-    } else {
-      next[patchKey] = patch[patchKey];
-    }
-  }
-  if (patch.enabled !== undefined && patch.nightlight === undefined) {
-    next.nightlight = {};
-    for (var nightlightKey in current.nightlight) next.nightlight[nightlightKey] = current.nightlight[nightlightKey];
-    next.nightlight.enabled = patch.enabled === true;
-  } else if (patch.nightlight && patch.enabled === undefined && patch.nightlight.enabled !== undefined) {
-    next.enabled = patch.nightlight.enabled === true;
-  }
-  return { accepted: true, state: normalizeState(next) };
+  return { accepted: true, state: mergeStatePatch(current, patch) };
 }
 
 function t(key, locale) {
@@ -587,6 +665,7 @@ var ERROR_CODE_KEYS = {
   backend_unavailable: 'errBackendUnavailable',
   preset_failed: 'errPresetFailed',
   preset_not_found: 'errPresetNotFound',
+  shortcut_failed: 'errShortcutWrite',
   deadline_exceeded: 'errDeadline',
   deadline: 'errDeadline',
   cancelled: 'errCancelled',
@@ -753,6 +832,9 @@ function historyViewModel(records, locale) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
+    DEFAULT_COPY: DEFAULT_COPY,
+    ERROR_CODE_KEYS: ERROR_CODE_KEYS,
+    setI18n: setI18n,
     routeSections: routeSections,
     sectionFieldCount: sectionFieldCount,
     cursorStart: cursorStart,
@@ -768,6 +850,7 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeState: normalizeState,
     validateScheduleFields: validateScheduleFields,
     isManualOverride: isManualOverride,
+    mergeStatePatch: mergeStatePatch,
     commitResponse: commitResponse,
     t: t,
     copyFor: copyFor,

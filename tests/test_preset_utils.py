@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import scripts.state_utils as state_utils
+from scripts import preset_utils
 from scripts.preset_utils import PresetError, PresetManager
 
 
@@ -39,6 +40,7 @@ class FakeOperations:
         self.brightness_steps = []
         self.readback_values = {}
         self.fail_nightlight = False
+        self.nightlight_result = None
         self.fail_step = False
         self.step_advances = 0.0
         self.clock = None
@@ -66,6 +68,8 @@ class FakeOperations:
 
     def apply_nightlight(self, temperature, gamma):
         self.nightlight_calls.append((temperature, gamma))
+        if self.nightlight_result is not None:
+            return self.nightlight_result
         if self.fail_nightlight:
             return {"ok": False, "error_code": "nightlight_failure"}
         return {"ok": True}
@@ -233,6 +237,37 @@ class PresetUtilsTest(unittest.TestCase):
         self.assertEqual(len(history), 1)
         self.assertFalse(history[0]["success"])
         self.assertEqual(history[0]["error_code"], "nightlight_failure")
+
+    def test_operation_ok_reports_unavailable_native_results_as_failure(self):
+        result = {
+            "available": False,
+            "error_code": "nightlight_apply_failed",
+            "error": "no se pudo aplicar el nightlight",
+        }
+        self.assertEqual(
+            preset_utils._operation_ok(result), (False, "nightlight_apply_failed")
+        )
+        self.assertEqual(
+            preset_utils._operation_ok({"available": True, "error": "parcial"}),
+            (False, "native_failure"),
+        )
+
+    def test_native_unavailable_nightlight_fails_the_apply(self):
+        self.save_custom(brightness=43)
+        self.operations.nightlight_result = {
+            "available": False,
+            "error_code": "nightlight_apply_failed",
+            "error": "no se pudo aplicar el nightlight",
+        }
+        result = self.manager.apply_preset("desk", monitor="eDP-1", timeout=10)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "nightlight_apply_failed")
+        self.assertEqual(self.operations.brightness_steps, [])
+        self.assertIsNone(state_utils.read_state()["last_applied"])
+        history = state_utils.list_history()
+        self.assertEqual(len(history), 1)
+        self.assertFalse(history[0]["success"])
+        self.assertEqual(history[0]["error_code"], "nightlight_apply_failed")
 
     def test_success_updates_last_applied_only_after_all_operations(self):
         self.save_custom(brightness=43)

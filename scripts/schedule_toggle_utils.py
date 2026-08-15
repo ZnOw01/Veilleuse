@@ -21,7 +21,7 @@ import state_utils
 
 
 HYPRSUNSET_CONFIG = schedule_utils.HYPRSUNSET_CONFIG
-LOCK_NAME = ".veilleuse-schedule-toggle.lock"
+LOCK_NAME = schedule_utils.SCHEDULE_LOCK_NAME
 
 
 class ScheduleToggleError(RuntimeError):
@@ -245,13 +245,14 @@ def _clear_stale_override(old_state: dict) -> dict:
 
     A stale override recorded before or during the disabled window must never
     survive re-enable and suppress schedule enforcement, so the disabled
-    state is written without it.
+    state is written without it.  The clear is a read-modify-write under the
+    state lock so concurrent writers (snooze, reconcile) are not lost.
     """
     if old_state.get("manual_override") is None:
         return old_state
-    cleared = dict(old_state, manual_override=None)
-    state_utils.write_state(cleared)
-    return cleared
+    return state_utils.update_state(
+        lambda current: {**current, "manual_override": None}
+    )
 
 
 def _rollback_file(path: Path, data: bytes, mode: int, expected: bytes) -> None:
@@ -286,14 +287,14 @@ def _write_state_or_rollback(
     old_mode: int,
     new_file: bytes,
     old_state: dict,
-    new_state: dict,
+    commit,
 ) -> dict:
     state_path = state_utils.state_path()
     state_before = None
     if state_path.exists():
         state_before = state_path.read_bytes()
     try:
-        state_utils.write_state(new_state)
+        new_state = state_utils.update_state(commit)
     except BaseException as cause:
         _rollback_file(path, old_file, old_mode, expected=new_file)
         # A state writer may fail after replacing its destination.  Restore
@@ -330,17 +331,24 @@ def _disable_locked(path: Path) -> dict:
         "disabled_hash": _hash(disabled),
         "original_text": text,
     }
-    new_state = _state_with_schedule(
-        old_state, enabled=False, disabled=transaction
-    )
-    if old_state.get("manual_override") is not None:
-        new_state["manual_override"] = None
+
+    def _commit(current):
+        # Apply the schedule keys to the freshest state: concurrent writers
+        # (snooze, reconcile, transitions) that committed while this toggle
+        # held the schedule file lock must not be overwritten.
+        next_state = _state_with_schedule(
+            current, enabled=False, disabled=transaction
+        )
+        if current.get("manual_override") is not None:
+            next_state["manual_override"] = None
+        return next_state
+
     try:
         _atomic_write_bytes(path, disabled, mode, expected=data)
     except BaseException as caught:
         _rollback_after_file_write(path, data, mode, disabled, caught)
     return _write_state_or_rollback(
-        path, data, mode, disabled, old_state, new_state
+        path, data, mode, disabled, old_state, _commit
     )
 
 
@@ -362,13 +370,19 @@ def _enable_locked(path: Path) -> dict:
         raise _error("malformed_state", "Stored schedule text is invalid", caught)
     if _hash(original) != recorded["original_hash"]:
         raise _error("conflict", "Stored schedule transaction is invalid")
-    new_state = _state_with_schedule(old_state, enabled=True, disabled=None)
+
+    def _commit(current):
+        # Apply the schedule keys to the freshest state: concurrent writers
+        # (snooze, reconcile, transitions) that committed while this toggle
+        # held the schedule file lock must not be overwritten.
+        return _state_with_schedule(current, enabled=True, disabled=None)
+
     try:
         _atomic_write_bytes(path, original, mode, expected=data)
     except BaseException as caught:
         _rollback_after_file_write(path, data, mode, original, caught)
     return _write_state_or_rollback(
-        path, data, mode, original, old_state, new_state
+        path, data, mode, original, old_state, _commit
     )
 
 

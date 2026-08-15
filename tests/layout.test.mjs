@@ -466,3 +466,70 @@ test('keyCatcher yields to the transition editor so arrows edit the field instea
 test('a superseded helper exit cancels the stale burst debounce before relaunching the latest', () => {
   assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\)\s*\{\s*debounce\.stop\(\);\s*Qt\.callLater\(root\.launchLatest\);/);
 });
+
+test('a superseded helper exit still adopts the state of the write that physically applied', () => {
+  assert.match(qml, /function mergeStaleResponse\(exitCode\)/);
+  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\)\s*\{[\s\S]*?Qt\.callLater\(root\.launchLatest\);\s*root\.mergeStaleResponse\(exitCode\);\s*return ;\s*\}/);
+  const merge = qml.slice(qml.indexOf('function mergeStaleResponse(exitCode)'), qml.indexOf('function handleExit(exitCode)'));
+  assert.match(merge, /if\s*\(exitCode\s*!==\s*0\)\s*return ;/);
+  assert.match(merge, /JSON\.parse\(processOutput\)/);
+  assert.match(merge, /Model\.mergeStatePatch\(before,\s*patch\)/);
+});
+
+test('returning to the home route refreshes the physical state the sliders must show', () => {
+  const nav = qml.slice(qml.indexOf('function navigateToRoute('), qml.indexOf('function monitorChoices()'));
+  assert.match(nav, /if\s*\(nextRoute\s*===\s*"home"\)\s*root\.requestStatus\(\);/);
+});
+
+test('route changes reset the cursor so activation targets the new route, not the previous one', () => {
+  const nav = qml.slice(qml.indexOf('function navigateToRoute('), qml.indexOf('function refocusKeyCatcher()'));
+  assert.match(nav, /if\s*\(nextRoute\s*!==\s*root\.route\)\s*\{[\s\S]*?root\.cursor\s*=\s*Model\.cursorStart\(\);/);
+});
+
+test('focusable action buttons return focus to the key catcher after their click', () => {
+  assert.match(qml, /function refocusKeyCatcher\(\)\s*\{\s*Qt\.callLater\(function\(\)\s*\{\s*if\s*\(keyCatcher\)\s*keyCatcher\.forceActiveFocus\(\);\s*\}\s*\);\s*\}/);
+  const actions = [
+    'root.applyPreset("reading")',
+    'root.applyPreset("work")',
+    'root.applyPreset("cinema")',
+    'root.settingsCommand("preset", ["list"])',
+    'root.saveCustomPreset()',
+    'root.deleteSelectedCustomPreset()',
+    'root.settingsCommand("history", ["list"])',
+    'root.setTransition(root.transitionSeconds)',
+    'root.setSnooze(30)',
+    'root.setSnooze(120)',
+    'root.settingsCommand("snooze", ["until-tomorrow"])',
+    'root.settingsCommand("snooze", ["clear"])',
+    'root.settingsCommand("preflight", [])',
+    'root.settingsCommand("shortcut", ["remove"])',
+    'root.queueSchedule()'
+  ];
+  for (const action of actions) {
+    assert.match(
+      qml,
+      new RegExp(`onClicked:\\s*\\{\\s*${action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*;\\s*root\\.refocusKeyCatcher\\(\\);\\s*\\}`)
+    );
+  }
+});
+
+test('schedule edit and shortcut install buttons also restore key catcher focus', () => {
+  const editSchedule = qml.slice(qml.indexOf('root.text("edit_schedule")'), qml.indexOf('id: settingsRoute'));
+  assert.match(editSchedule, /root\.editNightTemperature\s*=\s*String\(root\.state\.schedule\.night_temp\s*\|\|\s*3500\);\s*\}\s*root\.refocusKeyCatcher\(\);/);
+  const install = qml.slice(qml.indexOf('id: shortcutField'), qml.indexOf('Text {\n                    visible: root.errorText'));
+  assert.match(install, /root\.settingsCommand\("shortcut",\s*\["install",\s*"--keys",\s*shortcutField\.text\]\);\s*root\.refocusKeyCatcher\(\);/);
+});
+
+test('text fields return focus to the key catcher on accept', () => {
+  assert.match(qml, /onAccepted:\s*\{\s*root\.saveCustomPreset\(\);\s*keyCatcher\.forceActiveFocus\(\);\s*\}/);
+  assert.match(qml, /onAccepted:\s*\{\s*root\.setInlineSetting\("shortcutKeys",\s*text\);\s*keyCatcher\.forceActiveFocus\(\);\s*\}/);
+});
+
+test('a failed preset apply reverts the optimistic selection to the previous preset', () => {
+  const apply = qml.slice(qml.indexOf('function applyPreset(name)'), qml.indexOf('function saveCustomPreset()'));
+  assert.match(apply, /root\.queuedPresetPrevious\s*=\s*root\.preferredPreset;/);
+  assert.match(apply, /root\.preferredPreset\s*=\s*String\(name\);/);
+  assert.match(apply, /root\.queuedPresetRequestId\s*=\s*root\.issue\(/);
+  const exitBlock = qml.slice(qml.indexOf('function handleExit(exitCode) {'), qml.indexOf('function moveCursor(dx, dy) {'));
+  assert.match(exitBlock, /if\s*\(queuedOperation\s*===\s*"preset"\s*&&\s*root\.queuedPresetRequestId\s*===\s*requestId\)\s*root\.preferredPreset\s*=\s*root\.queuedPresetPrevious;/);
+});

@@ -372,6 +372,32 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(target, float(expected))
         self.assertEqual(target - local_now.timestamp(), 30 * 60)
 
+    def test_until_tomorrow_fixed_offset_prefers_zone_database(self):
+        # Production builds local_now via astimezone(): a fixed offset that is
+        # stale once the local zone crosses a DST boundary. The epoch must be
+        # resolved by the system zone database for that midnight, not stamped
+        # with the offset captured at *now*.
+        stale = datetime.timezone(datetime.timedelta(hours=1))
+        with mock.patch.object(
+            automation.time, "mktime", return_value=1774742400.0
+        ) as mktime:
+            epoch = automation.until_tomorrow_epoch(
+                datetime.datetime(2026, 3, 28, 23, 30, tzinfo=stale)
+            )
+        mktime.assert_called_once()
+        self.assertEqual(epoch, 1774742400.0)
+
+    def test_until_tomorrow_dynamic_zone_does_not_use_system_database(self):
+        with mock.patch.object(
+            automation.time, "mktime", return_value=0.0
+        ) as mktime:
+            epoch = automation.until_tomorrow_epoch(
+                datetime.datetime(2026, 3, 28, 23, 30, tzinfo=FakeDST())
+            )
+        mktime.assert_not_called()
+        expected = datetime.datetime(2026, 3, 29, tzinfo=FakeDST()).timestamp()
+        self.assertEqual(epoch, expected)
+
     def test_snooze_until_tomorrow_orchestration(self):
         result = automation.snooze_until_tomorrow(env=self.env())
         self.assertTrue(result["success"], result)
@@ -563,6 +589,27 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(applied, self.nightlight.applications)
         self.assertEqual(result["temperature"], applied[-1][0])
         self.assertLessEqual(self.clock.monotonic(), 60)
+
+    def test_transition_ramp_absorbs_per_step_ipc_overhead(self):
+        # Real apply_values costs tens of milliseconds of hyprctl IPC per
+        # step. The ramp must absorb that cost with shorter sleeps instead of
+        # burning the shared deadline and aborting right before the exact
+        # target step.
+        real_sleep = self.clock.sleep
+
+        def slow_ipc_sleep(seconds):
+            real_sleep(seconds)
+            self.clock.monotonic_value += 0.05
+
+        result = automation.transition(
+            4000, 80, 60, env=self.env(sleep=slow_ipc_sleep)
+        )
+        self.assertTrue(result["success"], result)
+        applications = self.nightlight.applications
+        self.assertEqual(applications[-1], (4000, 80))
+        self.assertLessEqual(
+            self.clock.monotonic(), 60 + automation.RAMP_FINAL_GRACE_SECONDS
+        )
 
     def test_transition_read_failure_fails_closed(self):
         self.nightlight.read_error = True
@@ -856,6 +903,17 @@ class AutomationUtilsTest(unittest.TestCase):
         result = automation.transition(4000, 80, 0, env=self.env())
         self.assertTrue(result["success"], result)
         self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_transition_preserves_override_when_profile_unavailable(self):
+        # A manual transition whose period fingerprint cannot be captured must
+        # keep the existing manual intent, exactly like commit_manual_apply:
+        # reconcile is the authority on whether that override is still current.
+        existing = self.manual_override()
+        self.initial_state(manual_override=existing)
+        self.profile = {"available": False, "error": "no schedule"}
+        result = automation.transition(4000, 80, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertEqual(self.read_state()["manual_override"], existing)
 
     def test_transition_sets_top_level_origin_manual(self):
         result = automation.transition(4000, 80, 0, env=self.env())

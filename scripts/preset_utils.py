@@ -80,6 +80,11 @@ def _operation_ok(result):
     if result is False:
         return False, "native_failure"
     if isinstance(result, Mapping):
+        # Native layers report unavailability (e.g. a failed nightlight apply)
+        # with ``available: False`` and/or a populated ``error`` instead of an
+        # explicit ``ok``/``success`` flag; those must never read as success.
+        if result.get("available") is False or result.get("error"):
+            return False, str(result.get("error_code") or "native_failure")
         if result.get("ok", result.get("success", True)) is False:
             return False, str(result.get("error_code") or "native_failure")
         return True, None

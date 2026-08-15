@@ -1,9 +1,11 @@
+import contextlib
 import json
 import os
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -401,6 +403,83 @@ class StateUtilsTest(unittest.TestCase):
         self.assertEqual(state_utils.clear_history(), [])
         self.assertEqual(state_utils.list_history(), [])
         self.assertTrue(self.history_file().exists())
+
+    def test_update_state_writes_only_when_the_mutated_state_changes(self):
+        self.assertEqual(
+            state_utils.update_state(lambda state: None), state_utils.DEFAULT_STATE
+        )
+        self.assertFalse(self.state_file().exists())
+
+        state_utils.write_state(dict(state_utils.DEFAULT_STATE, transition_seconds=30))
+        before = self.state_file().read_bytes()
+        for mutator in (
+            lambda state: None,
+            lambda state: {**state, "transition_seconds": state["transition_seconds"]},
+        ):
+            self.assertEqual(
+                state_utils.update_state(mutator)["transition_seconds"], 30
+            )
+        self.assertEqual(self.state_file().read_bytes(), before)
+
+    def test_update_state_never_loses_concurrent_mutator_keys(self):
+        state_utils.update_state(lambda state: {**state, "transition_seconds": 0})
+        barrier = threading.Barrier(8)
+
+        def bump():
+            barrier.wait()
+            for _ in range(5):
+                state_utils.update_state(
+                    lambda state: {
+                        **state,
+                        "transition_seconds": state["transition_seconds"] + 1,
+                    }
+                )
+
+        threads = [threading.Thread(target=bump) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(state_utils.read_state()["transition_seconds"], 40)
+
+    def test_clear_history_decides_existence_only_under_the_lock(self):
+        real_locked = state_utils._locked
+        real_exists = state_utils._document_exists
+        held = []
+        decisions = []
+
+        @contextlib.contextmanager
+        def traced_locked(document):
+            held.append(True)
+            try:
+                with real_locked(document):
+                    yield
+            finally:
+                held.pop()
+
+        def traced_exists(path):
+            if path == self.history_file():
+                decisions.append(bool(held))
+            return real_exists(path)
+
+        for history_present in (False, True):
+            with self.subTest(history_present=history_present):
+                decisions.clear()
+                if history_present:
+                    state_utils.append_history(self.history_record(0))
+                with mock.patch.object(
+                    state_utils, "_locked", traced_locked
+                ), mock.patch.object(state_utils, "_document_exists", traced_exists):
+                    self.assertEqual(state_utils.clear_history(), [])
+                self.assertTrue(
+                    decisions, "clear_history must decide the document's existence"
+                )
+                self.assertTrue(
+                    all(decisions),
+                    "a concurrent append between check and lock would survive the clear",
+                )
+                self.assertEqual(state_utils.list_history(), [])
 
     def test_concurrent_history_appends_preserve_all_latest_records(self):
         worker = (

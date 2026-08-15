@@ -562,7 +562,17 @@ def write_state(value: Mapping) -> dict:
     return copy.deepcopy(normalized)
 
 
-def update_state(mutator: Callable[[dict], Mapping]) -> dict:
+def update_state(mutator: Callable[[dict], Mapping | None]) -> dict:
+    """Read-modify-write ``state.json`` under its lock (lost-update safe).
+
+    ``mutator`` receives a deep copy of the current validated state and returns
+    the complete new state, or ``None`` to leave the document untouched.  The
+    read, the mutation and the write all happen inside one ``_locked`` span, so
+    concurrent updaters (toggles, snoozes, preset applies) can never overwrite
+    each other's keys the way a cold ``read_state()`` + ``write_state()`` pair
+    would.  The document is written only when the mutated state actually
+    differs from what was read.
+    """
     path = state_path()
     with _locked(path):
         current = _read_document(path, "state", _validate_state, DEFAULT_STATE)
@@ -572,8 +582,11 @@ def update_state(mutator: Callable[[dict], Mapping]) -> dict:
             raise
         except Exception as error:
             raise StateError("invalid_state", "State update failed") from error
+        if candidate is None:
+            return copy.deepcopy(current)
         normalized = _validate_state(candidate)
-        _atomic_write(path, normalized)
+        if normalized != current:
+            _atomic_write(path, normalized)
     return copy.deepcopy(normalized)
 
 
@@ -691,10 +704,12 @@ def list_history() -> list[dict]:
 
 def clear_history() -> list[dict]:
     path = history_path()
-    _check_path(path)
-    if not _document_exists(path):
-        return []
     with _locked(path):
+        # The existence decision belongs inside the lock: an append_history
+        # racing between an unlocked check and the lock would otherwise
+        # survive the clear.
+        if not _document_exists(path):
+            return []
         _read_history(path)
         _atomic_write_lines(path, [])
     return []

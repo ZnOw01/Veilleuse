@@ -44,6 +44,8 @@ Panel {
     property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
     property var queuedCommand: []
+    property string queuedPresetPrevious: ""
+    property int queuedPresetRequestId: 0
     property bool stoppingForLatest: false
     property string processOutput: ""
     property string processError: ""
@@ -133,14 +135,26 @@ Panel {
         if (nextRoute !== root.route) {
             root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
             root.dragTarget = Model.dragTargetEmpty();
+            root.cursor = Model.cursorStart();
             if (nextRoute !== "automation") {
                 root.scheduleExpanded = false;
                 root.scheduleEditorOpen = false;
             }
         }
         root.route = nextRoute;
+        // Structured-only responses (history, preflight) carry no state, so
+        // returning home re-reads the physical baseline the sliders must show.
+        if (nextRoute === "home") root.requestStatus();
         if (nextRoute === "automation" && !root.scheduleEditorOpen) root.request(["schedule", "status"], "schedule-status");
         if (nextRoute === "settings" && !root.preflightLoaded) root.request(["preflight"], "preflight");
+        Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
+    }
+
+    // Focusable buttons steal the active focus on click, which would leave
+    // j/k/h/l dead and Enter re-firing the button. Deferred through
+    // Qt.callLater so the button's own focus grab settles first and the key
+    // catcher wins the frame after.
+    function refocusKeyCatcher() {
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
 
@@ -208,12 +222,17 @@ Panel {
     }
 
     function issue(command, operation) {
-        root.request(command, operation);
+        return root.request(command, operation);
     }
 
+    // Optimistic selection: the preset buttons highlight the requested preset
+    // before the helper confirms it. The previous selection is kept for the
+    // request that applied it so handleExit can revert the highlight when the
+    // apply fails and no preset was physically written.
     function applyPreset(name) {
+        root.queuedPresetPrevious = root.preferredPreset;
         root.preferredPreset = String(name);
-        root.issue(["preset", "apply", String(name), "--monitor", root.selectedMonitor, "--transition-seconds", String(root.transitionSeconds)], "preset");
+        root.queuedPresetRequestId = root.issue(["preset", "apply", String(name), "--monitor", root.selectedMonitor, "--transition-seconds", String(root.transitionSeconds)], "preset");
     }
 
     function saveCustomPreset() {
@@ -274,6 +293,7 @@ Panel {
             debounce.stop();
             root.launchLatest();
         }
+        return latestRequestId;
     }
 
     function queueMutation(name, value) {
@@ -361,6 +381,30 @@ Panel {
         return changed;
     }
 
+    // A superseded exit still describes a write that physically applied: the
+    // latest-wins bus cancelled the readback chase, not the write itself. Adopt
+    // the stale payload's state patch superficially so the knob never reverts
+    // to a value the monitor has already left behind; the combined sections of
+    // the previous state survive and the newest request relaunches against the
+    // merged baseline.
+    function mergeStaleResponse(exitCode) {
+        if (exitCode !== 0)
+            return ;
+
+        var payload = null;
+        try {
+            payload = processOutput === "" ? null : JSON.parse(processOutput);
+        } catch (error) {
+            payload = null;
+        }
+        var patch = payload && payload.state && typeof payload.state === "object" && !Array.isArray(payload.state) ? payload.state : null;
+        if (!patch)
+            return ;
+
+        var before = state;
+        state = root.mergeCombined(Model.mergeStatePatch(before, patch), before);
+    }
+
     function handleExit(exitCode) {
         var requestId = processRequestId;
         if (stoppingForLatest) {
@@ -371,6 +415,7 @@ Panel {
         if (requestId !== latestRequestId) {
             debounce.stop();
             Qt.callLater(root.launchLatest);
+            root.mergeStaleResponse(exitCode);
             return ;
         }
         var payload = null;
@@ -416,6 +461,8 @@ Panel {
         root.dragTarget = Model.dragTargetEmpty();
         if (queuedOperation === "status")
             state = root.normalizeCombined({});
+        if (queuedOperation === "preset" && root.queuedPresetRequestId === requestId)
+            root.preferredPreset = root.queuedPresetPrevious;
 
         var payloadError = payload && payload.error ? String(payload.error) : "";
         var payloadCode = payload && payload.error_code ? String(payload.error_code) : "";
@@ -603,6 +650,10 @@ Panel {
 
     }
     Component.onCompleted: {
+        // Quickshell has no `module`/`require`, so UiModel.js boots without the
+        // locale library; hand it the imported I18n namespace so t() honors the
+        // persisted locale instead of the bundled Spanish fallback.
+        Model.setI18n(I18n);
         root.locale = String(root.setting("locale", "es"));
         root.applyScope = String(root.setting("applyScope", "session"));
         root.selectedMonitor = String(root.setting("monitor", "focused"));
@@ -858,7 +909,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            onClicked: root.applyPreset("reading")
+                            onClicked: {
+                                root.applyPreset("reading");
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -868,7 +922,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            onClicked: root.applyPreset("work")
+                            onClicked: {
+                                root.applyPreset("work");
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -878,7 +935,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            onClicked: root.applyPreset("cinema")
+                            onClicked: {
+                                root.applyPreset("cinema");
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         PanelActionButton {
@@ -886,7 +946,10 @@ Panel {
                             tooltipText: root.text("presets")
                             foreground: root.foreground
                             focusable: true
-                            onClicked: root.settingsCommand("preset", ["list"])
+                            onClicked: {
+                                root.settingsCommand("preset", ["list"]);
+                                root.refocusKeyCatcher();
+                            }
                         }
                     }
 
@@ -902,7 +965,10 @@ Panel {
                             foreground: root.foreground
                             font.family: root.fontFamily
                             onTextChanged: root.customPresetName = text
-                            onAccepted: root.saveCustomPreset()
+                            onAccepted: {
+                                root.saveCustomPreset();
+                                keyCatcher.forceActiveFocus();
+                            }
                             Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                         }
 
@@ -913,7 +979,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending && customPresetName.text.trim() !== ""
-                            onClicked: root.saveCustomPreset()
+                            onClicked: {
+                                root.saveCustomPreset();
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -923,7 +992,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending && ["reading", "work", "cinema"].indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
-                            onClicked: root.deleteSelectedCustomPreset()
+                            onClicked: {
+                                root.deleteSelectedCustomPreset();
+                                root.refocusKeyCatcher();
+                            }
                         }
                     }
 
@@ -994,7 +1066,10 @@ Panel {
                         focusable: true
                         bordered: true
                         foreground: root.foreground
-                        onClicked: root.settingsCommand("history", ["list"])
+                        onClicked: {
+                            root.settingsCommand("history", ["list"]);
+                            root.refocusKeyCatcher();
+                        }
                     }
                 }
 
@@ -1104,7 +1179,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            onClicked: root.setTransition(root.transitionSeconds)
+                            onClicked: {
+                                root.setTransition(root.transitionSeconds);
+                                root.refocusKeyCatcher();
+                            }
                         }
                     }
 
@@ -1124,7 +1202,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             hasCursor: root.cursor.section === 2 && root.cursor.field === 0
-                            onClicked: root.setSnooze(30)
+                            onClicked: {
+                                root.setSnooze(30);
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -1133,7 +1214,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             hasCursor: root.cursor.section === 2 && root.cursor.field === 1
-                            onClicked: root.setSnooze(120)
+                            onClicked: {
+                                root.setSnooze(120);
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -1142,7 +1226,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             hasCursor: root.cursor.section === 2 && root.cursor.field === 2
-                            onClicked: root.settingsCommand("snooze", ["until-tomorrow"])
+                            onClicked: {
+                                root.settingsCommand("snooze", ["until-tomorrow"]);
+                                root.refocusKeyCatcher();
+                            }
                         }
 
                         Button {
@@ -1151,7 +1238,10 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             hasCursor: root.cursor.section === 2 && root.cursor.field === 3
-                            onClicked: root.settingsCommand("snooze", ["clear"])
+                            onClicked: {
+                                root.settingsCommand("snooze", ["clear"]);
+                                root.refocusKeyCatcher();
+                            }
                         }
                     }
 
@@ -1176,6 +1266,7 @@ Panel {
                                 root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
                                 root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
                             }
+                            root.refocusKeyCatcher();
                         }
                     }
                 }
@@ -1254,7 +1345,10 @@ Panel {
                         foreground: root.foreground
                         hasCursor: root.cursor.section === 3
                         enabled: !root.actionPending
-                        onClicked: root.settingsCommand("preflight", [])
+                        onClicked: {
+                            root.settingsCommand("preflight", []);
+                            root.refocusKeyCatcher();
+                        }
                     }
 
                     Text {
@@ -1280,7 +1374,10 @@ Panel {
                         foreground: root.foreground
                         font.family: root.fontFamily
                         hasCursor: root.cursor.section === 4
-                        onAccepted: root.setInlineSetting("shortcutKeys", text)
+                        onAccepted: {
+                            root.setInlineSetting("shortcutKeys", text);
+                            keyCatcher.forceActiveFocus();
+                        }
                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                     }
 
@@ -1298,6 +1395,7 @@ Panel {
                             onClicked: {
                                 root.setInlineSetting("shortcutKeys", shortcutField.text);
                                 root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+                                root.refocusKeyCatcher();
                             }
                         }
 
@@ -1308,7 +1406,10 @@ Panel {
                             foreground: root.foreground
                             hasCursor: root.cursor.section === 5 && root.cursor.field === 1
                             enabled: !root.actionPending
-                            onClicked: root.settingsCommand("shortcut", ["remove"])
+                            onClicked: {
+                                root.settingsCommand("shortcut", ["remove"]);
+                                root.refocusKeyCatcher();
+                            }
                         }
                     }
                 }
@@ -1759,7 +1860,10 @@ Panel {
                                     hasCursor: root.cursor.section === 3 && root.cursor.field === 5
                                     foreground: root.foreground
                                     enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
-                                    onClicked: root.queueSchedule()
+                                    onClicked: {
+                                        root.queueSchedule();
+                                        root.refocusKeyCatcher();
+                                    }
                                 }
 
                             }

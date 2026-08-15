@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const Model = require('../UiModel.js');
+const I18n = require('../I18n.js');
 
 test('declares per-route control sections in visual order', () => {
   assert.deepEqual(Model.routeSections('home'), ['nightLight', 'brightness', 'temperature', 'gamma']);
@@ -510,4 +511,114 @@ test('reconcileDragTargets stops when the value moved away from the target', () 
   );
   assert.deepEqual(result.requests, []);
   assert.deepEqual(result.target, Model.dragTargetEmpty());
+});
+
+test('bundled fallback copy keeps exact key parity with the I18n Spanish dictionary', () => {
+  const fallback = Model.DEFAULT_COPY;
+  assert.ok(fallback && typeof fallback === 'object', 'DEFAULT_COPY must be exported for parity checks');
+  assert.deepEqual(Object.keys(fallback).sort(), Object.keys(I18n.es).sort());
+  for (const key of Object.keys(I18n.es))
+    assert.equal(fallback[key], I18n.es[key], `fallback ${key} must copy the I18n.es value`);
+});
+
+test('every stable error-code key resolves to a real message without the I18n library wired', () => {
+  const codeKeys = Object.values(Model.ERROR_CODE_KEYS);
+  assert.ok(codeKeys.length >= 50, `expected >= 50 mapped codes, got ${codeKeys.length}`);
+  Model.setI18n(null);
+  try {
+    for (const key of new Set(codeKeys)) {
+      assert.ok(typeof Model.DEFAULT_COPY[key] === 'string' && Model.DEFAULT_COPY[key] !== '', `fallback copy missing ${key}`);
+      assert.notEqual(Model.t(key), key, `${key} must not degrade to the raw key in the fallback`);
+    }
+    assert.equal(Model.errorCodeMessage('invalid_json'), 'Los datos guardados no tienen un formato válido.');
+    assert.equal(Model.errorCodeMessage('timeout'), 'Se agotó el tiempo de espera del comando.');
+    assert.equal(Model.validateScheduleFields('25:00', '18:00', true, 6000, 3500).error, 'La hora diurna debe usar el formato HH:MM');
+    assert.equal(Model.validateScheduleFields('06:00', '18:00', true, 7000, 3500).error, 'La temperatura diurna debe estar entre 5900 y 6500 K');
+    assert.equal(Model.t('manualPersistError'), Model.DEFAULT_COPY.manualPersistError);
+  } finally {
+    Model.setI18n(I18n);
+  }
+});
+
+test('setI18n swaps the runtime locale library and restores the active copy', () => {
+  assert.equal(typeof Model.setI18n, 'function');
+  Model.setI18n(null);
+  try {
+    assert.equal(Model.t('save', 'en'), 'Guardar cambios');
+    assert.equal(Model.copyFor('en'), Model.DEFAULT_COPY);
+  } finally {
+    Model.setI18n(I18n);
+  }
+  assert.equal(Model.t('save', 'en'), 'Save changes');
+  assert.equal(Model.copyFor('fr'), I18n.es);
+  assert.equal(Model.copy, I18n.es);
+});
+
+function physicalState(overrides) {
+  const options = overrides || {};
+  return Model.normalizeState({
+    available: true,
+    enabled: false,
+    brightness: { available: true, percent: options.brightness || 50, monitor: 'eDP-2', error: null },
+    nightlight: {
+      available: true,
+      enabled: false,
+      identity: options.identity === undefined ? false : options.identity,
+      temperature: options.temperature || 3500,
+      gamma: options.gamma === undefined ? 100 : options.gamma,
+      error: null
+    },
+    schedule: {
+      available: true,
+      day_time: '06:00',
+      day_temp: 6000,
+      night_time: '18:00',
+      night_temp: 3500,
+      day_identity: true,
+      period: 'day',
+      error: null
+    }
+  });
+}
+
+test('mergeStatePatch adopts a superseded write without dropping unrelated state', () => {
+  assert.equal(typeof Model.mergeStatePatch, 'function');
+  if (typeof Model.mergeStatePatch !== 'function') return;
+  const merged = Model.mergeStatePatch(physicalState(), {
+    brightness: { available: true, percent: 70, monitor: 'eDP-2', error: null }
+  });
+  assert.equal(merged.brightness.percent, 70);
+  assert.equal(merged.nightlight.temperature, 3500);
+  assert.equal(merged.nightlight.gamma, 100);
+  assert.equal(merged.schedule.day_time, '06:00');
+  assert.equal(merged.schedule.day_temp, 6000);
+});
+
+test('mergeStatePatch merges nested sections key-by-key and syncs enabled like commitResponse', () => {
+  assert.equal(typeof Model.mergeStatePatch, 'function');
+  if (typeof Model.mergeStatePatch !== 'function') return;
+  const partial = Model.mergeStatePatch(physicalState(), {
+    nightlight: { temperature: 4000 }
+  });
+  assert.equal(partial.nightlight.temperature, 4000);
+  assert.equal(partial.nightlight.gamma, 100, 'unset nested keys keep their confirmed value');
+
+  const toggled = Model.mergeStatePatch(physicalState(), { enabled: true });
+  assert.equal(toggled.enabled, true);
+  assert.equal(toggled.nightlight.enabled, true);
+
+  const viaNightlight = Model.mergeStatePatch(physicalState(), {
+    nightlight: { enabled: true }
+  });
+  assert.equal(viaNightlight.enabled, true);
+});
+
+test('mergeStatePatch ignores non-object patches and re-normalizes garbage values', () => {
+  assert.equal(typeof Model.mergeStatePatch, 'function');
+  if (typeof Model.mergeStatePatch !== 'function') return;
+  const base = physicalState();
+  assert.equal(Model.mergeStatePatch(base, null).brightness.percent, 50);
+  assert.equal(Model.mergeStatePatch(base, 'corrupt').brightness.percent, 50);
+  const garbage = Model.mergeStatePatch(base, { brightness: { available: true, percent: true } });
+  assert.equal(garbage.brightness.percent, null, 'a boolean percent fails closed instead of rendering');
 });

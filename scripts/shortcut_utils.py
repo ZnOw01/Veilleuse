@@ -148,8 +148,10 @@ def parse_keys(spec):
 
     Modifiers come from a fixed set, may be repeated neither within the slot
     nor with the key, and the key must be an allowed letter/digit, ``F1``-``F24``
-    or a named key.  Anything that could smuggle a second binding, a comment or
-    a newline into the generated ``o.bind`` call is rejected.
+    or a named key.  At least one modifier is required: a bare key would bind
+    the letter itself globally and swallow every plain keystroke.  Anything
+    that could smuggle a second binding, a comment or a newline into the
+    generated ``o.bind`` call is rejected.
     """
     if not isinstance(spec, str):
         raise ValueError("Las teclas deben ser un texto")
@@ -169,6 +171,8 @@ def parse_keys(spec):
         if token in mods:
             raise ValueError(f"Modificador repetido: {token}")
         mods.append(token)
+    if not mods:
+        raise ValueError('El atajo debe incluir al menos un modificador (p. ej. "SUPER, V")')
     key = parts[1].upper()
     if not (
         _SINGLE_KEY.fullmatch(key)

@@ -43,6 +43,7 @@ const EMITTED_ERROR_CODES = [
   'backend_unavailable',
   'preset_failed',
   'preset_not_found',
+  'shortcut_failed',
   'builtin_immutable',
   'default_conflict',
   'deadline_exceeded',

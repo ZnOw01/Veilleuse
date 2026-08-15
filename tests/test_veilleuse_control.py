@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -227,6 +227,22 @@ class PluginRootTests(HelperModuleTests):
             self.assertEqual(root, install)
         finally:
             vc.__file__ = original
+
+    def test_module_loader_reports_broken_module_on_stderr(self):
+        # A genuine load failure (syntax error, bug) must be diagnosable on
+        # stderr instead of silently degrading to "helper_unavailable".
+        broken = self.xdg / "broken-plugin"
+        (broken / "scripts").mkdir(parents=True)
+        (broken / "manifest.json").write_text("{}", encoding="utf-8")
+        (broken / "scripts" / "schedule_utils.py").write_text(
+            "def (broken", encoding="utf-8"
+        )
+        with patch.object(vc, "resolve_plugin_root", return_value=broken):
+            stderr = io.StringIO()
+            with redirect_stderr(stderr):
+                module = vc._schedule_module()
+        self.assertIsNone(module)
+        self.assertIn("schedule_utils", stderr.getvalue())
 
 
 class StatusTests(HelperModuleTests):
@@ -752,6 +768,26 @@ class NightlightTests(HelperModuleTests):
         self.assertFalse(state["available"])
         self.assertIsNone(state["temperature"])
 
+    def test_day_temperature_within_day_range_is_not_enabled(self):
+        # 5900-6500 K is a *day* temperature (schedule_utils.DAY_TEMP_MIN):
+        # reading one must not report the night light as enabled, otherwise
+        # status shows "night light on" during a warm day and toggle inverts.
+        self.sim.temperature = 5950
+        state = vc.read_nightlight()
+        self.assertTrue(state["available"])
+        self.assertFalse(state["enabled"])
+        self.sim.temperature = 5900
+        self.assertFalse(vc.read_nightlight()["enabled"])
+        self.sim.temperature = 5899
+        self.assertTrue(vc.read_nightlight()["enabled"])
+
+    def test_failed_nightlight_operation_reports_stable_error_code(self):
+        self.sim.fail_identity_write = True
+        code, output = self.run_cli("nightlight", "natural")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "apply_failed")
+
 
 class ManualIntentTests(HelperModuleTests):
     def test_toggle_persists_manual_intent_for_current_period(self):
@@ -975,6 +1011,81 @@ class ScheduleTests(HelperModuleTests):
         self.assertIn("# unrelated section", text)
         self.assertIn("some_other_setting = 1", text)
         self.assertIn("identity = true", text)
+
+    def test_schedule_set_renders_ownership_markers_on_fresh_config(self):
+        # With more than two profiles schedule toggling needs explicit
+        # day/night ownership comments; the renderer must emit them so a
+        # later user-added profile cannot make disable ambiguous.
+        code, _ = self.run_cli(
+            "schedule", "set",
+            "--night-time", "21:00",
+            "--day-time", "07:00",
+            "--night-temp", "4000",
+            "--day-temp", "6000",
+            "--no-natural-day",
+        )
+        self.assertEqual(code, 0)
+        text = vc.config_path().read_text(encoding="utf-8")
+        day_index = text.index("time = 07:00")
+        night_index = text.index("time = 21:00")
+        self.assertIn("# Veilleuse day", text[:day_index])
+        self.assertIn("# Veilleuse night", text[:night_index])
+        self.assertLess(text.index("# Veilleuse day"), text.index("# Veilleuse night"))
+
+    def test_schedule_set_backfills_ownership_markers_on_managed_blocks(self):
+        self.write_config(
+            "profile {\n"
+            "    time = 06:00\n"
+            "    identity = true\n"
+            "}\n"
+            "\n"
+            "profile {\n"
+            "    time = 15:30\n"
+            "    temperature = 3500\n"
+            "}\n"
+        )
+        code, _ = self.run_cli(
+            "schedule", "set",
+            "--night-time", "21:00",
+            "--day-time", "07:00",
+            "--night-temp", "4000",
+            "--day-temp", "6000",
+        )
+        self.assertEqual(code, 0)
+        text = vc.config_path().read_text(encoding="utf-8")
+        self.assertEqual(text.count("# Veilleuse day"), 1)
+        self.assertEqual(text.count("# Veilleuse night"), 1)
+        self.assertLess(text.index("# Veilleuse day"), text.index("time = 07:00"))
+        self.assertLess(text.index("# Veilleuse night"), text.index("time = 21:00"))
+
+    def test_schedule_set_failure_reports_stable_error_code(self):
+        with patch.object(
+            vc, "schedule_set", return_value=vc._schedule_result(None, False, "boom")
+        ):
+            code, output = self.run_cli(
+                "schedule", "set",
+                "--night-time", "21:00",
+                "--day-time", "07:00",
+                "--night-temp", "4000",
+                "--day-temp", "6000",
+            )
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "schedule_failed")
+        self.assertEqual(payload["error"], "boom")
+
+    def test_schedule_set_invalid_argument_reports_stable_error_code(self):
+        self.write_config("")
+        code, output = self.run_cli(
+            "schedule", "set",
+            "--night-time", "25:00",
+            "--day-time", "07:00",
+            "--night-temp", "4000",
+            "--day-temp", "6000",
+        )
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "invalid_argument")
 
     def test_schedule_set_rejects_invalid_unrelated_profile_without_writing(self):
         original = (
@@ -1357,8 +1468,10 @@ class ShortcutKeyValidationTests(unittest.TestCase):
     def test_accepts_multiple_modifiers_and_function_key(self):
         self.assertEqual(sc.canonical_keys("CTRL SHIFT, F8"), "CTRL + SHIFT + F8")
 
-    def test_accepts_key_without_modifiers(self):
-        self.assertEqual(sc.canonical_keys(", F9"), "F9")
+    def test_rejects_key_without_modifiers(self):
+        for bad in (", V", ", F9", "   , V"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                sc.canonical_keys(bad)
 
     def test_normalizes_case_whitespace_and_named_keys(self):
         self.assertEqual(sc.canonical_keys("  super , v "), "SUPER + V")
@@ -1868,6 +1981,18 @@ class ShortcutCliTests(HelperModuleTests):
         status = json.loads(output)
         self.assertFalse(status["installed"])
         self.assertFalse(sc.bindings_path().exists())
+
+    def test_cli_shortcut_failure_reports_stable_error_code(self):
+        with patch.object(
+            self.sc_module,
+            "install_shortcut",
+            return_value={"available": False, "error": "injected failure", "installed": False},
+        ):
+            code, output = self.run_cli("shortcut", "install", "--keys", "SUPER, V")
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "shortcut_failed")
+        self.assertEqual(payload["error"], "injected failure")
 
     def test_cli_install_status_remove_roundtrip(self):
         code, output = self.run_cli("shortcut", "install", "--keys", "SUPER, V")
