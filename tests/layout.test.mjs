@@ -352,6 +352,13 @@ test('transition config sets seconds only', () => {
   assert.match(qml, /setTransition\(root\.transitionSeconds\)/);
 });
 
+test('ids are never accessed through the root object', () => {
+  // `root.<id>` is undefined for plain QML ids: a freshly started engine
+  // throws on the access and every helper call dies with it.
+  assert.doesNotMatch(qml, /root\.(helperProcess|debounce|feedbackTimer|keyCatcher)\b/);
+  assert.match(qml, /if \(helperProcess\.running \|\| root\.stoppingForLatest \|\| debounce\.running\) \{/);
+});
+
 test('slider value labels track the drag target like the knob does', () => {
   // The knob shows displayValue() while a chase is in flight; the numeric
   // label must too, or the number lags the pointer and then snaps.
@@ -472,7 +479,7 @@ test('dropdown, shortcut and preset editors return focus before Escape can close
 
 test('requests launch immediately when idle and only debounce bursts to preserve latest-wins', () => {
   const requestBlock = qml.slice(qml.indexOf('function request(command, operation) {'), qml.indexOf('function queueMutation(name, value) {'));
-  assert.match(requestBlock, /if\s*\(\s*root\.helperProcess\.running\s*\|\|\s*root\.stoppingForLatest\s*\|\|\s*debounce\.running\s*\)/);
+  assert.match(requestBlock, /if\s*\(\s*helperProcess\.running\s*\|\|\s*root\.stoppingForLatest\s*\|\|\s*debounce\.running\s*\)/);
   assert.match(requestBlock, /debounce\.restart\(\)/);
   assert.match(requestBlock, /debounce\.stop\(\)/);
   assert.match(requestBlock, /root\.launchLatest\(\)/);

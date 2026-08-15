@@ -317,7 +317,10 @@ Panel {
         actionPending = true;
         lastError = "";
         feedbackText = "";
-        if (root.helperProcess.running || root.stoppingForLatest || debounce.running) {
+        // Ids resolve through the component scope, never through the root
+        // object: qualifying an id with the root would read undefined and
+        // abort every helper call on a freshly started engine.
+        if (helperProcess.running || root.stoppingForLatest || debounce.running) {
             debounce.restart();
         } else {
             debounce.stop();
