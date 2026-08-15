@@ -21,6 +21,8 @@ ROOT = Path(__file__).parents[1]
 SCRIPTS = ROOT / "scripts"
 HELPER = SCRIPTS / "veilleuse-control"
 
+sys.dont_write_bytecode = True
+
 loader = importlib.machinery.SourceFileLoader("veilleuse_control", str(HELPER))
 spec = importlib.util.spec_from_loader("veilleuse_control", loader)
 vc = importlib.util.module_from_spec(spec)
@@ -1164,6 +1166,14 @@ class HelperArtifactTests(unittest.TestCase):
             0,
             "the helper must keep an installed clone release-clean by itself",
         )
+
+
+class HelperImportBytecodeTests(unittest.TestCase):
+    """Loading the helper and its bundled modules must not write bytecode."""
+
+    def test_helper_and_shortcut_module_imports_leave_no_bytecode(self):
+        self.assertFalse(any(SCRIPTS.rglob("__pycache__")))
+        self.assertFalse(any(SCRIPTS.rglob("*.pyc")))
 
 
 class ReadmeLimitsTests(unittest.TestCase):

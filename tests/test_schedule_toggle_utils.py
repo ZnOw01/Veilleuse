@@ -13,6 +13,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).parents[1]
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import schedule_toggle_utils as toggle  # noqa: E402
@@ -250,6 +251,10 @@ class ScheduleToggleTests(unittest.TestCase):
 
         self.assertEqual(self.config.read_bytes(), disabled)
         self.assertFalse(self.read_state()["schedule_enabled"])
+
+    def test_test_imports_leave_no_bytecode_in_installed_scripts(self):
+        self.assertFalse(any((ROOT / "scripts").rglob("__pycache__")))
+        self.assertFalse(any((ROOT / "scripts").rglob("*.pyc")))
 
 
 if __name__ == "__main__":

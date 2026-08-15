@@ -26,15 +26,6 @@ def xdg_config_home() -> Path:
     return candidate if candidate.is_absolute() else Path.home() / ".config"
 
 
-def xdg_data_home() -> Path:
-    value = os.environ.get("XDG_DATA_HOME", "")
-    candidate = Path(value).expanduser() if value else Path.home() / ".local/share"
-    return candidate if candidate.is_absolute() else Path.home() / ".local/share"
-
-
-CONFIG_DIR = xdg_config_home() / "night-light-control"
-SETTINGS_PATH = CONFIG_DIR / "settings.json"
-STATE_LOCK = CONFIG_DIR / "state.lock"
 HYPRSUNSET_CONFIG = xdg_config_home() / "hypr" / "hyprsunset.conf"
 
 
