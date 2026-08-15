@@ -2132,14 +2132,20 @@ class V2ReleaseTests(unittest.TestCase):
         for relative in (
             "manifest.json",
             "README.md",
+            "preview.png",
             "BarWidget.qml",
             "scripts/veilleuse-control",
             "scripts/schedule_utils.py",
             "scripts/shortcut_utils.py",
             "scripts/check.sh",
-            "docs/VEILLEUSE_V2_CONTRACT.md",
         ):
             self.assertTrue((archive / relative).is_file(), f"archive missing {relative}")
+
+    def test_archive_carries_no_internal_docs(self):
+        # docs/ is local planning material only: the shipped package must
+        # not carry the spec documents.
+        archive = self.build_archive()
+        self.assertFalse((archive / "docs").exists())
 
     def test_archive_has_no_symlinks_or_bytecode_caches(self):
         archive = self.build_archive()
