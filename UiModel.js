@@ -121,9 +121,9 @@ var DEFAULT_COPY = {
   deletePresetConfirm: '¿Eliminar?',
   newPresetName: 'Nombre del nuevo perfil',
   reloadPresets: 'Recargar perfiles',
-  presetReading: 'Lectura',
-  presetWork: 'Trabajo',
-  presetCinema: 'Cine',
+  presetDay: 'Día',
+  presetEvening: 'Tarde',
+  presetNight: 'Noche',
   focusedMonitor: 'Monitor enfocado',
   monitor: 'Monitor',
   lastApplied: 'Última aplicación',
@@ -243,6 +243,10 @@ function moveCursor(cursor, key, route, scheduleExpanded) {
 // from ArrowRight/ArrowLeft; each press counts as one step so the slider
 // moves by SECTION_STEP. Temperature steps 50 K so the numeric line walks
 // without skipping; the pointer drag itself stays free-form per kelvin.
+// The built-in preset ladder mirrors state_utils.BUILTIN_PRESETS: the panel
+// guards delete/apply against this list instead of repeating names.
+var BUILTIN_PRESETS = ['day', 'evening', 'night'];
+
 var SECTION_STEP = {
   brightness: 1,
   temperature: 50,
@@ -872,6 +876,7 @@ if (typeof module !== 'undefined' && module.exports) {
     errorCodeMessage: errorCodeMessage,
     localizeError: localizeError,
     localizeStateError: localizeStateError,
+    BUILTIN_PRESETS: BUILTIN_PRESETS,
     routeOrder: routeOrder,
     provenanceLabel: provenanceLabel,
     midnightExplanation: midnightExplanation,

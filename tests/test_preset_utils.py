@@ -143,11 +143,11 @@ class PresetUtilsTest(unittest.TestCase):
     def test_builtin_presets_are_immutable(self):
         self.assertEqual(
             {preset["name"] for preset in self.manager.list_presets()},
-            {"reading", "work", "cinema"},
+            {"day", "evening", "night"},
         )
         for action in (
-            lambda: self.manager.save_preset("reading", 4200, 80),
-            lambda: self.manager.delete_preset("reading"),
+            lambda: self.manager.save_preset("night", 4200, 80),
+            lambda: self.manager.delete_preset("night"),
         ):
             with self.assertRaises(PresetError) as error:
                 action()

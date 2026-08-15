@@ -508,9 +508,9 @@ test('route changes reset the cursor so activation targets the new route, not th
 test('focusable action buttons return focus to the key catcher after their click', () => {
   assert.match(qml, /function refocusKeyCatcher\(\)\s*\{\s*Qt\.callLater\(function\(\)\s*\{\s*if\s*\(keyCatcher\)\s*keyCatcher\.forceActiveFocus\(\);\s*\}\s*\);\s*\}/);
   const actions = [
-    'root.applyPreset("reading")',
-    'root.applyPreset("work")',
-    'root.applyPreset("cinema")',
+    'root.applyPreset("day")',
+    'root.applyPreset("evening")',
+    'root.applyPreset("night")',
     'root.settingsCommand("preset", ["list"])',
     'root.saveCustomPreset()',
     'root.settingsCommand("history", ["list"])',

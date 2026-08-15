@@ -338,7 +338,7 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertEqual(status["automation"]["transition_seconds"], 45)
         self.assertEqual(status["automation"]["origin"], "preset")
         self.assertEqual(status["presets"]["default_preset"], "desk")
-        self.assertEqual([item["name"] for item in status["presets"]["builtins"]], ["reading", "work", "cinema"])
+        self.assertEqual([item["name"] for item in status["presets"]["builtins"]], ["day", "evening", "night"])
         self.assertEqual(status["presets"]["user"][0]["name"], "desk")
         self.assertEqual([item["operation"] for item in status["history"]], ["new", "old"])
 
@@ -353,7 +353,7 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertEqual(status["nightlight"]["temperature"], 3500)
         self.assertFalse(status["automation"]["available"])
         self.assertEqual(status["automation"]["error_code"], "invalid_json")
-        self.assertEqual(status["presets"]["default_preset"], "reading")
+        self.assertEqual(status["presets"]["default_preset"], "day")
         self.assertEqual(status["history"], [])
 
     def test_corrupt_config_and_history_fail_only_their_sections(self):
@@ -471,16 +471,16 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output)["settings"]["default_preset"], "desk")
 
-        code, output = self.run_cli("settings", "set", "--default-preset", "work")
+        code, output = self.run_cli("settings", "set", "--default-preset", "evening")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["settings"]["default_preset"], "work")
-        self.assertEqual(module.read_config()["default_preset"], "work")
+        self.assertEqual(json.loads(output)["settings"]["default_preset"], "evening")
+        self.assertEqual(module.read_config()["default_preset"], "evening")
         self.assertEqual(schedule.read_text(encoding="utf-8"), "# untouched\n")
 
         code, output = self.run_cli("settings", "set", "--default-preset", "missing")
         self.assertNotEqual(code, 0)
         self.assertEqual(json.loads(output)["error_code"], "invalid_config")
-        self.assertEqual(module.read_config()["default_preset"], "work")
+        self.assertEqual(module.read_config()["default_preset"], "evening")
 
 
 class BrightnessTests(HelperModuleTests):

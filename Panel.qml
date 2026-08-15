@@ -15,7 +15,7 @@ Panel {
     property string locale: "es"
     property string applyScope: "session"
     property string selectedMonitor: "focused"
-    property string preferredPreset: "reading"
+    property string preferredPreset: "day"
     property string customPresetName: ""
     property string shortcutKeys: "SUPER+SHIFT+N"
     property int transitionSeconds: 8
@@ -182,9 +182,9 @@ Panel {
 
     function presetChoices() {
         var builtins = [
-            { value: "reading", label: text("preset_reading") },
-            { value: "work", label: text("preset_work") },
-            { value: "cinema", label: text("preset_cinema") }
+            { value: "day", label: text("preset_day") },
+            { value: "evening", label: text("preset_evening") },
+            { value: "night", label: text("preset_night") }
         ];
         var user = root.state && root.state.presets && Array.isArray(root.state.presets.user) ? root.state.presets.user : [];
         for (var i = 0; i < user.length; i++) {
@@ -277,7 +277,7 @@ Panel {
 
     function deleteSelectedCustomPreset() {
         var name = String(root.preferredPreset || "");
-        if (["reading", "work", "cinema"].indexOf(name) !== -1 || name === "" || root.actionPending)
+        if (Model.BUILTIN_PRESETS.indexOf(name) !== -1 || name === "" || root.actionPending)
             return ;
         root.request(["preset", "delete", name], "preset-delete");
     }
@@ -687,7 +687,7 @@ Panel {
         root.locale = String(root.setting("locale", "es"));
         root.applyScope = String(root.setting("applyScope", "session"));
         root.selectedMonitor = String(root.setting("monitor", "focused"));
-        root.preferredPreset = String(root.setting("preferredPreset", "reading"));
+        root.preferredPreset = String(root.setting("preferredPreset", "day"));
         root.transitionSeconds = Number(root.setting("transitionSeconds", 8));
         root.shortcutKeys = String(root.setting("shortcutKeys", "SUPER+SHIFT+N"));
         requestStatus();
@@ -1106,46 +1106,46 @@ Panel {
                             // applied; the highlighted button is only the
                             // picker selection. Two different states, two
                             // different visual signals.
-                            text: root.appliedPresetName() === "reading" ? "● " + root.text("preset_reading") : root.text("preset_reading")
-                            selected: root.preferredPreset === "reading"
+                            text: root.appliedPresetName() === "day" ? "● " + root.text("preset_day") : root.text("preset_day")
+                            selected: root.preferredPreset === "day"
                             focusable: true
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "reading" ? root.text("applied_preset") + ": " + root.text("preset_reading") : root.text("preset_reading")
+                            Accessible.name: root.appliedPresetName() === "day" ? root.text("applied_preset") + ": " + root.text("preset_day") : root.text("preset_day")
                             Accessible.role: Accessible.Button
                             onClicked: {
-                                root.applyPreset("reading");
+                                root.applyPreset("day");
                                 root.refocusKeyCatcher();
                             }
                         }
 
                         Button {
-                            text: root.appliedPresetName() === "work" ? "● " + root.text("preset_work") : root.text("preset_work")
-                            selected: root.preferredPreset === "work"
+                            text: root.appliedPresetName() === "evening" ? "● " + root.text("preset_evening") : root.text("preset_evening")
+                            selected: root.preferredPreset === "evening"
                             focusable: true
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "work" ? root.text("applied_preset") + ": " + root.text("preset_work") : root.text("preset_work")
+                            Accessible.name: root.appliedPresetName() === "evening" ? root.text("applied_preset") + ": " + root.text("preset_evening") : root.text("preset_evening")
                             Accessible.role: Accessible.Button
                             onClicked: {
-                                root.applyPreset("work");
+                                root.applyPreset("evening");
                                 root.refocusKeyCatcher();
                             }
                         }
 
                         Button {
-                            text: root.appliedPresetName() === "cinema" ? "● " + root.text("preset_cinema") : root.text("preset_cinema")
-                            selected: root.preferredPreset === "cinema"
+                            text: root.appliedPresetName() === "night" ? "● " + root.text("preset_night") : root.text("preset_night")
+                            selected: root.preferredPreset === "night"
                             focusable: true
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "cinema" ? root.text("applied_preset") + ": " + root.text("preset_cinema") : root.text("preset_cinema")
+                            Accessible.name: root.appliedPresetName() === "night" ? root.text("applied_preset") + ": " + root.text("preset_night") : root.text("preset_night")
                             Accessible.role: Accessible.Button
                             onClicked: {
-                                root.applyPreset("cinema");
+                                root.applyPreset("night");
                                 root.refocusKeyCatcher();
                             }
                         }
@@ -1216,7 +1216,7 @@ Panel {
                                 focusable: true
                                 bordered: true
                                 foreground: root.presetDeleteArmed ? Color.urgent : root.foreground
-                                enabled: root.stateReady && !root.actionPending && ["reading", "work", "cinema"].indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
+                                enabled: root.stateReady && !root.actionPending && Model.BUILTIN_PRESETS.indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
                                 onClicked: {
                                     if (!root.presetDeleteArmed || root.presetDeleteArmedName !== root.preferredPreset) {
                                         root.presetDeleteArmed = true;

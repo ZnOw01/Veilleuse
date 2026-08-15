@@ -76,6 +76,51 @@ class StateUtilsTest(unittest.TestCase):
         self.assertFalse(self.state_file().exists())
         self.assertFalse(self.history_file().exists())
 
+    def test_builtins_are_the_time_of_day_ladder(self):
+        # day/evening/night replace the activity presets: they map to how the
+        # user already thinks about warmth (and to the schedule's own
+        # day/night), instead of guessing what "cinema" means.
+        self.assertEqual(
+            state_utils.BUILTIN_PRESETS,
+            {
+                "day": {"temperature": 6000, "gamma": 100},
+                "evening": {"temperature": 4500, "gamma": 90},
+                "night": {"temperature": 3200, "gamma": 80},
+            },
+        )
+        self.assertEqual(state_utils.DEFAULT_CONFIG["default_preset"], "day")
+
+    def test_legacy_default_preset_migrates_to_closest_builtin(self):
+        # A config written by the previous version names an activity preset
+        # as the default; without migration the whole document would fail
+        # validation and brick the plugin. Map each legacy name to the
+        # closest warmth in the new ladder.
+        for legacy, migrated in (
+            ("reading", "night"),
+            ("work", "evening"),
+            ("cinema", "night"),
+        ):
+            config = {
+                "schema": 1,
+                "presets": {},
+                "default_preset": legacy,
+            }
+            state_utils.write_config(config)
+            self.assertEqual(
+                state_utils.read_config()["default_preset"], migrated, legacy
+            )
+
+    def test_legacy_default_preset_kept_when_user_preset_owns_the_name(self):
+        # After the rename "reading" is a valid custom name; a user preset
+        # owning it must win over the legacy mapping.
+        config = {
+            "schema": 1,
+            "presets": {"reading": {"temperature": 4000, "gamma": 85}},
+            "default_preset": "reading",
+        }
+        state_utils.write_config(config)
+        self.assertEqual(state_utils.read_config()["default_preset"], "reading")
+
     def test_config_and_state_are_strictly_validated_and_written_mode_0600(self):
         config = {
             "schema": 1,

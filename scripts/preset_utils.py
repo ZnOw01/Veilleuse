@@ -24,7 +24,7 @@ _GAMMA_MIN = 0
 _GAMMA_MAX = 100
 _BRIGHTNESS_MIN = 1
 _BRIGHTNESS_MAX = 100
-_BUILTIN_ORDER = ("reading", "work", "cinema")
+_BUILTIN_ORDER = ("day", "evening", "night")
 _BUILTIN_VALUES = {
     name: copy.deepcopy(state_utils.BUILTIN_PRESETS[name]) for name in _BUILTIN_ORDER
 }

@@ -33,15 +33,24 @@ _ISO_LIKE_PATTERN = re.compile(
 _ORIGINS = {"automatic", "manual", "preset", "snooze", "unknown"}
 
 BUILTIN_PRESETS = {
-    "reading": {"temperature": 3500, "gamma": 90},
-    "work": {"temperature": 4500, "gamma": 100},
-    "cinema": {"temperature": 3000, "gamma": 85},
+    "day": {"temperature": 6000, "gamma": 100},
+    "evening": {"temperature": 4500, "gamma": 90},
+    "night": {"temperature": 3200, "gamma": 80},
+}
+
+# Configs written before the time-of-day ladder named the activity presets
+# reading/work/cinema as the default. Mapping them to the closest warmth
+# keeps those documents valid instead of failing the whole config.
+_LEGACY_BUILTIN_PRESETS = {
+    "reading": "night",
+    "work": "evening",
+    "cinema": "night",
 }
 
 DEFAULT_CONFIG = {
     "schema": SCHEMA_VERSION,
     "presets": {},
-    "default_preset": "reading",
+    "default_preset": "day",
 }
 
 DEFAULT_STATE = {
@@ -270,6 +279,8 @@ def _validate_config(raw: object) -> dict:
         default = _name(data["default_preset"], "default_preset")
     except StateError as error:
         raise StateError("invalid_config", "default_preset is invalid") from error
+    if default not in presets and default in _LEGACY_BUILTIN_PRESETS:
+        default = _LEGACY_BUILTIN_PRESETS[default]
     if default not in presets and default not in BUILTIN_PRESETS:
         raise StateError("invalid_config", "default_preset does not name a preset")
     return {"schema": SCHEMA_VERSION, "presets": presets, "default_preset": default}

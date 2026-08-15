@@ -102,11 +102,11 @@ test('preflight view model localizes status and per-check errors', () => {
 
 test('preset view model surfaces options with builtin flags and labels', () => {
   const vm = Model.presetViewModel([
-    { name: 'reading', builtin: true },
+    { name: 'day', builtin: true },
     { name: 'custom' }
-  ], 'reading', 'en');
+  ], 'day', 'en');
   assert.equal(vm.length, 2);
-  assert.equal(vm[0].name, 'reading');
+  assert.equal(vm[0].name, 'day');
   assert.equal(vm[0].builtin, true);
   assert.equal(vm[0].selected, true);
   assert.equal(vm[1].selected, false);
@@ -136,12 +136,12 @@ test('settings view model localizes scope, language and shortcut fields', () => 
   const vm = Model.settingsViewModel({
     locale: 'en',
     apply_scope: 'persistent',
-    default_preset: 'reading',
+    default_preset: 'day',
     shortcut_keys: 'SUPER, L'
   }, 'en');
   assert.equal(vm.language, 'en');
   assert.equal(vm.applyScope, 'persistent');
-  assert.equal(vm.defaultPreset, 'reading');
+  assert.equal(vm.defaultPreset, 'day');
   assert.equal(vm.shortcutKeys, 'SUPER, L');
   assert.equal(vm.languageLabel, I18n.en.language);
   assert.equal(vm.applyScopeLabel, I18n.en.applyScope);
