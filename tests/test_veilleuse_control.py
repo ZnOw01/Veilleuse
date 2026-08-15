@@ -1135,6 +1135,37 @@ class ScheduleTests(HelperModuleTests):
         self.assertFalse(state["available"])
         self.assertIn("denied", state["error"])
 
+    def test_schedule_get_reads_paused_schedule_from_disable_transaction(self):
+        # While the schedule is disabled the managed blocks are removed from
+        # hyprsunset.conf: that is the designed paused state, not a config
+        # error. The paused values must come from the stored transaction.
+        import hashlib as _hashlib
+
+        original = (
+            "# kept comment\n"
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3000\n}\n"
+        )
+        disabled = "# kept comment\n"
+        self.write_config(disabled)
+        state = vc._state_module()
+        state.write_state({
+            **state.read_state(),
+            "schedule_enabled": False,
+            "schedule_disabled": {
+                "original_hash": _hashlib.sha256(original.encode()).hexdigest(),
+                "disabled_hash": _hashlib.sha256(disabled.encode()).hexdigest(),
+                "original_text": original,
+            },
+        })
+        result = vc.schedule_get()
+        self.assertTrue(result["available"], result)
+        self.assertEqual(result["day_time"], "06:00")
+        self.assertTrue(result["day_identity"])
+        self.assertEqual(result["night_time"], "15:30")
+        self.assertEqual(result["night_temp"], 3000)
+        self.assertIsNone(result["error"])
+
     def test_schedule_get_rejects_out_of_range_profile_temperature(self):
         self.write_config(
             "profile {\n    time = 06:00\n    temperature = 7000\n}\n"

@@ -1215,7 +1215,14 @@ Panel {
 
                             Button {
                                 id: deleteCustomPresetButton
-                                text: root.presetDeleteArmed ? root.text("delete_preset_confirm") : root.text("delete_custom_preset") + " '" + root.preferredPreset + "'"
+                                // Name the target only when it is actually
+                                // deletable: implying a built-in can be
+                                // deleted would invite the wrong click.
+                                text: root.presetDeleteArmed
+                                      ? root.text("delete_preset_confirm")
+                                      : (Model.BUILTIN_PRESETS.indexOf(root.preferredPreset) === -1
+                                         ? root.text("delete_custom_preset") + " '" + root.preferredPreset + "'"
+                                         : root.text("delete_custom_preset"))
                                 focusable: true
                                 bordered: true
                                 foreground: root.presetDeleteArmed ? Color.urgent : root.foreground

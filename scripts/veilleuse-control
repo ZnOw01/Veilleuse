@@ -817,12 +817,35 @@ def schedule_module_or_error():
     return schedule_module, None
 
 
+def _paused_schedule_text():
+    """Original schedule text stored by an active disable transaction.
+
+    While the schedule is paused the managed profile blocks are removed from
+    hyprsunset.conf by design, so a profile-less file is the expected state
+    and its values live in the transaction, not in the file.
+    """
+    state = _state_module()
+    if state is None:
+        return None
+    try:
+        current = state.read_state()
+    except Exception:
+        return None
+    transaction = current.get("schedule_disabled")
+    if current.get("schedule_enabled") or not isinstance(transaction, dict):
+        return None
+    text = transaction.get("original_text")
+    return text if isinstance(text, str) and text else None
+
+
 def schedule_get():
     """Return the parsed schedule, its identity day flag and active period.
 
     A missing or empty config returns the parser's documented default
     template (06:00 / 6000 K day, 15:30 / 3500 K night) so status stays
-    coherent before the user saves a first schedule.
+    coherent before the user saves a first schedule.  A config stripped of
+    its profiles by an active disable transaction reports the paused
+    schedule from that transaction instead of failing as malformed.
     """
     schedule_module, error = schedule_module_or_error()
     if schedule_module is None:
@@ -844,7 +867,15 @@ def schedule_get():
             day_identity = schedule_module.day_profile_is_identity(text)
             period_value = schedule_module.schedule_period(schedule)
     except ValueError as caught:
-        return _schedule_result(None, False, str(caught))
+        paused = _paused_schedule_text()
+        if paused is None:
+            return _schedule_result(None, False, str(caught))
+        try:
+            schedule = schedule_module.parse_schedule_text(paused, strict=True)
+            day_identity = schedule_module.day_profile_is_identity(paused)
+            period_value = schedule_module.schedule_period(schedule)
+        except ValueError:
+            return _schedule_result(None, False, str(caught))
     return _schedule_result(schedule, day_identity, None, period_value)
 
 
