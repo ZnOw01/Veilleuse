@@ -276,9 +276,11 @@ test('three rapid Arrow presses accumulate three steps without waiting for three
 });
 
 test('temperature and gamma keyboard steps scale by their own magnitudes', () => {
+  // 50 K per press: fine enough to walk the line without number skipping,
+  // coarse enough to cross the 2500-6500 range without exhaustion.
   const temp = Model.keyboardStep('temperature', 1, 3500, 0);
-  assert.equal(temp.value, 3600);
-  assert.equal(Model.keyboardStep('temperature', 1, 3500, temp.pending).value, 3700);
+  assert.equal(temp.value, 3550);
+  assert.equal(Model.keyboardStep('temperature', 1, 3500, temp.pending).value, 3600);
   assert.equal(Model.keyboardStep('gamma', -1, 40, 0).value, 39);
 });
 
@@ -384,14 +386,14 @@ test('superseded keyboard steps in another section clear instead of over-shootin
   assert.deepEqual(result.pending, { brightness: 0, temperature: 0, gamma: 0 });
 });
 
-test('temperature pending drains with its own 100 K magnitude', () => {
+test('temperature pending drains with its own 50 K magnitude', () => {
   const result = Model.reconcilePendingSteps(
     stepState({ temperature: 3500 }),
     stepState({ temperature: 3800 }),
-    { brightness: 0, temperature: 4, gamma: 0 },
+    { brightness: 0, temperature: 7, gamma: 0 },
     'temperature'
   );
-  assert.deepEqual(result.requests, [{ section: 'temperature', value: 3900 }]);
+  assert.deepEqual(result.requests, [{ section: 'temperature', value: 3850 }]);
   assert.deepEqual(result.pending, { brightness: 0, temperature: 1, gamma: 0 });
 });
 

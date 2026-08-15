@@ -352,6 +352,14 @@ test('transition config sets seconds only', () => {
   assert.match(qml, /setTransition\(root\.transitionSeconds\)/);
 });
 
+test('slider value labels track the drag target like the knob does', () => {
+  // The knob shows displayValue() while a chase is in flight; the numeric
+  // label must too, or the number lags the pointer and then snaps.
+  const labels = qml.match(/root\.displayValue\("(brightness|temperature|gamma)"/g) || [];
+  assert.equal(labels.length, 6, 'each slider binds knob and label through displayValue');
+  assert.match(qml, /id:\s*temperatureRow[\s\S]*?step:\s*50/);
+});
+
 test('transition seconds field bounds', () => {
   assert.match(qml, /id:\s*transitionEditor[\s\S]*?from:\s*0/);
   assert.match(qml, /id:\s*transitionEditor[\s\S]*?to:\s*1800/);

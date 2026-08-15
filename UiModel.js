@@ -241,10 +241,11 @@ function moveCursor(cursor, key, route, scheduleExpanded) {
 
 // Per-section keyboard step magnitudes and ranges. The panel mutates sliders
 // from ArrowRight/ArrowLeft; each press counts as one step so the slider
-// moves by SECTION_STEP (temperature scales each step by 100 K).
+// moves by SECTION_STEP. Temperature steps 50 K so the numeric line walks
+// without skipping; the pointer drag itself stays free-form per kelvin.
 var SECTION_STEP = {
   brightness: 1,
-  temperature: 100,
+  temperature: 50,
   gamma: 1
 };
 

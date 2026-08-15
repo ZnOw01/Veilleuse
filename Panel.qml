@@ -970,7 +970,7 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             Text {
-                                text: root.stateReady ? root.state.brightness.percent + "%" : "—"
+                                text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
@@ -1016,7 +1016,7 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             Text {
-                                text: root.stateReady ? root.state.temperature + " K" : "—"
+                                text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
@@ -1031,7 +1031,7 @@ Panel {
                                 value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
                                 minimum: 2500
                                 maximum: 6500
-                                step: 100
+                                step: 50
                                 integer: true
                                 enabled: root.stateReady
                                 onMoved: function(v) { root.queueDragMutation("temperature", v) }
@@ -1062,7 +1062,7 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             Text {
-                                text: root.stateReady ? root.state.gamma + "%" : "—"
+                                text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
                                 color: root.foreground
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.body
