@@ -129,7 +129,7 @@ test('keeps native copy explicit and action-oriented', () => {
   assert.equal(Model.copy.heroTitle, 'Luz nocturna');
   assert.equal(Model.copy.brightness, 'Brillo');
   assert.equal(Model.copy.temperature, 'Temperatura');
-  assert.equal(Model.copy.gamma, 'Brillo percibido');
+  assert.equal(Model.copy.gamma, 'Gamma (brillo percibido)');
   assert.equal(Model.copy.schedule, 'Horario');
   assert.equal(Model.copy.save, 'Guardar cambios');
   assert.equal(Model.copy.unavailable, 'No disponible');

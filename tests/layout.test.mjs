@@ -83,8 +83,8 @@ test('value column width has a single source of truth', () => {
 
 test('lastError text gets the same horizontal padding as the rows', () => {
   const start = qml.indexOf('visible: root.errorText !== ""');
-  const end = qml.indexOf('PanelSeparator {', start);
-  const err = qml.slice(start, end + 'PanelSeparator {'.length);
+  const end = qml.indexOf('id: scheduleRoute', start);
+  const err = qml.slice(start, end);
 
   assert.match(err, /anchors\.leftMargin:\s*Style\.spacing\.rowPaddingX/);
   assert.match(err, /anchors\.rightMargin:\s*Style\.spacing\.rowPaddingX/);
@@ -357,10 +357,15 @@ test('transition seconds field bounds', () => {
   assert.match(qml, /id:\s*transitionEditor[\s\S]*?to:\s*1800/);
 });
 
-test('last-applied provenance owns the remaining row width and elides cleanly', () => {
-  assert.match(qml, /id:\s*lastAppliedLabel/);
-  assert.match(qml, /width:\s*parent\.width\s*-\s*lastAppliedLabel\.implicitWidth\s*-\s*parent\.spacing/);
-  assert.match(qml, /elide:\s*Text\.ElideRight/);
+test('home status box is the single now/last-applied source and history is one affordance', () => {
+  // The former standalone "Last applied" row was merged into the home
+  // summary box, and history is one button with the latest event bound to it.
+  assert.doesNotMatch(qml, /id:\s*lastAppliedLabel/);
+  assert.match(qml, /id:\s*homeSummary/);
+  assert.match(qml, /root\.text\("view_history"\)/);
+  assert.match(qml, /formatHistoryEntry\(root\.historyItems\[0\]\)/);
+  assert.doesNotMatch(qml, /root\.text\("open_automation"\)/);
+  assert.match(qml, /root\.text\("live_controls"\)/);
 });
 
 test('keyboard slider steps accumulate pending offsets instead of recomputing from stale confirmed state', () => {
@@ -494,7 +499,6 @@ test('focusable action buttons return focus to the key catcher after their click
     'root.applyPreset("cinema")',
     'root.settingsCommand("preset", ["list"])',
     'root.saveCustomPreset()',
-    'root.deleteSelectedCustomPreset()',
     'root.settingsCommand("history", ["list"])',
     'root.setTransition(root.transitionSeconds)',
     'root.setSnooze(30)',
@@ -511,6 +515,14 @@ test('focusable action buttons return focus to the key catcher after their click
       new RegExp(`onClicked:\\s*\\{\\s*${action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*;\\s*root\\.refocusKeyCatcher\\(\\);\\s*\\}`)
     );
   }
+  // Deleting a preset is a two-click confirm: the first click arms it (with
+  // the target name and an expiry timer), the second one actually deletes.
+  assert.match(qml, /property bool presetDeleteArmed: false/);
+  assert.match(qml, /id:\s*presetDeleteArmTimer/);
+  assert.match(
+    qml,
+    /root\.presetDeleteArmed\s*=\s*true;\s*root\.presetDeleteArmedName\s*=\s*String\(root\.preferredPreset\);\s*presetDeleteArmTimer\.restart\(\);[\s\S]*?root\.deleteSelectedCustomPreset\(\);\s*\}\s*root\.refocusKeyCatcher\(\);/
+  );
 });
 
 test('schedule edit and shortcut install buttons also restore key catcher focus', () => {

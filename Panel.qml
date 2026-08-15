@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import Quickshell.Io
 import "UiModel.js" as Model
 import "I18n.js" as I18n
@@ -46,6 +47,8 @@ Panel {
     property var queuedCommand: []
     property string queuedPresetPrevious: ""
     property int queuedPresetRequestId: 0
+    property bool presetDeleteArmed: false
+    property string presetDeleteArmedName: ""
     property bool stoppingForLatest: false
     property string processOutput: ""
     property string processError: ""
@@ -197,6 +200,24 @@ Panel {
         var origin = value.origin ? I18n.t("origin_" + String(value.origin), root.locale) : "";
         var stamp = value.at ? String(value.at) : "";
         return [preset, origin, stamp].filter(function(part) { return part !== ""; }).join(" · ");
+    }
+
+    function formatHistoryEntry(entry) {
+        if (!entry || typeof entry !== "object")
+            return root.text("unknown");
+        var origin = entry.origin ? I18n.t("origin_" + String(entry.origin), root.locale) : "";
+        var operation = entry.operation ? String(entry.operation) : "";
+        var stamp = entry.time ? String(entry.time) : "";
+        return [operation, origin, stamp].filter(function(part) { return part !== ""; }).join(" · ");
+    }
+
+    // The preset the helper physically applied last, distinct from the picker
+    // selection: the buttons mark this one as "applied now".
+    function appliedPresetName() {
+        var applied = root.state.automation && root.state.automation.last_applied;
+        if (applied && applied.preset && root.state.automation.origin === "preset")
+            return String(applied.preset);
+        return "";
     }
 
     function persistInline(values) {
@@ -680,6 +701,17 @@ Panel {
     }
 
     Timer {
+        id: presetDeleteArmTimer
+
+        interval: 3000
+        repeat: false
+        onTriggered: {
+            root.presetDeleteArmed = false;
+            root.presetDeleteArmedName = "";
+        }
+    }
+
+    Timer {
         id: initialReconcileTimer
 
         interval: 1000
@@ -892,6 +924,153 @@ Panel {
                         }
                     }
 
+                    // Live controls first: what acts on the screen right now.
+                    // Saved configuration (presets, monitor, history) follows
+                    // below the separators, so importance reads at a glance.
+                    PanelSectionHeader {
+                        text: root.text("live_controls")
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
+                    }
+
+                    CursorSurface {
+                        width: parent.width
+                        hasCursor: root.cursor.section === 1
+                        foreground: root.foreground
+                        implicitHeight: brightnessRow.implicitHeight + Style.spacing.rowPaddingX
+
+                        Row {
+                            id: brightnessRow
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.controlGap
+
+                            Text {
+                                text: root.stateReady ? root.state.brightness.percent + "%" : "—"
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.body
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            PanelSlider {
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                bar: root.bar
+                                value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
+                                minimum: 1
+                                maximum: 100
+                                step: 1
+                                integer: true
+                                enabled: root.stateReady
+                                onMoved: function(v) { root.queueDragMutation("brightness", v) }
+                            }
+
+                        }
+
+                    }
+
+                    PanelSeparator {
+                        foreground: root.foreground
+                    }
+
+                    CursorSurface {
+                        width: parent.width
+                        hasCursor: root.cursor.section === 2
+                        foreground: root.foreground
+                        implicitHeight: temperatureRow.implicitHeight + Style.spacing.rowPaddingX
+
+                        Row {
+                            id: temperatureRow
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.controlGap
+
+                            Text {
+                                text: root.stateReady ? root.state.temperature + " K" : "—"
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.body
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            PanelSlider {
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                bar: root.bar
+                                value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
+                                minimum: 2500
+                                maximum: 6500
+                                step: 100
+                                integer: true
+                                enabled: root.stateReady
+                                onMoved: function(v) { root.queueDragMutation("temperature", v) }
+                            }
+
+                        }
+
+                    }
+
+                    PanelSeparator {
+                        foreground: root.foreground
+                    }
+
+                    CursorSurface {
+                        width: parent.width
+                        hasCursor: root.cursor.section === 3
+                        foreground: root.foreground
+                        implicitHeight: gammaRow.implicitHeight + Style.spacing.rowPaddingX
+
+                        Row {
+                            id: gammaRow
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.controlGap
+
+                            Text {
+                                text: root.stateReady ? root.state.gamma + "%" : "—"
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.body
+                                width: root.valueColumnWidth
+                                horizontalAlignment: Text.AlignRight
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            PanelSlider {
+                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                bar: root.bar
+                                value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
+                                minimum: 0
+                                maximum: 100
+                                step: 1
+                                integer: true
+                                enabled: root.stateReady
+                                onMoved: function(v) { root.queueDragMutation("gamma", v) }
+                            }
+
+                        }
+
+                    }
+
+                    PanelSeparator {
+                        foreground: root.foreground
+                    }
+
                     PanelSectionHeader {
                         text: root.text("presets")
                         foreground: root.foreground
@@ -903,7 +1082,11 @@ Panel {
                         spacing: Style.spacing.controlGap
 
                         Button {
-                            text: root.text("preset_reading")
+                            // "●" marks the preset the helper physically
+                            // applied; the highlighted button is only the
+                            // picker selection. Two different states, two
+                            // different visual signals.
+                            text: root.appliedPresetName() === "reading" ? "● " + root.text("preset_reading") : root.text("preset_reading")
                             selected: root.preferredPreset === "reading"
                             focusable: true
                             bordered: true
@@ -916,7 +1099,7 @@ Panel {
                         }
 
                         Button {
-                            text: root.text("preset_work")
+                            text: root.appliedPresetName() === "work" ? "● " + root.text("preset_work") : root.text("preset_work")
                             selected: root.preferredPreset === "work"
                             focusable: true
                             bordered: true
@@ -929,7 +1112,7 @@ Panel {
                         }
 
                         Button {
-                            text: root.text("preset_cinema")
+                            text: root.appliedPresetName() === "cinema" ? "● " + root.text("preset_cinema") : root.text("preset_cinema")
                             selected: root.preferredPreset === "cinema"
                             focusable: true
                             bordered: true
@@ -943,7 +1126,7 @@ Panel {
 
                         PanelActionButton {
                             iconText: "󰑓"
-                            tooltipText: root.text("presets")
+                            tooltipText: root.text("reload_presets")
                             foreground: root.foreground
                             focusable: true
                             onClicked: {
@@ -953,48 +1136,71 @@ Panel {
                         }
                     }
 
-                    Row {
+                    // Saving and deleting operate on a *named* preset: the
+                    // label says the field creates a new one, and delete
+                    // shows its target and asks for a second click.
+                    Column {
                         width: parent.width
-                        spacing: Style.spacing.controlGap
+                        spacing: Style.spacing.labelGap
 
-                        TextField {
-                            id: customPresetName
-                            width: parent.width - saveCustomPresetButton.implicitWidth - deleteCustomPresetButton.implicitWidth - Style.spacing.controlGap * 2
-                            text: root.customPresetName
-                            placeholderText: root.text("preset_name")
-                            foreground: root.foreground
+                        Text {
+                            text: root.text("new_preset_name")
+                            color: Qt.darker(root.foreground, 1.35)
                             font.family: root.fontFamily
-                            onTextChanged: root.customPresetName = text
-                            onAccepted: {
-                                root.saveCustomPreset();
-                                keyCatcher.forceActiveFocus();
-                            }
-                            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                            font.pixelSize: Style.font.caption
                         }
 
-                        Button {
-                            id: saveCustomPresetButton
-                            text: root.text("save_current_preset")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending && customPresetName.text.trim() !== ""
-                            onClicked: {
-                                root.saveCustomPreset();
-                                root.refocusKeyCatcher();
-                            }
-                        }
+                        Row {
+                            width: parent.width
+                            spacing: Style.spacing.controlGap
 
-                        Button {
-                            id: deleteCustomPresetButton
-                            text: root.text("delete_custom_preset")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending && ["reading", "work", "cinema"].indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
-                            onClicked: {
-                                root.deleteSelectedCustomPreset();
-                                root.refocusKeyCatcher();
+                            TextField {
+                                id: customPresetName
+                                width: parent.width - saveCustomPresetButton.implicitWidth - deleteCustomPresetButton.implicitWidth - Style.spacing.controlGap * 2
+                                text: root.customPresetName
+                                placeholderText: root.text("preset_name")
+                                foreground: root.foreground
+                                font.family: root.fontFamily
+                                onTextChanged: root.customPresetName = text
+                                onAccepted: {
+                                    root.saveCustomPreset();
+                                    keyCatcher.forceActiveFocus();
+                                }
+                                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                            }
+
+                            Button {
+                                id: saveCustomPresetButton
+                                text: root.text("save_current_preset")
+                                focusable: true
+                                bordered: true
+                                foreground: root.foreground
+                                enabled: root.stateReady && !root.actionPending && customPresetName.text.trim() !== ""
+                                onClicked: {
+                                    root.saveCustomPreset();
+                                    root.refocusKeyCatcher();
+                                }
+                            }
+
+                            Button {
+                                id: deleteCustomPresetButton
+                                text: root.presetDeleteArmed ? root.text("delete_preset_confirm") : root.text("delete_custom_preset") + " '" + root.preferredPreset + "'"
+                                focusable: true
+                                bordered: true
+                                foreground: root.presetDeleteArmed ? Color.urgent : root.foreground
+                                enabled: root.stateReady && !root.actionPending && ["reading", "work", "cinema"].indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
+                                onClicked: {
+                                    if (!root.presetDeleteArmed || root.presetDeleteArmedName !== root.preferredPreset) {
+                                        root.presetDeleteArmed = true;
+                                        root.presetDeleteArmedName = String(root.preferredPreset);
+                                        presetDeleteArmTimer.restart();
+                                    } else {
+                                        root.presetDeleteArmed = false;
+                                        presetDeleteArmTimer.stop();
+                                        root.deleteSelectedCustomPreset();
+                                    }
+                                    root.refocusKeyCatcher();
+                                }
                             }
                         }
                     }
@@ -1012,55 +1218,10 @@ Panel {
                         onChanged: function(value) { root.setInlineSetting("monitor", value) }
                     }
 
+                    // One unambiguous history affordance: a button that loads
+                    // the list, with the latest event bound to it once loaded.
                     Button {
-                        text: root.text("open_automation")
-                        width: parent.width
-                        leftAlign: true
-                        bordered: true
-                        focusable: true
-                        foreground: root.foreground
-                        onClicked: root.navigateToRoute("automation")
-                    }
-
-                    Row {
-                        width: parent.width
-                        spacing: Style.spacing.controlGap
-
-                        Text {
-                            id: lastAppliedLabel
-                            text: root.text("last_applied")
-                            color: Qt.darker(root.foreground, 1.35)
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                        }
-
-                        Text {
-                            width: parent.width - lastAppliedLabel.implicitWidth - parent.spacing
-                            text: root.lastAppliedText === "" ? root.text("unknown") : root.lastAppliedText
-                            color: root.foreground
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("history")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: root.historyItems.length > 0 ? String(root.historyItems[0].at || root.historyItems[0].origin || root.text("unknown")) : root.text("unknown")
-                        color: Qt.darker(root.foreground, 1.35)
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        elide: Text.ElideRight
-                    }
-
-                    Button {
-                        text: root.text("history")
+                        text: root.text("view_history")
                         width: parent.width
                         leftAlign: true
                         focusable: true
@@ -1070,6 +1231,16 @@ Panel {
                             root.settingsCommand("history", ["list"]);
                             root.refocusKeyCatcher();
                         }
+                    }
+
+                    Text {
+                        visible: root.historyLoaded && root.historyItems.length > 0
+                        width: parent.width
+                        text: root.text("latest_event") + ": " + root.formatHistoryEntry(root.historyItems[0])
+                        color: Qt.darker(root.foreground, 1.35)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        elide: Text.ElideRight
                     }
                 }
 
@@ -1109,7 +1280,12 @@ Panel {
                                 }
 
                                 Text {
-                                    text: root.scheduleEnabled ? root.text("schedule_enabled") : root.text("schedule_disabled")
+                                    // Carries real state, not a static echo
+                                    // of the switch: when enabled it shows the
+                                    // programmed window, when paused it says so.
+                                    text: root.scheduleEnabled
+                                          ? root.text("schedule_runs") + " · " + (root.state.schedule.start || "06:00") + " → " + (root.state.schedule.end || "15:30")
+                                          : root.text("schedule_disabled")
                                     color: Qt.darker(root.foreground, 1.35)
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.bodySmall
@@ -1192,11 +1368,16 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
-                    Row {
+                    // Equal 2x2 cells: every action gets the same width, so no
+                    // label truncates and the row cannot look unbalanced.
+                    GridLayout {
                         width: parent.width
-                        spacing: Style.spacing.controlGap
+                        columns: 2
+                        columnSpacing: Style.spacing.controlGap
+                        rowSpacing: Style.spacing.controlGap
 
                         Button {
+                            Layout.fillWidth: true
                             text: root.text("snooze_30")
                             focusable: true
                             bordered: true
@@ -1209,6 +1390,7 @@ Panel {
                         }
 
                         Button {
+                            Layout.fillWidth: true
                             text: root.text("snooze_120")
                             focusable: true
                             bordered: true
@@ -1221,6 +1403,7 @@ Panel {
                         }
 
                         Button {
+                            Layout.fillWidth: true
                             text: root.text("until_tomorrow")
                             focusable: true
                             bordered: true
@@ -1233,6 +1416,7 @@ Panel {
                         }
 
                         Button {
+                            Layout.fillWidth: true
                             text: root.text("clear_snooze")
                             focusable: true
                             bordered: true
@@ -1314,6 +1498,15 @@ Panel {
                         onChanged: function(value) { root.setInlineSetting("applyScope", value) }
                     }
 
+                    Text {
+                        width: parent.width
+                        text: root.text("scope_help")
+                        color: Qt.darker(root.foreground, 1.35)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        wrapMode: Text.WordWrap
+                    }
+
                     Dropdown {
                         id: presetSelector
                         width: parent.width
@@ -1336,28 +1529,34 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
-                    Button {
-                        text: root.text("run_preflight")
+                    // The check button carries its own result badge once run,
+                    // instead of a loose status line detached from the action.
+                    Row {
                         width: parent.width
-                        leftAlign: true
-                        bordered: true
-                        focusable: true
-                        foreground: root.foreground
-                        hasCursor: root.cursor.section === 3
-                        enabled: !root.actionPending
-                        onClicked: {
-                            root.settingsCommand("preflight", []);
-                            root.refocusKeyCatcher();
-                        }
-                    }
+                        spacing: Style.spacing.controlGap
 
-                    Text {
-                        visible: root.preflightLoaded
-                        width: parent.width
-                        text: root.preflightState.ok === true ? root.text("enabled") : root.text("unavailable")
-                        color: root.preflightState.ok === true ? root.foreground : Color.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
+                        Button {
+                            text: root.text("run_preflight")
+                            leftAlign: true
+                            focusable: true
+                            bordered: true
+                            foreground: root.foreground
+                            hasCursor: root.cursor.section === 3
+                            enabled: !root.actionPending
+                            onClicked: {
+                                root.settingsCommand("preflight", []);
+                                root.refocusKeyCatcher();
+                            }
+                        }
+
+                        Text {
+                            visible: root.preflightLoaded
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.preflightState.ok === true ? "● " + root.text("preflight_ok") : "● " + root.text("preflight_failed")
+                            color: root.preflightState.ok === true ? root.foreground : Color.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                        }
                     }
 
                     PanelSectionHeader {
@@ -1438,191 +1637,6 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
-                }
-
-                PanelSeparator {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    foreground: root.foreground
-                }
-
-                Column {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    width: parent.width
-                    spacing: Style.spacing.labelGap
-
-                    PanelSectionHeader {
-                        text: root.text("brightness")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    CursorSurface {
-                        width: parent.width
-                        hasCursor: root.cursor.section === 1
-                        foreground: root.foreground
-                        implicitHeight: brightnessRow.implicitHeight + Style.spacing.rowPaddingX
-
-                        Row {
-                            id: brightnessRow
-
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
-
-                            Text {
-                                text: root.stateReady ? root.state.brightness.percent + "%" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
-                                bar: root.bar
-                                value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
-                                minimum: 1
-                                maximum: 100
-                                step: 1
-                                integer: true
-                                enabled: root.stateReady
-                                onMoved: function(v) { root.queueDragMutation("brightness", v) }
-                            }
-
-                        }
-
-                    }
-
-                }
-
-                PanelSeparator {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    foreground: root.foreground
-                }
-
-                Column {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    width: parent.width
-                    spacing: Style.spacing.labelGap
-
-                    PanelSectionHeader {
-                        text: root.text("temperature")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    CursorSurface {
-                        width: parent.width
-                        hasCursor: root.cursor.section === 2
-                        foreground: root.foreground
-                        implicitHeight: temperatureRow.implicitHeight + Style.spacing.rowPaddingX
-
-                        Row {
-                            id: temperatureRow
-
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
-
-                            Text {
-                                text: root.stateReady ? root.state.temperature + " K" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
-                                bar: root.bar
-                                value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
-                                minimum: 2500
-                                maximum: 6500
-                                step: 100
-                                integer: true
-                                enabled: root.stateReady
-                                onMoved: function(v) { root.queueDragMutation("temperature", v) }
-                            }
-
-                        }
-
-                    }
-
-                }
-
-                PanelSeparator {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    foreground: root.foreground
-                }
-
-                Column {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    width: parent.width
-                    spacing: Style.spacing.labelGap
-
-                    PanelSectionHeader {
-                        text: root.text("gamma")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    CursorSurface {
-                        width: parent.width
-                        hasCursor: root.cursor.section === 3
-                        foreground: root.foreground
-                        implicitHeight: gammaRow.implicitHeight + Style.spacing.rowPaddingX
-
-                        Row {
-                            id: gammaRow
-
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
-
-                            Text {
-                                text: root.stateReady ? root.state.gamma + "%" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
-                                bar: root.bar
-                                value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
-                                minimum: 0
-                                maximum: 100
-                                step: 1
-                                integer: true
-                                enabled: root.stateReady
-                                onMoved: function(v) { root.queueDragMutation("gamma", v) }
-                            }
-
-                        }
-
-                    }
-
-                }
-
-                PanelSeparator {
-                    visible: root.route === "home" && !root.scheduleExpanded
-                    foreground: root.foreground
                 }
 
                 Column {
