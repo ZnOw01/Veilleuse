@@ -233,6 +233,28 @@ test('detects a manual override only when real light state contradicts schedule 
   }).state), true);
 });
 
+test('isManualOverride trusts a persisted automation manual_override when present', () => {
+  const scheduledDay = Model.normalizeState({
+    brightness: { available: true, percent: 50, monitor: 'DP-1' },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 5900, gamma: 100 },
+    schedule: { available: true, day_time: '06:00', day_temp: 5900, night_time: '18:00', night_temp: 3500, day_identity: false, period: 'day' }
+  });
+  assert.equal(Model.isManualOverride(scheduledDay), false);
+  scheduledDay.automation = { manual_override: { profile: { kind: 'identity' } } };
+  assert.equal(Model.isManualOverride(scheduledDay), true);
+
+  const persistedClear = Model.normalizeState({
+    available: true,
+    enabled: true,
+    brightness: { available: true, percent: 50, monitor: 'DP-1' },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100 },
+    schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500, day_identity: true, period: 'day' }
+  });
+  assert.equal(Model.isManualOverride(persistedClear), true);
+  persistedClear.automation = { manual_override: null };
+  assert.equal(Model.isManualOverride(persistedClear), false);
+});
+
 test('three rapid Arrow presses accumulate three steps without waiting for three readbacks', () => {
   const state = Model.normalizeState({
     available: true,
@@ -379,6 +401,28 @@ test('navigateCursorRoute wraps routes onto a visible landing section at vertica
   assert.deepEqual(Model.navigateCursorRoute('settings', { section: 5, field: 0 }, 'j', false), { route: 'home', section: 0 });
   assert.deepEqual(Model.navigateCursorRoute('automation', { section: 3, field: 0 }, 'j', false), { route: 'settings', section: 0 });
   assert.deepEqual(Model.navigateCursorRoute('settings', { section: 0, field: 0 }, 'k', false), { route: 'automation', section: 3 });
+});
+
+test('a same-section concurrent change that overshoots pending intent drains without counter-adjusting', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 55 }),
+    { brightness: 3, temperature: 0, gamma: 0 },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, zeroPending);
+});
+
+test('a same-section concurrent negative overshoot drains without a positive counter-correction', () => {
+  const result = Model.reconcilePendingSteps(
+    stepState({ brightness: 60 }),
+    stepState({ brightness: 52 }),
+    { brightness: -2, temperature: 0, gamma: 0 },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.pending, zeroPending);
 });
 
 test('navigateCursorRoute leaves interior navigation and expanded editors alone', () => {

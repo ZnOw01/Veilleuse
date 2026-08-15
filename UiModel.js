@@ -243,6 +243,13 @@ function reconcilePendingSteps(previous, current, pending, lastOperation) {
       out[section] = 0;
       continue;
     }
+    // A same-section concurrent change that overshoots the pending intent
+    // flips the sign of `remaining`. Re-queueing that would counter-adjust
+    // back past the confirmed value; drain instead, never negative-correct.
+    if (remaining < 0 !== out[section] < 0) {
+      out[section] = 0;
+      continue;
+    }
     var target = stepTargetValue(section, after, remaining);
     if (target === after) {
       out[section] = 0;
@@ -450,8 +457,18 @@ function validateScheduleFields(start, end, naturalDay, dayTemperature, nightTem
 }
 
 function isManualOverride(state) {
-  var schedule = state && state.schedule;
-  if (!state || state.available !== true || !schedule || schedule.available !== true)
+  if (!state || state.available !== true)
+    return false;
+  // The persisted automation record is reconcile's ground truth: when the
+  // status exposes it, agree with reconcile instead of re-deriving intent
+  // from a live-state heuristic that can disagree with it.
+  var automation = state.automation;
+  if (automation && typeof automation === 'object'
+      && Object.prototype.hasOwnProperty.call(automation, 'manual_override')) {
+    return automation.manual_override !== null && automation.manual_override !== undefined;
+  }
+  var schedule = state.schedule;
+  if (!schedule || schedule.available !== true)
     return false;
   if (schedule.period === 'day') {
     var expectedDayEnabled = schedule.day_identity !== true
@@ -616,7 +633,6 @@ function localizeStateError(error, locale) {
 function routeOrder() {
   return ROUTES.slice();
 }
-
 var PROVENANCE_KEYS = {
   automatic: 'provenanceAutomatic',
   manual: 'provenanceManual',

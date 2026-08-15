@@ -354,14 +354,26 @@ def commit_manual_apply(env, operation, values=None) -> dict:
     }
     if values:
         entry["values"] = dict(values)
-    return env["update_state"](
-        lambda current: {
+
+    def _commit(current):
+        next_state = {
             **current,
             "origin": "manual",
             "last_applied": entry,
-            "manual_override": override,
         }
-    )
+        if override is not None:
+            next_state["manual_override"] = override
+        elif current.get("manual_override") is not None:
+            # The current schedule profile is temporarily unavailable, so a
+            # fresh period fingerprint cannot be captured. Keep the existing
+            # manual intent instead of clobbering it with None: reconcile is
+            # the authority on whether that override is still current.
+            next_state["manual_override"] = current["manual_override"]
+        else:
+            next_state["manual_override"] = None
+        return next_state
+
+    return env["update_state"](_commit)
 
 
 def _append_history(env, record) -> str | None:
@@ -773,6 +785,7 @@ def transition(target_temperature, target_gamma, seconds, env=None) -> dict:
         env["update_state"](
             lambda current: {
                 **current,
+                "origin": "manual",
                 "last_applied": {
                     "at": _iso_timestamp(now),
                     "origin": "manual",

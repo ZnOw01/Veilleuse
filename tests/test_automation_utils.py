@@ -857,6 +857,23 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertTrue(result["success"], result)
         self.assertIsNone(self.read_state()["manual_override"])
 
+    def test_transition_sets_top_level_origin_manual(self):
+        result = automation.transition(4000, 80, 0, env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertEqual(self.read_state()["origin"], "manual")
+
+    def test_commit_manual_apply_preserves_override_when_profile_unavailable(self):
+        existing = self.manual_override()
+        self.initial_state(manual_override=existing)
+        self.profile = {"available": False, "error": "no schedule"}
+        result = automation.commit_manual_apply(
+            self.env(), "nightlight_temperature", {"temperature": 4000}
+        )
+        self.assertEqual(result["manual_override"], existing)
+        self.assertEqual(self.read_state()["manual_override"], existing)
+        self.assertEqual(self.read_state()["origin"], "manual")
+        self.assertEqual(self.read_state()["last_applied"]["operation"], "nightlight_temperature")
+
     def test_identity_override_gets_deterministic_finite_boundary(self):
         self.profile = {"available": True, "kind": "identity"}
         result = automation.transition(4500, 90, 0, env=self.env())
