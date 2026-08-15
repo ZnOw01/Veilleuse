@@ -155,20 +155,21 @@ test('schedule summary stays a full-width left-aligned button like the reference
 });
 
 test('expanded schedule keeps vertical cursor movement in the schedule section', () => {
-  assert.match(qml, /cursor\s*=\s*Model\.moveCursor\(cursor, key, root\.scheduleExpanded\)/);
+  assert.match(qml, /cursor\s*=\s*Model\.moveCursor\(cursor, key, root\.route, root\.scheduleExpanded\)/);
 });
 
-test('vertical boundary presses wrap to the neighboring route and reset the cursor', () => {
+test('vertical boundary presses wrap to a visible landing section of the neighboring route', () => {
   const moveCursorBlock = qml.slice(qml.indexOf('function moveCursor(dx, dy) {'), qml.indexOf('function handleCloseRequested()'));
   assert.match(moveCursorBlock, /Model\.navigateCursorRoute\(root\.route,\s*cursor,\s*key,\s*root\.scheduleExpanded\)/);
   assert.match(moveCursorBlock, /routeJump\.route\s*!==\s*root\.route/);
   assert.match(moveCursorBlock, /root\.navigateToRoute\(routeJump\.route\)/);
-  assert.match(moveCursorBlock, /cursor\s*=\s*Model\.cursorStart\(\)/);
+  assert.match(moveCursorBlock, /cursor\s*=\s*\{\s*"section":\s*routeJump\.section,\s*"field":\s*0\s*\}/);
 });
 
-test('opening the schedule editor from the home route navigates to automation so the editor is visible', () => {
+test('the schedule editor opens in place on the automation route without cross-route navigation', () => {
   const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('function setScheduleEditorFocus'));
-  assert.match(activate, /if\s*\(\s*root\.route\s*!==\s*"automation"\s*\)\s*root\.navigateToRoute\("automation"\)/);
+  assert.doesNotMatch(activate, /navigateToRoute\("automation"\)/);
+  assert.match(activate, /if\s*\(section\s*===\s*"schedule"\)[\s\S]*?if\s*\(!scheduleExpanded\)\s*\{\s*scheduleExpanded\s*=\s*true;/);
 });
 
 test('schedule editors return focus before Escape can close the panel', () => {
@@ -376,13 +377,78 @@ test('confirmed readbacks reconcile pending steps and drain the remaining distan
   assert.match(qml, /var\s+previousState\s*=\s*state;[\s\S]*?root\.reconcilePending\(previousState\)/);
 });
 
-test('pointer slider drags clear pending keyboard steps so they are never re-queued', () => {
+test('pointer slider drags record the latest-wins drag target through the request bus', () => {
   const brightness = qml.slice(qml.indexOf('id: brightnessRow'), qml.indexOf('id: temperatureRow'));
-  assert.match(brightness, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["brightness"\]\s*=\s*0;\s*root\.queueMutation\("brightness",\s*v\)\s*\}/);
+  assert.match(brightness, /onMoved:\s*function\(v\)\s*\{\s*root\.queueDragMutation\("brightness",\s*v\)\s*\}/);
   const temperature = qml.slice(qml.indexOf('id: temperatureRow'), qml.indexOf('id: gammaRow'));
-  assert.match(temperature, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["temperature"\]\s*=\s*0;\s*root\.queueMutation\("temperature",\s*v\)\s*\}/);
+  assert.match(temperature, /onMoved:\s*function\(v\)\s*\{\s*root\.queueDragMutation\("temperature",\s*v\)\s*\}/);
   const gamma = qml.slice(qml.indexOf('id: gammaRow'));
-  assert.match(gamma, /onMoved:\s*function\(v\)\s*\{\s*root\.pendingSteps\["gamma"\]\s*=\s*0;\s*root\.queueMutation\("gamma",\s*v\)\s*\}/);
+  assert.match(gamma, /onMoved:\s*function\(v\)\s*\{\s*root\.queueDragMutation\("gamma",\s*v\)\s*\}/);
+  assert.match(qml, /function queueDragMutation\(section,\s*value\)[\s\S]*?Model\.dragTargetPush\(root\.dragTarget,\s*section,\s*value\)[\s\S]*?root\.queueMutation\(section,\s*value\)/);
+});
+
+test('slider value shows the pending drag target so drags never revert to stale state', () => {
+  assert.match(qml, /function displayValue\(section,\s*fallback\)/);
+  assert.match(qml, /value:\s*root\.displayValue\("brightness"/);
+  assert.match(qml, /value:\s*root\.displayValue\("temperature"/);
+  assert.match(qml, /value:\s*root\.displayValue\("gamma"/);
+});
+
+test('confirmed readbacks advance the drag chase one helper request at a time', () => {
+  assert.match(qml, /function reconcilePending\(previous\)[\s\S]*?Model\.reconcileDragTargets\(previous,\s*root\.state,\s*root\.dragTarget,\s*root\.queuedOperation\)/);
+  assert.match(qml, /root\.dragTarget\s*=\s*drag\.target/);
+  assert.match(qml, /root\.queueMutation\(drag\.requests\[j\]\.section,\s*drag\.requests\[j\]\.value\)/);
+});
+
+test('keyboard slider steps and failed requests clear the pending drag target', () => {
+  const moveCursorBlock = qml.slice(qml.indexOf('function moveCursor(dx, dy) {'), qml.indexOf('function handleCloseRequested()'));
+  assert.match(moveCursorBlock, /root\.dragTarget\s*=\s*Model\.dragTargetPush\(root\.dragTarget,\s*section,\s*null\)/);
+  const exitBlock = qml.slice(qml.indexOf('function handleExit(exitCode) {'), qml.indexOf('function moveCursor(dx, dy) {'));
+  assert.match(exitBlock, /actionPending\s*=\s*false;[\s\S]*?root\.dragTarget\s*=\s*Model\.dragTargetEmpty\(\);/);
+});
+
+test('automation route exposes keyboard-reachable schedule, transition, snooze and schedule sections', () => {
+  assert.match(qml, /id:\s*scheduleToggle[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*0/);
+  assert.match(qml, /id:\s*transitionEditor[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*1/);
+  assert.match(qml, /id:\s*scheduleSurface[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*3/);
+});
+
+test('snooze actions are reachable through the four cursor fields', () => {
+  for (let field = 0; field < 4; field++) {
+    const name = ['snooze_30', 'snooze_120', 'until_tomorrow', 'clear_snooze'][field];
+    assert.match(qml, new RegExp(`text: root\\.text\\("${name}"\\)[\\s\\S]*?hasCursor: root\\.cursor\\.section === 2 && root\\.cursor\\.field === ${field}`));
+  }
+});
+
+test('settings route exposes keyboard-reachable dropdowns, preflight, shortcut field and actions', () => {
+  assert.match(qml, /id:\s*localeSelector[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*0/);
+  assert.match(qml, /id:\s*scopeSelector[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*1/);
+  assert.match(qml, /id:\s*presetSelector[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*2/);
+  assert.match(qml, /text:\s*root\.text\("run_preflight"\)[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*3/);
+  assert.match(qml, /id:\s*shortcutField[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*4/);
+  assert.match(qml, /install_shortcut"\)[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*5\s*&&\s*root\.cursor\.field\s*===\s*0/);
+  assert.match(qml, /remove_shortcut"\)[\s\S]*?hasCursor:\s*root\.cursor\.section\s*===\s*5\s*&&\s*root\.cursor\.field\s*===\s*1/);
+});
+
+test('keyboard activation opens dropdowns, edits the shortcut field, and runs actions', () => {
+  const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('function setScheduleEditorFocus'));
+  assert.match(activate, /section\s*===\s*"locale"\)\s*\{\s*localeSelector\.open\(\);/);
+  assert.match(activate, /section\s*===\s*"scope"\)\s*\{\s*scopeSelector\.open\(\);/);
+  assert.match(activate, /section\s*===\s*"preset"\)\s*\{\s*presetSelector\.open\(\);/);
+  assert.match(activate, /section\s*===\s*"shortcut"\)\s*\{\s*shortcutField\.forceActiveFocus\(\);/);
+  assert.match(activate, /section\s*===\s*"shortcutActions"\)\s*\{[\s\S]*?install",\s*"--keys",\s*shortcutField\.text/);
+  assert.match(activate, /section\s*===\s*"transition"\)\s*\{\s*transitionEditor\.field\.forceActiveFocus\(\);/);
+  assert.match(activate, /section\s*===\s*"snooze"\)\s*\{[\s\S]*?root\.setSnooze\(30\)/);
+});
+
+test('dropdown, shortcut and preset editors return focus before Escape can close the panel', () => {
+  assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!localeSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
+  assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!scopeSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
+  assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!presetSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
+  assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!monitorSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
+  assert.match(qml, /id:\s*shortcutField[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
+  assert.match(qml, /id:\s*customPresetName[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
+  assert.match(qml, /id:\s*transitionEditor[\s\S]*?field\.Keys\.onPressed:[\s\S]*?Qt\.Key_Escape[\s\S]*?keyCatcher\.forceActiveFocus\(\);[\s\S]*?Qt\.Key_Return[\s\S]*?root\.setTransition\(root\.transitionSeconds\)/);
 });
 
 test('requests launch immediately when idle and only debounce bursts to preserve latest-wins', () => {

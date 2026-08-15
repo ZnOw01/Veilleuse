@@ -3,43 +3,45 @@ const assert = require('node:assert/strict');
 
 const Model = require('../UiModel.js');
 
-test('declares the compact control sections in visual order', () => {
-  assert.deepEqual(Model.sectionOrder(), [
-    'nightLight',
-    'brightness',
-    'temperature',
-    'gamma',
-    'schedule'
-  ]);
+test('declares per-route control sections in visual order', () => {
+  assert.deepEqual(Model.routeSections('home'), ['nightLight', 'brightness', 'temperature', 'gamma']);
+  assert.deepEqual(Model.routeSections('automation'), ['scheduleToggle', 'transition', 'snooze', 'schedule']);
+  assert.deepEqual(Model.routeSections('settings'), ['locale', 'scope', 'preset', 'preflight', 'shortcut', 'shortcutActions']);
 });
 
-test('moves the panel cursor with bounded section and field navigation', () => {
+test('moves the home cursor with bounded section and field navigation', () => {
   const first = Model.cursorStart();
-  assert.deepEqual(Model.moveCursor(first, 'j'), { section: 1, field: 0 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'j'), { section: 4, field: 0 });
-  assert.deepEqual(Model.moveCursor({ section: 0, field: 0 }, 'k'), { section: 0, field: 0 });
-  assert.deepEqual(Model.moveCursor({ section: 1, field: 0 }, 'l'), { section: 1, field: 1 });
-  assert.deepEqual(Model.moveCursor({ section: 1, field: 0 }, 'h'), { section: 1, field: 0 });
-  assert.deepEqual(Model.moveCursor({ section: 2, field: 1 }, 'h'), { section: 2, field: 0 });
+  assert.deepEqual(Model.moveCursor(first, 'j', 'home'), { section: 1, field: 0 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 0 }, 'j', 'home'), { section: 3, field: 0 });
+  assert.deepEqual(Model.moveCursor({ section: 0, field: 0 }, 'k', 'home'), { section: 0, field: 0 });
+  assert.deepEqual(Model.moveCursor({ section: 1, field: 0 }, 'h', 'home'), { section: 1, field: 0 });
 });
 
-test('exposes six keyboard fields when the schedule editor is expanded', () => {
-  assert.equal(Model.FIELD_COUNTS && Model.FIELD_COUNTS[4], 6);
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 4 }, 'j', true), { section: 4, field: 5 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 5 }, 'j', true), { section: 4, field: 5 });
+test('schedule editor expands to six keyboard fields on the automation route', () => {
+  assert.equal(Model.sectionFieldCount('automation', 3, false), 1);
+  assert.equal(Model.sectionFieldCount('automation', 3, true), 6);
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 4 }, 'j', 'automation', true), { section: 3, field: 5 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 5 }, 'j', 'automation', true), { section: 3, field: 5 });
+});
+
+test('snooze and shortcut action sections move horizontally across their actions', () => {
+  assert.deepEqual(Model.moveCursor({ section: 2, field: 0 }, 'l', 'automation'), { section: 2, field: 1 });
+  assert.deepEqual(Model.moveCursor({ section: 2, field: 3 }, 'l', 'automation'), { section: 2, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 5, field: 1 }, 'h', 'settings'), { section: 5, field: 0 });
 });
 
 test('clamps a horizontal field when vertical navigation enters a shorter section', () => {
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'k'), { section: 3, field: 1 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 5 }, 'k', 'automation'), { section: 2, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 5, field: 1 }, 'k', 'settings'), { section: 4, field: 0 });
 });
 
 test('keeps expanded schedule vertical navigation inside fields 0 through 5', () => {
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'j', true), { section: 4, field: 1 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 1 }, 'ArrowDown', true), { section: 4, field: 2 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 2 }, 'j', true), { section: 4, field: 3 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 3 }, 'ArrowDown', true), { section: 4, field: 4 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 4 }, 'k', true), { section: 4, field: 3 });
-  assert.deepEqual(Model.moveCursor({ section: 4, field: 0 }, 'ArrowUp', true), { section: 4, field: 0 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 0 }, 'j', 'automation', true), { section: 3, field: 1 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 1 }, 'ArrowDown', 'automation', true), { section: 3, field: 2 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 2 }, 'j', 'automation', true), { section: 3, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 3 }, 'ArrowDown', 'automation', true), { section: 3, field: 4 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 4 }, 'k', 'automation', true), { section: 3, field: 3 });
+  assert.deepEqual(Model.moveCursor({ section: 3, field: 0 }, 'ArrowUp', 'automation', true), { section: 3, field: 0 });
 });
 
 test('normalizes unavailable helper data to a fail-closed state', () => {
@@ -370,18 +372,98 @@ test('temperature pending drains with its own 100 K magnitude', () => {
   assert.deepEqual(result.pending, { brightness: 0, temperature: 1, gamma: 0 });
 });
 
-test('navigateCursorRoute wraps routes at the vertical cursor boundaries', () => {
-  assert.deepEqual(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'k', false), { route: 'settings' });
-  assert.deepEqual(Model.navigateCursorRoute('home', { section: 4, field: 0 }, 'j', false), { route: 'automation' });
-  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 0, field: 0 }, 'k', false), { route: 'home' });
-  assert.deepEqual(Model.navigateCursorRoute('settings', { section: 4, field: 0 }, 'j', false), { route: 'home' });
-  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 4, field: 0 }, 'j', false), { route: 'settings' });
+test('navigateCursorRoute wraps routes onto a visible landing section at vertical boundaries', () => {
+  assert.deepEqual(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'k', false), { route: 'settings', section: 5 });
+  assert.deepEqual(Model.navigateCursorRoute('home', { section: 3, field: 0 }, 'j', false), { route: 'automation', section: 0 });
+  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 0, field: 0 }, 'k', false), { route: 'home', section: 3 });
+  assert.deepEqual(Model.navigateCursorRoute('settings', { section: 5, field: 0 }, 'j', false), { route: 'home', section: 0 });
+  assert.deepEqual(Model.navigateCursorRoute('automation', { section: 3, field: 0 }, 'j', false), { route: 'settings', section: 0 });
+  assert.deepEqual(Model.navigateCursorRoute('settings', { section: 0, field: 0 }, 'k', false), { route: 'automation', section: 3 });
 });
 
 test('navigateCursorRoute leaves interior navigation and expanded editors alone', () => {
   assert.equal(Model.navigateCursorRoute('home', { section: 1, field: 0 }, 'k', false), null);
-  assert.equal(Model.navigateCursorRoute('home', { section: 3, field: 0 }, 'j', false), null);
+  assert.equal(Model.navigateCursorRoute('home', { section: 2, field: 0 }, 'j', false), null);
   assert.equal(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'k', true), null);
   assert.equal(Model.navigateCursorRoute('home', { section: 0, field: 0 }, 'j', false), null);
-  assert.equal(Model.navigateCursorRoute('home', { section: 4, field: 0 }, 'k', false), null);
+  assert.equal(Model.navigateCursorRoute('automation', { section: 3, field: 0 }, 'k', false), null);
+});
+
+test('dragTargetEmpty starts every drag section without an absolute target', () => {
+  assert.deepEqual(Model.dragTargetEmpty(), { brightness: null, temperature: null, gamma: null });
+});
+
+test('dragTargetPush clamps the newest absolute target per section', () => {
+  let bus = Model.dragTargetEmpty();
+  bus = Model.dragTargetPush(bus, 'brightness', 150);
+  assert.equal(bus.brightness, 100);
+  bus = Model.dragTargetPush(bus, 'brightness', 0);
+  assert.equal(bus.brightness, 1);
+  bus = Model.dragTargetPush(bus, 'brightness', 70);
+  assert.equal(bus.brightness, 70);
+  assert.equal(bus.temperature, null);
+  bus = Model.dragTargetPush(bus, 'temperature', 6200);
+  assert.equal(bus.temperature, 6200);
+  assert.equal(bus.brightness, 70);
+});
+
+test('dragTargetPush clears a section when the intent is removed', () => {
+  let bus = Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 70);
+  bus = Model.dragTargetPush(bus, 'brightness', null);
+  assert.equal(bus.brightness, null);
+});
+
+test('reconcileDragTargets keeps chasing a same-section target one request at a time', () => {
+  const result = Model.reconcileDragTargets(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 51 }),
+    { brightness: 70, temperature: null, gamma: null },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, [{ section: 'brightness', value: 70 }]);
+  assert.deepEqual(result.target, { brightness: 70, temperature: null, gamma: null });
+});
+
+test('reconcileDragTargets clears a target the readback reached', () => {
+  const result = Model.reconcileDragTargets(
+    stepState({ brightness: 69 }),
+    stepState({ brightness: 70 }),
+    { brightness: 70, temperature: null, gamma: null },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.target, Model.dragTargetEmpty());
+});
+
+test('reconcileDragTargets drops drag intent on a foreign readback', () => {
+  const result = Model.reconcileDragTargets(
+    stepState({ brightness: 50 }),
+    stepState({ brightness: 51 }),
+    { brightness: 70, temperature: null, gamma: null },
+    'preset'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.target, Model.dragTargetEmpty());
+});
+
+test('reconcileDragTargets stops chasing when a readback makes no progress', () => {
+  const result = Model.reconcileDragTargets(
+    stepState({ brightness: 51 }),
+    stepState({ brightness: 51 }),
+    { brightness: 70, temperature: null, gamma: null },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.target, Model.dragTargetEmpty());
+});
+
+test('reconcileDragTargets stops when the value moved away from the target', () => {
+  const result = Model.reconcileDragTargets(
+    stepState({ brightness: 80 }),
+    stepState({ brightness: 50 }),
+    { brightness: 70, temperature: null, gamma: null },
+    'brightness'
+  );
+  assert.deepEqual(result.requests, []);
+  assert.deepEqual(result.target, Model.dragTargetEmpty());
 });

@@ -41,6 +41,7 @@ Panel {
     property int queuedRequestId: 0
     property int processRequestId: 0
     property var pendingSteps: { "brightness": 0, "temperature": 0, "gamma": 0 }
+    property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
     property var queuedCommand: []
     property bool stoppingForLatest: false
@@ -57,7 +58,7 @@ Panel {
     readonly property string manualOverrideText: root.text("manual_override")
     readonly property string heroMeta: root.periodText + (Model.isManualOverride(root.state) ? " · " + root.manualOverrideText : "")
     readonly property real valueColumnWidth: Style.space(54)
-    readonly property var routeOptions: ["home", "automation", "settings"]
+    readonly property var routeOptions: Model.routeOrder()
     readonly property var monitorOptions: root.monitorChoices()
     readonly property var presetOptions: root.presetChoices()
     readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : root.operationOrigin
@@ -129,8 +130,14 @@ Panel {
 
     function navigateToRoute(nextRoute) {
         if (root.routeOptions.indexOf(nextRoute) === -1) return;
-        if (nextRoute !== root.route)
+        if (nextRoute !== root.route) {
             root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
+            root.dragTarget = Model.dragTargetEmpty();
+            if (nextRoute !== "automation") {
+                root.scheduleExpanded = false;
+                root.scheduleEditorOpen = false;
+            }
+        }
         root.route = nextRoute;
         if (nextRoute === "automation" && !root.scheduleEditorOpen) root.request(["schedule", "status"], "schedule-status");
         if (nextRoute === "settings" && !root.preflightLoaded) root.request(["preflight"], "preflight");
@@ -279,6 +286,24 @@ Panel {
             request(["nightlight", name, String(Math.round(value))], name);
     }
 
+    // Pointer drag intent for a slider. The helper enforces one physical
+    // point per brightness write, so the newest absolute target is recorded
+    // and the readback chase in reconcilePending converges on it without the
+    // slider ever reverting to a stale confirmed value.
+    function queueDragMutation(section, value) {
+        root.pendingSteps[section] = 0;
+        root.dragTarget = Model.dragTargetPush(root.dragTarget, section, value);
+        root.queueMutation(section, value);
+    }
+
+    // A slider shows its pending drag target while the chase is in flight so
+    // the value the finger last aimed at stays on screen; once the readback
+    // reaches it the target clears and the confirmed state takes over.
+    function displayValue(section, fallback) {
+        var target = root.dragTarget && typeof root.dragTarget === "object" ? root.dragTarget[section] : null;
+        return typeof target === "number" && isFinite(target) ? target : fallback;
+    }
+
     function queueSchedule() {
         if (!stateReady || actionPending || !scheduleFieldsValid())
             return ;
@@ -384,9 +409,11 @@ Panel {
         if (structured && exitCode === 0 && payload && payload.ok !== false) {
             actionPending = false;
             lastError = "";
+            root.dragTarget = Model.dragTargetEmpty();
             return ;
         }
         actionPending = false;
+        root.dragTarget = Model.dragTargetEmpty();
         if (queuedOperation === "status")
             state = root.normalizeCombined({});
 
@@ -401,7 +428,7 @@ Panel {
 
     function moveCursor(dx, dy) {
         if (dx !== 0 && stateReady && root.route === "home" && !root.scheduleExpanded) {
-            var section = Model.sectionOrder()[cursor.section];
+            var section = Model.routeSections(root.route)[cursor.section];
             var confirmed = null;
             if (section === "brightness")
                 confirmed = state.brightness.percent;
@@ -412,6 +439,7 @@ Panel {
             if (typeof confirmed === "number") {
                 var step = Model.keyboardStep(section, dx, confirmed, root.pendingSteps[section]);
                 root.pendingSteps[section] = step.pending;
+                root.dragTarget = Model.dragTargetPush(root.dragTarget, section, null);
                 queueMutation(section, step.value);
             }
         }
@@ -419,21 +447,27 @@ Panel {
         var routeJump = Model.navigateCursorRoute(root.route, cursor, key, root.scheduleExpanded);
         if (routeJump && routeJump.route !== root.route) {
             root.navigateToRoute(routeJump.route);
-            cursor = Model.cursorStart();
+            cursor = { "section": routeJump.section, "field": 0 };
             return ;
         }
-        cursor = Model.moveCursor(cursor, key, root.scheduleExpanded);
+        cursor = Model.moveCursor(cursor, key, root.route, root.scheduleExpanded);
     }
 
     function reconcilePending(previous) {
         if (root.route !== "home" || root.scheduleExpanded) {
             root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
+            root.dragTarget = Model.dragTargetEmpty();
             return ;
         }
         var result = Model.reconcilePendingSteps(previous, root.state, root.pendingSteps, root.queuedOperation);
         root.pendingSteps = result.pending;
         for (var i = 0; i < result.requests.length; i++)
             root.queueMutation(result.requests[i].section, result.requests[i].value);
+
+        var drag = Model.reconcileDragTargets(previous, root.state, root.dragTarget, root.queuedOperation);
+        root.dragTarget = drag.target;
+        for (var j = 0; j < drag.requests.length; j++)
+            root.queueMutation(drag.requests[j].section, drag.requests[j].value);
     }
 
     function handleCloseRequested() {
@@ -449,22 +483,42 @@ Panel {
     function leaveScheduleEditor(editor, cursorField) {
         editor.focus = false;
         if (cursorField !== undefined)
-            cursor = { "section": 4, "field": cursorField };
+            cursor = { "section": 3, "field": cursorField };
         keyCatcher.forceActiveFocus();
     }
 
     function activateCursor() {
-        var section = Model.sectionOrder()[cursor.section];
+        var section = Model.routeSections(root.route)[cursor.section];
         if (section === "nightLight") {
             if (stateReady && !actionPending)
                 request(["nightlight", "toggle"], "toggle");
 
             return ;
         }
+        if (section === "scheduleToggle") {
+            if (automationReady && !actionPending)
+                root.toggleSchedule(!root.scheduleEnabled);
+
+            return ;
+        }
+        if (section === "transition") {
+            transitionEditor.field.forceActiveFocus();
+            return ;
+        }
+        if (section === "snooze") {
+            if (cursor.field === 0)
+                root.setSnooze(30);
+            else if (cursor.field === 1)
+                root.setSnooze(120);
+            else if (cursor.field === 2)
+                root.settingsCommand("snooze", ["until-tomorrow"]);
+            else
+                root.settingsCommand("snooze", ["clear"]);
+
+            return ;
+        }
         if (section === "schedule") {
             if (!scheduleExpanded) {
-                if (root.route !== "automation")
-                    root.navigateToRoute("automation");
                 scheduleExpanded = true;
                 scheduleEditorOpen = true;
                 editStart = state.schedule.start || "06:00";
@@ -486,6 +540,36 @@ Panel {
                 scheduleTemperatureEditor.field.forceActiveFocus();
             else
                 queueSchedule();
+
+            return ;
+        }
+        if (section === "locale") {
+            localeSelector.open();
+            return ;
+        }
+        if (section === "scope") {
+            scopeSelector.open();
+            return ;
+        }
+        if (section === "preset") {
+            presetSelector.open();
+            return ;
+        }
+        if (section === "preflight") {
+            if (!actionPending)
+                root.settingsCommand("preflight", []);
+
+            return ;
+        }
+        if (section === "shortcut") {
+            shortcutField.forceActiveFocus();
+            return ;
+        }
+        if (section === "shortcutActions") {
+            if (cursor.field === 0)
+                root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+            else
+                root.settingsCommand("shortcut", ["remove"]);
         }
     }
 
@@ -819,6 +903,7 @@ Panel {
                             font.family: root.fontFamily
                             onTextChanged: root.customPresetName = text
                             onAccepted: root.saveCustomPreset()
+                            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                         }
 
                         Button {
@@ -851,6 +936,7 @@ Panel {
                         foreground: root.foreground
                         accent: Color.accent
                         showLabel: true
+                        onPopupOpenChanged: if (!monitorSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
                         onChanged: function(value) { root.setInlineSetting("monitor", value) }
                     }
 
@@ -960,6 +1046,7 @@ Panel {
                                 checked: root.scheduleEnabled
                                 busy: !root.automationReady || root.actionPending
                                 foreground: root.foreground
+                                hasCursor: root.cursor.section === 0
                                 Accessible.name: root.text("schedule")
                                 onToggled: root.toggleSchedule(!root.scheduleEnabled)
                             }
@@ -995,7 +1082,19 @@ Panel {
                             stepSize: 1
                             foreground: root.foreground
                             fontFamily: root.fontFamily
+                            hasCursor: root.cursor.section === 1
                             onModified: function(value) { root.transitionSeconds = Number(value) }
+                            field.Keys.priority: Keys.BeforeItem
+                            field.Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Escape) {
+                                    keyCatcher.forceActiveFocus();
+                                    event.accepted = true;
+                                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                    root.setTransition(root.transitionSeconds);
+                                    keyCatcher.forceActiveFocus();
+                                    event.accepted = true;
+                                }
+                            }
                         }
 
                         Button {
@@ -1024,6 +1123,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 2 && root.cursor.field === 0
                             onClicked: root.setSnooze(30)
                         }
 
@@ -1032,6 +1132,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 2 && root.cursor.field === 1
                             onClicked: root.setSnooze(120)
                         }
 
@@ -1040,6 +1141,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 2 && root.cursor.field === 2
                             onClicked: root.settingsCommand("snooze", ["until-tomorrow"])
                         }
 
@@ -1048,6 +1150,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 2 && root.cursor.field === 3
                             onClicked: root.settingsCommand("snooze", ["clear"])
                         }
                     }
@@ -1100,6 +1203,8 @@ Panel {
                             { value: "en", label: root.text("english") }
                         ]
                         foreground: root.foreground
+                        hasCursor: root.cursor.section === 0
+                        onPopupOpenChanged: if (!localeSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
                         onChanged: function(value) { root.setInlineSetting("locale", value) }
                     }
 
@@ -1113,6 +1218,8 @@ Panel {
                             { value: "persistent", label: root.text("persistent") }
                         ]
                         foreground: root.foreground
+                        hasCursor: root.cursor.section === 1
+                        onPopupOpenChanged: if (!scopeSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
                         onChanged: function(value) { root.setInlineSetting("applyScope", value) }
                     }
 
@@ -1123,6 +1230,8 @@ Panel {
                         value: root.preferredPreset
                         options: root.presetOptions
                         foreground: root.foreground
+                        hasCursor: root.cursor.section === 2
+                        onPopupOpenChanged: if (!presetSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
                         onChanged: function(value) {
                             root.preferredPreset = value;
                             root.setInlineSetting("preferredPreset", value);
@@ -1143,6 +1252,7 @@ Panel {
                         bordered: true
                         focusable: true
                         foreground: root.foreground
+                        hasCursor: root.cursor.section === 3
                         enabled: !root.actionPending
                         onClicked: root.settingsCommand("preflight", [])
                     }
@@ -1169,7 +1279,9 @@ Panel {
                         placeholderText: root.text("shortcut_keys")
                         foreground: root.foreground
                         font.family: root.fontFamily
+                        hasCursor: root.cursor.section === 4
                         onAccepted: root.setInlineSetting("shortcutKeys", text)
+                        Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                     }
 
                     Row {
@@ -1181,6 +1293,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 5 && root.cursor.field === 0
                             enabled: !root.actionPending
                             onClicked: {
                                 root.setInlineSetting("shortcutKeys", shortcutField.text);
@@ -1193,6 +1306,7 @@ Panel {
                             focusable: true
                             bordered: true
                             foreground: root.foreground
+                            hasCursor: root.cursor.section === 5 && root.cursor.field === 1
                             enabled: !root.actionPending
                             onClicked: root.settingsCommand("shortcut", ["remove"])
                         }
@@ -1270,13 +1384,13 @@ Panel {
                             PanelSlider {
                                 width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
-                                value: root.state.brightness.percent === null ? 1 : root.state.brightness.percent
+                                value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
                                 minimum: 1
                                 maximum: 100
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.pendingSteps["brightness"] = 0; root.queueMutation("brightness", v) }
+                                onMoved: function(v) { root.queueDragMutation("brightness", v) }
                             }
 
                         }
@@ -1330,13 +1444,13 @@ Panel {
                             PanelSlider {
                                 width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
-                                value: root.state.temperature === null ? 2500 : root.state.temperature
+                                value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
                                 minimum: 2500
                                 maximum: 6500
                                 step: 100
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.pendingSteps["temperature"] = 0; root.queueMutation("temperature", v) }
+                                onMoved: function(v) { root.queueDragMutation("temperature", v) }
                             }
 
                         }
@@ -1390,13 +1504,13 @@ Panel {
                             PanelSlider {
                                 width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
                                 bar: root.bar
-                                value: root.state.gamma === null ? 0 : root.state.gamma
+                                value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
                                 minimum: 0
                                 maximum: 100
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
-                                onMoved: function(v) { root.pendingSteps["gamma"] = 0; root.queueMutation("gamma", v) }
+                                onMoved: function(v) { root.queueDragMutation("gamma", v) }
                             }
 
                         }
@@ -1426,7 +1540,7 @@ Panel {
                         id: scheduleSurface
 
                         width: parent.width
-                        hasCursor: root.cursor.section === 4
+                        hasCursor: root.cursor.section === 3
                         foreground: root.foreground
                         implicitHeight: scheduleColumn.implicitHeight + Style.spacing.rowPaddingX
 
@@ -1446,7 +1560,7 @@ Panel {
                                 text: root.stateReady ? ((root.state.schedule.start || "06:00") + "  →  " + (root.state.schedule.end || "15:30") + "  ·  " + (root.state.schedule.temperature || 2500) + " K") : root.text("unavailable")
                                 leftAlign: true
                                 focusable: true
-                                hasCursor: root.cursor.section === 4 && !root.scheduleExpanded
+                                hasCursor: root.cursor.section === 3 && !root.scheduleExpanded
                                 foreground: root.foreground
                                 enabled: !root.actionPending
                                 onClicked: {
@@ -1485,7 +1599,7 @@ Panel {
                                         id: startEditor
 
                                         width: parent.width
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 0
+                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 0
                                         foreground: root.foreground
                                         font.family: root.fontFamily
                                         text: root.editStart
@@ -1515,7 +1629,7 @@ Panel {
                                         id: endEditor
 
                                         width: parent.width
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 1
+                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 1
                                         foreground: root.foreground
                                         font.family: root.fontFamily
                                         text: root.editEnd
@@ -1546,7 +1660,7 @@ Panel {
 
                                         checked: root.editNaturalDay
                                         busy: !root.stateReady || root.actionPending
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 2
+                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 2
                                         foreground: root.foreground
                                         Accessible.name: root.text("natural_day")
                                         onToggled: root.editNaturalDay = !root.editNaturalDay
@@ -1575,7 +1689,7 @@ Panel {
 
                                         width: parent.width
                                         fieldWidth: parent.width
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 3
+                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 3
                                         foreground: root.foreground
                                         fontFamily: root.fontFamily
                                         value: Number(root.editDayTemperature || 6000)
@@ -1614,7 +1728,7 @@ Panel {
 
                                         width: parent.width
                                         fieldWidth: parent.width
-                                        hasCursor: root.cursor.section === 4 && root.cursor.field === 4
+                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 4
                                         foreground: root.foreground
                                         fontFamily: root.fontFamily
                                         value: Number(root.editNightTemperature || 3500)
@@ -1642,7 +1756,7 @@ Panel {
                                     leftAlign: false
                                     bordered: true
                                     focusable: true
-                                    hasCursor: root.cursor.section === 4 && root.cursor.field === 5
+                                    hasCursor: root.cursor.section === 3 && root.cursor.field === 5
                                     foreground: root.foreground
                                     enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
                                     onClicked: root.queueSchedule()
@@ -1655,7 +1769,15 @@ Panel {
                         MouseArea {
                             anchors.fill: parent
                             enabled: !root.scheduleExpanded
-                            onClicked: root.activateCursor()
+                            onClicked: {
+                                root.scheduleExpanded = true;
+                                root.scheduleEditorOpen = true;
+                                root.editStart = root.state.schedule.start || "06:00";
+                                root.editEnd = root.state.schedule.end || "15:30";
+                                root.editNaturalDay = root.state.schedule.day_identity === true;
+                                root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
+                                root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
+                            }
                         }
 
                     }

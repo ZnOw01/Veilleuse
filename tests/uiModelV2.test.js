@@ -51,21 +51,11 @@ test('localizeError maps known codes and leaves existing literals untouched', ()
   assert.equal(Model.localizeError('', 'es'), '');
 });
 
-test('routes navigate horizontally across the three compact views', () => {
+test('routes expose the three compact views in order', () => {
   assert.deepEqual(Model.routeOrder(), ['home', 'automation', 'settings']);
-  assert.equal(Model.routeStart(), 'home');
-  assert.equal(Model.moveRoute('home', 'l'), 'automation');
-  assert.equal(Model.moveRoute('automation', 'h'), 'home');
-  assert.equal(Model.moveRoute('settings', 'l'), 'settings');
-  assert.equal(Model.moveRoute('home', 'h'), 'home');
-  assert.equal(Model.moveRoute('bogus', 'l'), 'automation');
-});
-
-test('route labels localize to the active locale', () => {
-  assert.equal(Model.routeLabel('home', 'es'), 'Inicio');
-  assert.equal(Model.routeLabel('home', 'en'), 'Home');
-  assert.equal(Model.routeLabel('automation', 'en'), 'Automation');
-  assert.equal(Model.routeLabel('settings', 'en'), 'Settings');
+  assert.equal(Model.routeStart, undefined, 'routeStart was superseded by per-route cursor sections');
+  assert.equal(Model.moveRoute, undefined, 'moveRoute was superseded by navigateCursorRoute');
+  assert.equal(Model.routeLabel, undefined, 'routeLabel was superseded by t("routeHome") style lookups');
 });
 
 test('provenance labels localize each automation origin', () => {

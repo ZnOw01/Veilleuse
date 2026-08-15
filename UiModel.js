@@ -1,8 +1,24 @@
 // Kept free of Qt globals so the state contract can be exercised with Node.
 
-var SECTION_ORDER = ['nightLight', 'brightness', 'temperature', 'gamma', 'schedule'];
-var FIELD_COUNTS = [2, 2, 2, 2, 6];
 var ROUTES = ['home', 'automation', 'settings'];
+
+// Each route owns its vertical list of cursor sections, so wrapping to a
+// route always lands on a control that route actually renders. Sections that
+// expose several sibling actions (snooze buttons, shortcut install/remove)
+// navigate horizontally across their fields.
+var ROUTE_SECTIONS = {
+  home: ['nightLight', 'brightness', 'temperature', 'gamma'],
+  automation: ['scheduleToggle', 'transition', 'snooze', 'schedule'],
+  settings: ['locale', 'scope', 'preset', 'preflight', 'shortcut', 'shortcutActions']
+};
+
+var ROUTE_FIELD_COUNTS = {
+  home: [1, 1, 1, 1],
+  automation: [1, 1, 4, 1],
+  settings: [1, 1, 1, 1, 1, 2]
+};
+
+var DRAG_SECTIONS = ['brightness', 'temperature', 'gamma'];
 
 // Load I18n when running under Node (CommonJS module present). Quickshell has
 // no `require`, so the bundled DEFAULT_COPY below keeps the panel fully
@@ -89,8 +105,18 @@ var DEFAULT_COPY = {
 var copy = (I18n && I18n.es) ? I18n.es : DEFAULT_COPY;
 
 
-function sectionOrder() {
-  return SECTION_ORDER.slice();
+function routeSections(route) {
+  return (ROUTE_SECTIONS[route] || ROUTE_SECTIONS.home).slice();
+}
+
+function sectionFieldCount(route, section, scheduleExpanded) {
+  var names = routeSections(route);
+  var index = boundedInteger(section, 0, names.length - 1);
+  if (index === null) index = 0;
+  if (route === 'automation' && names[index] === 'schedule')
+    return scheduleExpanded === true ? 6 : 1;
+  var counts = ROUTE_FIELD_COUNTS[route] || ROUTE_FIELD_COUNTS.home;
+  return counts[index] !== undefined ? counts[index] : 1;
 }
 
 function cursorStart() {
@@ -108,23 +134,27 @@ function boundedInteger(value, minimum, maximum) {
   return number === null ? null : Math.round(number);
 }
 
-function moveCursor(cursor, key, scheduleExpanded) {
-  var section = boundedInteger(cursor && cursor.section, 0, SECTION_ORDER.length - 1);
-  var field = boundedInteger(cursor && cursor.field, 0, FIELD_COUNTS[section === null ? 0 : section] - 1);
+function moveCursor(cursor, key, route, scheduleExpanded) {
+  var names = routeSections(route);
+  var section = boundedInteger(cursor && cursor.section, 0, names.length - 1);
   if (section === null) section = 0;
+  // Preserve the incoming field across vertical moves so the cursor keeps its
+  // relative position; the destination section clamps it at the end.
+  var field = boundedInteger(cursor && cursor.field, 0, 6);
   if (field === null) field = 0;
 
-  if (scheduleExpanded === true && section === 4 && (key === 'j' || key === 'ArrowDown' || key === 'k' || key === 'ArrowUp')) {
-    if (key === 'j' || key === 'ArrowDown') field = Math.min(FIELD_COUNTS[section] - 1, field + 1);
+  if (scheduleExpanded === true && route === 'automation' && names[section] === 'schedule'
+      && (key === 'j' || key === 'ArrowDown' || key === 'k' || key === 'ArrowUp')) {
+    if (key === 'j' || key === 'ArrowDown') field = Math.min(5, field + 1);
     if (key === 'k' || key === 'ArrowUp') field = Math.max(0, field - 1);
     return { section: section, field: field };
   }
 
-  if (key === 'j' || key === 'ArrowDown') section = Math.min(SECTION_ORDER.length - 1, section + 1);
+  if (key === 'j' || key === 'ArrowDown') section = Math.min(names.length - 1, section + 1);
   if (key === 'k' || key === 'ArrowUp') section = Math.max(0, section - 1);
-  if (key === 'l' || key === 'ArrowRight') field = Math.min(FIELD_COUNTS[section] - 1, field + 1);
+  if (key === 'l' || key === 'ArrowRight') field = Math.min(sectionFieldCount(route, section, scheduleExpanded) - 1, field + 1);
   if (key === 'h' || key === 'ArrowLeft') field = Math.max(0, field - 1);
-  field = Math.min(FIELD_COUNTS[section] - 1, field);
+  field = Math.min(sectionFieldCount(route, section, scheduleExpanded) - 1, field);
 
   return { section: section, field: field };
 }
@@ -224,25 +254,93 @@ function reconcilePendingSteps(previous, current, pending, lastOperation) {
   return { pending: out, requests: requests };
 }
 
-// Vertical route wrapping for the panel cursor: pressing Up on the first
-// section moves to the previous route, pressing Down on the last section
-// moves to the next route, both wrapping around the route list. Interior
-// navigation and expanded editors return null so the cursor model keeps its
-// existing behavior.
+// Vertical route wrapping for the panel cursor: pressing Up on a route's
+// first section moves to the previous route (landing on its last visible
+// section), pressing Down on the last section moves to the next route
+// (landing on its first visible section). Interior navigation and expanded
+// editors return null so the cursor model keeps its existing behavior.
 function navigateCursorRoute(route, cursor, key, scheduleExpanded) {
   if (scheduleExpanded === true)
     return null;
-  var section = boundedInteger(cursor && cursor.section, 0, SECTION_ORDER.length - 1);
+  var names = routeSections(route);
+  var section = boundedInteger(cursor && cursor.section, 0, names.length - 1);
   if (section === null)
     return null;
   var index = ROUTES.indexOf(route);
   if (index === -1)
     index = 0;
-  if ((key === 'k' || key === 'ArrowUp') && section === 0)
-    return { route: ROUTES[(index - 1 + ROUTES.length) % ROUTES.length] };
-  if ((key === 'j' || key === 'ArrowDown') && section === SECTION_ORDER.length - 1)
-    return { route: ROUTES[(index + 1) % ROUTES.length] };
+  if ((key === 'k' || key === 'ArrowUp') && section === 0) {
+    var previous = ROUTES[(index - 1 + ROUTES.length) % ROUTES.length];
+    return { route: previous, section: routeSections(previous).length - 1 };
+  }
+  if ((key === 'j' || key === 'ArrowDown') && section === names.length - 1) {
+    var next = ROUTES[(index + 1) % ROUTES.length];
+    return { route: next, section: 0 };
+  }
   return null;
+}
+
+// Absolute pointer drag intent. The helper enforces one physical point per
+// brightness write, so a drag to 70 has to be re-requested against each
+// confirmed readback; dragTargetPush stores the newest absolute target so a
+// fast drag always converges on the finger's last position (latest wins) and
+// the UI never shows a value the physical monitor has not reached.
+function dragTargetEmpty() {
+  return { brightness: null, temperature: null, gamma: null };
+}
+
+function dragTargetPush(target, section, value) {
+  var out = dragTargetEmpty();
+  var src = target && typeof target === 'object' ? target : {};
+  for (var i = 0; i < DRAG_SECTIONS.length; i++) {
+    var name = DRAG_SECTIONS[i];
+    if (src[name] === null || src[name] === undefined) out[name] = null;
+    else out[name] = src[name];
+  }
+  var range = SECTION_RANGES[section];
+  var number = Number(value);
+  if (value === null || value === undefined || value === '' || !range || !isFinite(number))
+    out[section] = null;
+  else
+    out[section] = Math.max(range.min, Math.min(range.max, Math.round(number)));
+  return out;
+}
+
+function confirmedValue(state, section) {
+  if (!state || typeof state !== 'object') return null;
+  if (section === 'brightness')
+    return state.brightness && typeof state.brightness.percent === 'number' ? state.brightness.percent : null;
+  if (section === 'temperature')
+    return state.nightlight && typeof state.nightlight.temperature === 'number' ? state.nightlight.temperature : null;
+  if (section === 'gamma')
+    return state.nightlight && typeof state.nightlight.gamma === 'number' ? state.nightlight.gamma : null;
+  return null;
+}
+
+// Advance a pending drag target against a confirmed readback. A same-section
+// readback that moved toward the goal re-queues the absolute target so the
+// helper can apply its next one-point step; a readback that reached the goal,
+// moved away from it, made no progress, or belongs to a foreign operation
+// clears the intent instead of looping or reverting the physical state.
+function reconcileDragTargets(previous, current, target, lastOperation) {
+  var out = dragTargetEmpty();
+  var src = target && typeof target === 'object' ? target : {};
+  var requests = [];
+  for (var i = 0; i < DRAG_SECTIONS.length; i++) {
+    var section = DRAG_SECTIONS[i];
+    var goal = src[section];
+    if (typeof goal !== 'number' || !isFinite(goal)) continue;
+    if (lastOperation !== section) continue;
+    var before = confirmedValue(previous, section);
+    var after = confirmedValue(current, section);
+    if (typeof before !== 'number' || typeof after !== 'number') continue;
+    if (after === goal) continue;
+    var progressed = goal > after ? after > before : after < before;
+    if (!progressed) continue;
+    out[section] = goal;
+    requests.push({ section: section, value: goal });
+  }
+  return { target: out, requests: requests };
 }
 
 function validTime(value) {
@@ -519,24 +617,6 @@ function routeOrder() {
   return ROUTES.slice();
 }
 
-function routeStart() {
-  return ROUTES[0];
-}
-
-function moveRoute(route, key) {
-  var index = ROUTES.indexOf(route);
-  if (index === -1) index = 0;
-  if (key === 'l' || key === 'ArrowRight') index = Math.min(ROUTES.length - 1, index + 1);
-  if (key === 'h' || key === 'ArrowLeft') index = Math.max(0, index - 1);
-  return ROUTES[index];
-}
-
-function routeLabel(route, locale) {
-  var name = String(route || '');
-  var key = name === '' ? 'routeHome' : 'route' + name.charAt(0).toUpperCase() + name.slice(1);
-  return t(key, locale);
-}
-
 var PROVENANCE_KEYS = {
   automatic: 'provenanceAutomatic',
   manual: 'provenanceManual',
@@ -657,14 +737,17 @@ function historyViewModel(records, locale) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
-    FIELD_COUNTS: FIELD_COUNTS,
-    sectionOrder: sectionOrder,
+    routeSections: routeSections,
+    sectionFieldCount: sectionFieldCount,
     cursorStart: cursorStart,
     moveCursor: moveCursor,
     sectionStep: sectionStep,
     stepTargetValue: stepTargetValue,
     keyboardStep: keyboardStep,
     reconcilePendingSteps: reconcilePendingSteps,
+    dragTargetEmpty: dragTargetEmpty,
+    dragTargetPush: dragTargetPush,
+    reconcileDragTargets: reconcileDragTargets,
     navigateCursorRoute: navigateCursorRoute,
     normalizeState: normalizeState,
     validateScheduleFields: validateScheduleFields,
@@ -676,9 +759,6 @@ if (typeof module !== 'undefined' && module.exports) {
     localizeError: localizeError,
     localizeStateError: localizeStateError,
     routeOrder: routeOrder,
-    routeStart: routeStart,
-    moveRoute: moveRoute,
-    routeLabel: routeLabel,
     provenanceLabel: provenanceLabel,
     midnightExplanation: midnightExplanation,
     preflightStatus: preflightStatus,
