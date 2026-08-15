@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.znow01.veilleuse",
   "name": "Veilleuse",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "ZnOw01",
   "license": "MIT",
   "description": "Control nativo de brillo, luz nocturna, perfiles y automatización.",
