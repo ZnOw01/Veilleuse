@@ -882,6 +882,20 @@ def reconcile(env=None) -> dict:
                 operation="reconcile", applied=False, snoozed=True,
             )
         if current.get("identity") is True:
+            if state.get("manual_override") is not None:
+                try:
+                    env["update_state"](
+                        lambda current_state: {
+                            **current_state,
+                            "manual_override": None,
+                        }
+                    )
+                except Exception:
+                    return _failure(
+                        "state_failed",
+                        "No se pudo limpiar el modo manual durante la posposición",
+                        operation="reconcile", applied=False, snoozed=True,
+                    )
             return _success(operation="reconcile", applied=False, snoozed=True)
         natural = env["apply_natural"]()
         if not natural.get("available") or natural.get("error"):
@@ -923,10 +937,16 @@ def reconcile(env=None) -> dict:
         )
 
     if snooze_until is not None and now >= snooze_until:
-        # Expiry: clear the snooze first (one-shot), then apply once.
+        # Expiry: clear the snooze (one-shot) and any manual intent recorded
+        # during the snooze (snooze_set always clears it, so an override here
+        # cannot predate the snooze), then apply the profile once.
         try:
             env["update_state"](
-                lambda current: {**current, "snooze_until": None}
+                lambda current: {
+                    **current,
+                    "snooze_until": None,
+                    "manual_override": None,
+                }
             )
         except Exception as error:
             return _failure(

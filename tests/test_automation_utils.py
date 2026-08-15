@@ -899,6 +899,55 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertTrue(result["applied"])
         self.assertIsNone(self.read_state()["manual_override"])
 
+    def test_reconcile_snoozed_already_natural_clears_stale_override(self):
+        self.nightlight = FakeNightlight(temperature=6000, gamma=90, identity=True)
+        self.initial_state(
+            snooze_until=2800.0,
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            ),
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertTrue(result["snoozed"])
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertIsNone(self.read_state()["manual_override"])
+
+    def test_reconcile_expiry_schedule_disabled_clears_stale_override(self):
+        self.initial_state(
+            snooze_until=900.0,
+            schedule_enabled=False,
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            ),
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertFalse(result["applied"])
+        self.assertIsNone(self.read_state()["snooze_until"])
+        self.assertIsNone(self.read_state()["manual_override"])
+        self.assertEqual(self.read_history(), [])
+
+    def test_reconcile_expiry_cleared_override_does_not_suppress_later_enable(self):
+        self.nightlight = FakeNightlight(temperature=4000, gamma=90)
+        self.initial_state(
+            snooze_until=900.0,
+            schedule_enabled=False,
+            manual_override=self.manual_override(
+                profile={"kind": "temperature", "temperature": 3500}
+            ),
+        )
+        first = automation.reconcile(env=self.env())
+        self.assertTrue(first["success"], first)
+        self.assertFalse(first["applied"])
+        self.assertIsNone(self.read_state()["manual_override"])
+        state_utils.update_state(lambda current: {**current, "schedule_enabled": True})
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.applications, [(3500, 90)])
+
     # ------------------------------------------------------------------ \
     # fail-closed defaults
 
