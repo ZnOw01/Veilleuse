@@ -30,7 +30,7 @@ Base: e6f1e5793101e941368530b808d8c6ffff064738. Preserve all 1.1 CLI/status fiel
 Built-ins: reading, work, cinema. User presets validated. Applying brightness converges using only native +1%/1%- steps, with a global deadline and cancellation by process replacement; never one physical jump.
 
 ## UI
-Three compact routes within one native panel: Home, Automation, Settings; route switch preserves live context. Home: dynamic hero/bar glyph and provenance, presets, live sliders, monitor selector, last-applied/history. Automation: enabled toggle, schedule editor, transition, snooze and midnight explanation. Settings: ES/EN, apply scope, default preset, helper preflight, shortcut install/remove/key field. All actions backed by helper or native inline settings—no fake controls.
+Three compact routes within one native panel: Home, Automation, Settings; route switch preserves live context. Home: dynamic hero/bar glyph and provenance, one status box (now/last-applied/working), live sliders first under a live-controls header, presets (applied-now marker, named delete with two-click confirm), monitor selector, history button with the latest three entries. Automation: enabled toggle with live window caption, schedule editor, transition, snooze with active-state countdown and midnight explanation. Settings: ES/EN, apply scope with explanation, default preset, helper preflight with result badge, shortcut install/remove/key field. Keyboard hints line in every route. All actions backed by helper or native inline settings—no fake controls.
 
 ## i18n
 `I18n.js` with complete `es` and `en` dictionaries and key parity. No user-facing literals in QML/helper response codes; helper includes stable `error_code` plus Spanish fallback message. UI localizes codes.

@@ -70,11 +70,10 @@ o.bind("SUPER + V", "Veilleuse", "omarchy-shell -q io.github.znow01.veilleuse to
 -- <<< Veilleuse shortcut <<<
 ```
 
-The command is fixed (`omarchy-shell -q io.github.znow01.veilleuse toggleNightlight`).
-Installation saves a single `bindings.lua.bak` copy of the original and
-preserves the file mode. Removal reverts the file to its previous content
-without touching anything else and deletes the file if it ends up empty.
-Both try a `hyprctl` reload when available.
+The command is fixed and cannot be customized.
+Installation saves a single `bindings.lua.bak` and preserves the file mode.
+Removal reverts the file to its previous content and deletes it if it ends
+up empty. Both try a `hyprctl` reload when available.
 
 ## Development
 

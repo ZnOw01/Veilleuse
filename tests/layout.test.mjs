@@ -359,13 +359,19 @@ test('transition seconds field bounds', () => {
 
 test('home status box is the single now/last-applied source and history is one affordance', () => {
   // The former standalone "Last applied" row was merged into the home
-  // summary box, and history is one button with the latest event bound to it.
+  // summary box, and history is one button with the latest entries bound to it.
   assert.doesNotMatch(qml, /id:\s*lastAppliedLabel/);
   assert.match(qml, /id:\s*homeSummary/);
   assert.match(qml, /root\.text\("view_history"\)/);
-  assert.match(qml, /formatHistoryEntry\(root\.historyItems\[0\]\)/);
+  assert.match(qml, /root\.historyItems\.slice\(0,\s*3\)/);
+  assert.match(qml, /formatHistoryEntry\(modelData\)/);
   assert.doesNotMatch(qml, /root\.text\("open_automation"\)/);
   assert.match(qml, /root\.text\("live_controls"\)/);
+  // Working feedback, active snooze with remaining minutes and keyboard
+  // hints keep the panel's state and model discoverable.
+  assert.match(qml, /root\.text\("working"\)/);
+  assert.match(qml, /snoozeRemainingMinutes/);
+  assert.match(qml, /root\.text\("keyboard_hints"\)/);
 });
 
 test('keyboard slider steps accumulate pending offsets instead of recomputing from stale confirmed state', () => {

@@ -72,6 +72,15 @@ Panel {
     readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
     readonly property string scopeText: I18n.t(root.applyScope === "persistent" ? "persistent" : "session", root.locale)
+    readonly property bool snoozeActive: Boolean(root.state.automation && root.state.automation.snoozed)
+    // Minutes left on the active snooze, recomputed whenever the helper
+    // refreshes the combined status (open, actions, reconcile).
+    readonly property int snoozeRemainingMinutes: {
+        var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
+        if (!isFinite(until) || until <= 0)
+            return 0;
+        return Math.max(0, Math.round((until - Date.now() / 1000) / 60));
+    }
 
     function normalizedPath(value) {
         var candidate = String(value || "");
@@ -921,6 +930,17 @@ Panel {
                                 font.pixelSize: Style.font.bodySmall
                                 elide: Text.ElideRight
                             }
+
+                            Text {
+                                // Every helper call passes through here: the
+                                // panel answers with a visible working state
+                                // instead of silently disabling buttons.
+                                visible: root.actionPending
+                                text: "● " + root.text("working")
+                                color: Qt.darker(root.foreground, 1.35)
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
                         }
                     }
 
@@ -1092,6 +1112,8 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
+                            Accessible.name: root.appliedPresetName() === "reading" ? root.text("applied_preset") + ": " + root.text("preset_reading") : root.text("preset_reading")
+                            Accessible.role: Accessible.Button
                             onClicked: {
                                 root.applyPreset("reading");
                                 root.refocusKeyCatcher();
@@ -1105,6 +1127,8 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
+                            Accessible.name: root.appliedPresetName() === "work" ? root.text("applied_preset") + ": " + root.text("preset_work") : root.text("preset_work")
+                            Accessible.role: Accessible.Button
                             onClicked: {
                                 root.applyPreset("work");
                                 root.refocusKeyCatcher();
@@ -1118,6 +1142,8 @@ Panel {
                             bordered: true
                             foreground: root.foreground
                             enabled: root.stateReady && !root.actionPending
+                            Accessible.name: root.appliedPresetName() === "cinema" ? root.text("applied_preset") + ": " + root.text("preset_cinema") : root.text("preset_cinema")
+                            Accessible.role: Accessible.Button
                             onClicked: {
                                 root.applyPreset("cinema");
                                 root.refocusKeyCatcher();
@@ -1129,6 +1155,8 @@ Panel {
                             tooltipText: root.text("reload_presets")
                             foreground: root.foreground
                             focusable: true
+                            Accessible.name: root.text("reload_presets")
+                            Accessible.role: Accessible.Button
                             onClicked: {
                                 root.settingsCommand("preset", ["list"]);
                                 root.refocusKeyCatcher();
@@ -1233,14 +1261,28 @@ Panel {
                         }
                     }
 
-                    Text {
+                    // The list the button loads, at a glance: the three most
+                    // recent entries with their outcome, then the button for
+                    // the full bounded history.
+                    Column {
                         visible: root.historyLoaded && root.historyItems.length > 0
                         width: parent.width
-                        text: root.text("latest_event") + ": " + root.formatHistoryEntry(root.historyItems[0])
-                        color: Qt.darker(root.foreground, 1.35)
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        elide: Text.ElideRight
+                        spacing: Style.spacing.labelGap
+
+                        Repeater {
+                            model: root.historyItems.slice(0, 3)
+
+                            Text {
+                                required property var modelData
+
+                                width: parent.width
+                                text: (modelData.success === false ? "✗ " : "✓ ") + root.formatHistoryEntry(modelData)
+                                color: modelData.success === false ? Color.urgent : Qt.darker(root.foreground, 1.35)
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
                 }
 
@@ -1368,6 +1410,18 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
+                    // The active snooze is a fact the user set and must be
+                    // able to verify at a glance, not infer from a glyph.
+                    Text {
+                        visible: root.snoozeActive
+                        width: parent.width
+                        text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
+                        color: Color.urgent
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.bodySmall
+                        elide: Text.ElideRight
+                    }
+
                     // Equal 2x2 cells: every action gets the same width, so no
                     // label truncates and the row cannot look unbalanced.
                     GridLayout {
@@ -1420,7 +1474,7 @@ Panel {
                             text: root.text("clear_snooze")
                             focusable: true
                             bordered: true
-                            foreground: root.foreground
+                            foreground: root.snoozeActive ? Color.urgent : root.foreground
                             hasCursor: root.cursor.section === 2 && root.cursor.field === 3
                             onClicked: {
                                 root.settingsCommand("snooze", ["clear"]);
@@ -1637,6 +1691,22 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.bodySmall
                     wrapMode: Text.WordWrap
+                }
+
+                // The keyboard model is the panel's fastest path but is
+                // invisible until discovered; one quiet line keeps it
+                // discoverable without a tutorial.
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.spacing.rowPaddingX
+                    anchors.rightMargin: Style.spacing.rowPaddingX
+                    horizontalAlignment: Text.AlignHCenter
+                    text: root.text("keyboard_hints")
+                    color: Qt.darker(root.foreground, 1.6)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
                 }
 
                 Column {
