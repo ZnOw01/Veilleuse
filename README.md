@@ -1,32 +1,62 @@
 # Veilleuse
 
-An **Omarchy Quattro** plugin to control brightness, night light and schedules
-from the bar.
+An **Omarchy Quattro** bar plugin for display control: brightness, night
+light and a day/night schedule, in one compact panel.
 
 ![Veilleuse](preview.png)
 
-## Features
+## The panel
 
-- Redesigned panel with Home, Automation and Settings views, switched with
-  on-screen arrows or the `← →` keys.
-- Brightness for the focused or a selected monitor, written as one absolute
-  percentage per operation and confirmed by readback.
-- Night light from 2500 to 6500 K and gamma from 0 to 100 %.
-- Day/night schedule where each period configures its time plus the same
-  three options the Home sliders drive (temperature, brightness, gamma),
-  entered as numbers.
-- Scheduled brightness and gamma are applied by the plugin when the schedule
-  enters a period, or right after saving it.
-- Snooze composed from a number and an hours/minutes/seconds unit,
-  cancelable at any time.
-- Atomic updates to `~/.config/hypr/hyprsunset.conf`; comments, permissions,
-  foreign profiles and a `.bak` copy are preserved.
-- Transactional schedule enable/disable with conflict detection.
-- English by default with a complete Spanish interface selectable in
-  settings.
-- Optional, reversible keyboard shortcut in `bindings.lua` (manual install,
-  never automatic).
-- Mouse and arrow-key navigation.
+Three views, switched with the on-screen arrows `‹ ›` or the `← →` keys.
+
+- **Home** — a switch for the night light and three live sliders: brightness,
+  temperature and gamma. Each slider shows its label and live value on one
+  row and moves one unit at a time. Below them, the monitor picker.
+- **Automation** — the schedule: an on/off switch with its time window, and
+  one block per period (**Day** and **Night**) where you set the time plus
+  the same three options as Home (temperature, brightness, gamma) as
+  numbers. Scheduled brightness and gamma are applied when the schedule
+  enters each period — or right after you save. Below, snooze: a number, an
+  hours/minutes/seconds unit, and one button.
+- **Settings** — language (English by default, Spanish available) and the
+  optional keyboard shortcut.
+
+## Keyboard
+
+| Key | Action |
+| --- | ------ |
+| `← →` | switch view |
+| `↑ ↓` | move within a view |
+| `Enter` | activate the highlighted control |
+| `Esc` | close |
+
+Everything else works with the mouse.
+
+## Control from the terminal
+
+`scripts/veilleuse-control` does everything the panel does:
+
+```bash
+./scripts/veilleuse-control status                       # combined JSON status
+./scripts/veilleuse-control brightness 70                # absolute % write, readback-confirmed
+./scripts/veilleuse-control nightlight toggle
+./scripts/veilleuse-control nightlight temperature 3500
+./scripts/veilleuse-control nightlight gamma 80
+./scripts/veilleuse-control snooze set --minutes 30      # or --seconds 90
+./scripts/veilleuse-control snooze clear
+./scripts/veilleuse-control schedule get
+./scripts/veilleuse-control schedule set \
+  --day-time 06:00 --night-time 15:30 \
+  --day-temp 6000 --night-temp 3500 \
+  --day-brightness 80 --day-gamma 100 \
+  --night-brightness 55 --night-gamma 85
+./scripts/veilleuse-control schedule enable|disable
+./scripts/veilleuse-control reconcile                    # enforce snooze/schedule now
+```
+
+Night light from 2500 to 6500 K and gamma from 0 to 100 %, matching the
+panel sliders. Schedule times, temperatures and comments live in
+`~/.config/hypr/hyprsunset.conf`, updated atomically with a `.bak` copy.
 
 ## Requirements
 
@@ -42,7 +72,7 @@ from the bar.
 omarchy plugin add https://github.com/ZnOw01/veilleuse.git --enable --yes
 ```
 
-## Maintenance
+Update and remove:
 
 ```bash
 omarchy plugin update io.github.znow01.veilleuse --yes
@@ -52,7 +82,7 @@ omarchy plugin remove io.github.znow01.veilleuse --yes
 
 Removal preserves `~/.config/hypr/hyprsunset.conf` and its backup copy.
 
-## Keyboard shortcut (optional)
+## Optional keyboard shortcut
 
 Veilleuse **never installs shortcuts automatically**. `~/.config/hypr/bindings.lua`
 is only touched by an explicit command:
@@ -64,9 +94,7 @@ is only touched by an explicit command:
 ```
 
 Installation validates the keys, detects collisions with other bindings and
-edits only a marked `-- >>> Veilleuse shortcut >>>` block. Because
-`bindings.lua` runs as Lua in Omarchy 4, the block uses the shell's `o.bind`
-syntax:
+edits only a marked `-- >>> Veilleuse shortcut >>>` block:
 
 ```lua
 -- >>> Veilleuse shortcut >>>
@@ -74,10 +102,20 @@ o.bind("SUPER + V", "Veilleuse", "omarchy-shell -q io.github.znow01.veilleuse to
 -- <<< Veilleuse shortcut <<<
 ```
 
-The command is fixed and cannot be customized.
-Installation saves a single `bindings.lua.bak` and preserves the file mode.
-Removal reverts the file to its previous content and deletes it if it ends
-up empty. Both try a `hyprctl` reload when available.
+The command is fixed and cannot be customized. Installation saves a single
+`bindings.lua.bak` and preserves the file mode; removal reverts the file to its previous content
+and deletes it if it ends up empty.
+
+## Where data lives
+
+- `~/.config/hypr/hyprsunset.conf` — schedule times and temperatures.
+- `~/.config/veilleuse/config.json` — plugin config (schema only).
+- `~/.local/state/veilleuse/state.json` — snooze, provenance and scheduled
+  display values.
+- `~/.local/state/veilleuse/history.jsonl` — internal audit log (last 50
+  operations).
+
+All writes are atomic, mode 0600, and versioned with safe migrations.
 
 ## Development
 
