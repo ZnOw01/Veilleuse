@@ -16,10 +16,7 @@ const EMITTED_ERROR_CODES = [
   'helper_unavailable',
   'monitor_unavailable',
   'invalid_argument',
-  'invalid_transition',
-  'invalid_brightness_step',
   'invalid_value',
-  'invalid_preset',
   'invalid_json',
   'invalid_schema',
   'invalid_config',
@@ -29,41 +26,29 @@ const EMITTED_ERROR_CODES = [
   'brightness_write_failed',
   'temperature_readback_failed',
   'gamma_readback_failed',
-  'readback_mismatch',
   'schedule_unavailable',
   'schedule_failed',
   'state_unavailable',
   'state_failed',
-  'state_update_failed',
   'unsafe_path',
   'io_error',
   'not_executable',
   'missing_command',
   'timeout',
   'backend_unavailable',
-  'preset_failed',
-  'preset_not_found',
   'shortcut_failed',
-  'builtin_immutable',
-  'default_conflict',
-  'deadline_exceeded',
   'deadline',
   'cancelled',
   'snooze_failed',
-  'transition_failed',
   'reconcile_failed',
   'apply_failed',
   'read_failed',
-  'native_failure',
-  'native_operation_missing',
-  'nightlight_failure',
   'conflict',
   'missing_config',
   'malformed_config',
   'ambiguous_config',
   'rollback_failed',
   'malformed_state',
-  'history_error',
   'history_failed'
 ];
 
@@ -73,7 +58,6 @@ const EMITTED_ERROR_CODES = [
 const PRODUCTION_SOURCES = [
   'scripts/veilleuse-control',
   'scripts/automation_utils.py',
-  'scripts/preset_utils.py',
   'scripts/state_utils.py',
   'scripts/schedule_toggle_utils.py'
 ];
@@ -83,7 +67,7 @@ const CODE_PATTERNS = [
   /"error_code"\s*:\s*"([a-z][a-z0-9_]*)"/g,
   /"error_code"\s*:\s*None if [a-z]+ else\s*"([a-z][a-z0-9_]*)"/g,
   /_failure\(\s*"([a-z][a-z0-9_]*)"/g,
-  /(?:StateError|PresetError|AutomationError|_error)\(\s*"([a-z][a-z0-9_]*)"/g,
+  /(?:StateError|AutomationError|_error)\(\s*"([a-z][a-z0-9_]*)"/g,
   /getattr\([^)]*"error_code",\s*"([a-z][a-z0-9_]*)"/g,
   /\.get\("error_code",\s*"([a-z][a-z0-9_]*)"/g,
   /_preflight_check\([^,]*,[^,]*,\s*"([a-z][a-z0-9_]*)"/g,
@@ -176,8 +160,8 @@ test('localizeError maps known codes and leaves literal diagnostics untouched', 
 });
 
 test('localizeStateError maps the not-confirmed fallback and passes literals through', () => {
-  assert.equal(Model.localizeStateError('Estado no confirmado', 'es'), I18n.es.notConfirmed);
-  assert.equal(Model.localizeStateError('Estado no confirmado', 'en'), I18n.en.notConfirmed);
+  assert.equal(Model.localizeStateError('State not confirmed', 'es'), I18n.es.notConfirmed);
+  assert.equal(Model.localizeStateError('State not confirmed', 'en'), I18n.en.notConfirmed);
   assert.equal(Model.localizeStateError('monitor_unavailable', 'en'), I18n.en.errMonitorUnavailable);
   const literal = 'No se pudo resolver un monitor enfocado';
   assert.equal(Model.localizeStateError(literal, 'en'), literal);
@@ -185,34 +169,42 @@ test('localizeStateError maps the not-confirmed fallback and passes literals thr
   assert.equal(Model.localizeStateError(null, 'en'), '');
 });
 
-test('schedule validation errors localize in English without breaking Spanish defaults', () => {
-  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', true, 6000, 3500, 'es'), {
+test('schedule validation errors localize in both locales', () => {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', '6000', '', '', '3500', '', '', 'es'), {
     valid: false,
     error: I18n.es.scheduleDayNightEqual
   });
-  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', true, 6000, 3500, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', '6000', '', '', '3500', '', '', 'en'), {
     valid: false,
     error: I18n.en.scheduleDayNightEqual
   });
-  assert.deepEqual(Model.validateScheduleFields('25:00', '18:00', true, 6000, 3500, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('25:00', '18:00', '6000', '', '', '3500', '', '', 'en'), {
     valid: false,
     error: I18n.en.scheduleDayTimeFormat
   });
-  assert.deepEqual(Model.validateScheduleFields('06:00', '25:00', true, 6000, 3500, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '25:00', '6000', '', '', '3500', '', '', 'en'), {
     valid: false,
     error: I18n.en.scheduleNightTimeFormat
   });
-  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', true, 7000, 3500, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', '7000', '', '', '3500', '', '', 'en'), {
     valid: false,
     error: I18n.en.scheduleDayTemperatureRange
   });
-  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', true, 6000, 7000, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', '6000', '', '', '7000', '', '', 'en'), {
     valid: false,
     error: I18n.en.scheduleNightTemperatureRange
   });
-  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', true, 6000, 3500, 'en'), {
+  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', '6000', '80', '100', '3500', '55', '85', 'en'), {
     valid: true,
     error: ''
+  });
+  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', '6000', '101', '', '3500', '', '', 'en'), {
+    valid: false,
+    error: I18n.en.scheduleBrightnessRange
+  });
+  assert.deepEqual(Model.validateScheduleFields('06:00', '18:00', '6000', '', '101', '3500', '', '', 'en'), {
+    valid: false,
+    error: I18n.en.scheduleGammaRange
   });
 });
 

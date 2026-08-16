@@ -32,25 +32,13 @@ _ISO_LIKE_PATTERN = re.compile(
 )
 _ORIGINS = {"automatic", "manual", "preset", "snooze", "unknown"}
 
-BUILTIN_PRESETS = {
-    "day": {"temperature": 6000, "gamma": 100},
-    "evening": {"temperature": 4500, "gamma": 90},
-    "night": {"temperature": 3200, "gamma": 80},
-}
-
-# Configs written before the time-of-day ladder named the activity presets
-# reading/work/cinema as the default. Mapping them to the closest warmth
-# keeps those documents valid instead of failing the whole config.
-_LEGACY_BUILTIN_PRESETS = {
-    "reading": "night",
-    "work": "evening",
-    "cinema": "night",
-}
+# Presets were removed from the product. Documents written by preset-era
+# releases still carry these keys; validation drops them on read so those
+# installs keep loading instead of failing as invalid_config.
+_LEGACY_CONFIG_KEYS = ("presets", "default_preset")
 
 DEFAULT_CONFIG = {
     "schema": SCHEMA_VERSION,
-    "presets": {},
-    "default_preset": "day",
 }
 
 DEFAULT_STATE = {
@@ -62,7 +50,11 @@ DEFAULT_STATE = {
     "last_applied": None,
     "schedule_disabled": None,
     "manual_override": None,
+    "schedule_display": None,
+    "schedule_period_applied": None,
 }
+
+_SCHEDULE_PERIODS = ("day", "night")
 
 
 class StateError(Exception):
@@ -231,59 +223,52 @@ def _schema(raw: object, kind: str) -> tuple[dict, int]:
     return copy.deepcopy(raw), value
 
 
-def _validate_preset(value: object) -> dict:
-    if not isinstance(value, dict):
-        raise StateError("invalid_config", "Preset must be an object")
-    keys = set(value)
-    if keys not in ({"temperature", "gamma"}, {"temperature", "gamma", "brightness"}):
-        raise StateError("invalid_config", "Preset fields are invalid")
-    try:
-        return {
-            "temperature": _integer(value["temperature"], minimum=2500, maximum=6500, field="temperature"),
-            "gamma": _integer(value["gamma"], minimum=0, maximum=100, field="gamma"),
-            **(
-                {"brightness": _integer(value["brightness"], minimum=1, maximum=100, field="brightness")}
-                if "brightness" in value
-                else {}
-            ),
-        }
-    except StateError as error:
-        raise StateError("invalid_config", "Preset values are invalid") from error
-
-
 def _validate_config(raw: object) -> dict:
     data, version = _schema(raw, "config")
     if version == 0:
-        allowed = {"schema", "presets", "default_preset"}
-        if set(data) - allowed:
-            raise StateError("invalid_config", "Config fields are invalid")
         data["schema"] = SCHEMA_VERSION
-        data.setdefault("presets", {})
-        data.setdefault("default_preset", DEFAULT_CONFIG["default_preset"])
-    if set(data) != {"schema", "presets", "default_preset"}:
+    for key in _LEGACY_CONFIG_KEYS:
+        data.pop(key, None)
+    if set(data) != {"schema"}:
         raise StateError("invalid_config", "Config fields are invalid")
-    if data["schema"] != SCHEMA_VERSION:
-        raise StateError("invalid_schema", "Unsupported config schema")
-    if not isinstance(data["presets"], dict):
-        raise StateError("invalid_config", "Presets must be an object")
-    presets = {}
-    for name, preset in data["presets"].items():
-        try:
-            _name(name, "preset name")
-        except StateError as error:
-            raise StateError("invalid_config", "Preset name is invalid") from error
-        if name in BUILTIN_PRESETS:
-            raise StateError("invalid_config", "Custom preset shadows a built-in preset")
-        presets[name] = _validate_preset(preset)
-    try:
-        default = _name(data["default_preset"], "default_preset")
-    except StateError as error:
-        raise StateError("invalid_config", "default_preset is invalid") from error
-    if default not in presets and default in _LEGACY_BUILTIN_PRESETS:
-        default = _LEGACY_BUILTIN_PRESETS[default]
-    if default not in presets and default not in BUILTIN_PRESETS:
-        raise StateError("invalid_config", "default_preset does not name a preset")
-    return {"schema": SCHEMA_VERSION, "presets": presets, "default_preset": default}
+    return {"schema": SCHEMA_VERSION}
+
+
+def _validate_schedule_display_period(value: object, period: str) -> dict:
+    """Per-period display values scheduled by the user.
+
+    Each period may configure ``brightness`` (1-100) and ``gamma`` (0-100);
+    a period entry must carry at least one of them, and periods without
+    scheduled values are simply absent from the mapping.
+    """
+    if not isinstance(value, dict) or not value or set(value) - {"brightness", "gamma"}:
+        raise StateError("invalid_state", f"schedule_display.{period} is invalid")
+    normalized = {}
+    for field, minimum, maximum in (("brightness", 1, 100), ("gamma", 0, 100)):
+        if field in value:
+            try:
+                normalized[field] = _integer(
+                    value[field], minimum=minimum, maximum=maximum, field=field
+                )
+            except StateError as error:
+                raise StateError(
+                    "invalid_state", f"schedule_display.{period} is invalid"
+                ) from error
+    if not normalized:
+        raise StateError("invalid_state", f"schedule_display.{period} is invalid")
+    return normalized
+
+
+def _validate_schedule_display(value: object) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - set(_SCHEDULE_PERIODS):
+        raise StateError("invalid_state", "schedule_display is invalid")
+    return {
+        period: _validate_schedule_display_period(value[period], period)
+        for period in _SCHEDULE_PERIODS
+        if period in value
+    }
 
 
 def _validate_schedule_disabled(value: object) -> dict | None:
@@ -440,6 +425,16 @@ def _validate_state(raw: object) -> dict:
     origin = data["origin"]
     if not isinstance(origin, str) or origin not in _ORIGINS:
         raise StateError("invalid_state", "origin is invalid")
+    schedule_display = _validate_schedule_display(data["schedule_display"])
+    schedule_period_applied = data["schedule_period_applied"]
+    if schedule_period_applied is not None:
+        if schedule_period_applied not in _SCHEDULE_PERIODS:
+            raise StateError("invalid_state", "schedule_period_applied is invalid")
+        if not (
+            isinstance(schedule_display, dict)
+            and schedule_period_applied in schedule_display
+        ):
+            raise StateError("invalid_state", "schedule_period_applied is invalid")
     return {
         "schema": SCHEMA_VERSION,
         "schedule_enabled": data["schedule_enabled"],
@@ -449,6 +444,8 @@ def _validate_state(raw: object) -> dict:
         "last_applied": _validate_last_applied(data["last_applied"]),
         "schedule_disabled": _validate_schedule_disabled(data["schedule_disabled"]),
         "manual_override": _validate_manual_override(data["manual_override"]),
+        "schedule_display": schedule_display,
+        "schedule_period_applied": schedule_period_applied,
     }
 
 

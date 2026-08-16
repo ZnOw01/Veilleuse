@@ -32,10 +32,14 @@ from collections.abc import Mapping
 
 SNOOZE_MINUTES_MIN = 1
 SNOOZE_MINUTES_MAX = 1440
+SNOOZE_SECONDS_MIN = 10
+SNOOZE_SECONDS_MAX = 86400
 TEMPERATURE_MIN = 2500
 TEMPERATURE_MAX = 6500
 GAMMA_MIN = 0
 GAMMA_MAX = 100
+BRIGHTNESS_MIN = 1
+BRIGHTNESS_MAX = 100
 TRANSITION_SECONDS_MIN = 0
 TRANSITION_SECONDS_MAX = 1800
 STEP_INTERVAL_SECONDS = 1.0
@@ -132,36 +136,6 @@ def _iso_epoch(value) -> float | None:
 
 def _default_local_now() -> datetime.datetime:
     return datetime.datetime.now().astimezone()
-
-
-def until_tomorrow_epoch(now_local: datetime.datetime) -> float:
-    """Epoch of the next local midnight, computed in the local timezone.
-
-    Correct across midnight and DST: the wall-clock ``tomorrow 00:00`` is
-    built inside ``now_local``'s timezone, then converted with that zone's
-    UTC offset for the resulting date (spring forward shortens the real
-    interval, fall back lengthens it). Fixed-offset zones (from
-    ``astimezone()``) cannot re-resolve their offset, so the system zone
-    database resolves the midnight for them.
-    """
-    if not isinstance(now_local, datetime.datetime) or now_local.tzinfo is None:
-        raise AutomationError(
-            "invalid_argument", "La hora local debe incluir zona horaria"
-        )
-    naive = now_local.replace(tzinfo=None)
-    midnight = (naive + datetime.timedelta(days=1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    if isinstance(now_local.tzinfo, datetime.timezone):
-        # Fixed offset captured at *now* (e.g. datetime.now().astimezone()):
-        # it is stale once the local zone crosses a DST boundary before that
-        # midnight. Resolve the wall time with the system zone database,
-        # which knows the offset in effect for the resulting date.
-        try:
-            return float(time.mktime(midnight.timetuple()))
-        except (OverflowError, ValueError):
-            pass
-    return midnight.replace(tzinfo=now_local.tzinfo).timestamp()
 
 
 def snooze_status(state: Mapping, now: float) -> dict:
@@ -408,7 +382,7 @@ def _history_record(operation, origin, now, *, values=None, success=True, error_
         "success": success,
     }
     if values:
-        for field in ("temperature", "gamma"):
+        for field in ("temperature", "gamma", "brightness"):
             if field in values and values[field] is not None:
                 record[field] = int(values[field])
     if error_code is not None:
@@ -432,6 +406,8 @@ def default_env() -> dict:
         "read_nightlight": _default_read_nightlight,
         "apply_values": _default_apply_values,
         "apply_natural": _default_apply_natural,
+        "apply_brightness": _default_apply_brightness,
+        "apply_gamma": _default_apply_gamma,
         "current_profile": _default_current_profile,
         "token": lambda: None,
     }
@@ -472,6 +448,19 @@ def _default_apply_values(_temperature, _gamma) -> dict:
 
 
 def _default_apply_natural() -> dict:
+    return _default_read_nightlight()
+
+
+def _default_apply_brightness(_percent) -> dict:
+    return {
+        "available": False,
+        "percent": None,
+        "error_code": "helper_unavailable",
+        "error": "El aplicador de brillo no está configurado",
+    }
+
+
+def _default_apply_gamma(_percent) -> dict:
     return _default_read_nightlight()
 
 
@@ -570,13 +559,31 @@ def _snooze_set_expiry(target_epoch: float, operation: str, env: dict, minutes=N
     )
 
 
-def snooze_set(minutes, env=None) -> dict:
-    """Snooze for ``minutes`` (1..1440): apply natural, then persist expiry.
+def snooze_set_seconds(seconds, env=None) -> dict:
+    """Snooze for ``seconds`` (10..86400): apply natural, then persist expiry.
 
-    The expiry is persisted only after the natural application succeeded; the
-    provenance entry and history record are written transactionally with the
-    expiry in the same atomic state write.
+    The panel composes the duration from a number plus a unit (seconds,
+    minutes or hours); seconds is the honest base unit so every combination
+    maps to one validation range.  The expiry is persisted only after the
+    natural application succeeded; the provenance entry and history record
+    are written transactionally with the expiry in the same atomic state
+    write.
     """
+    env = _resolve_env(env)
+    try:
+        _integer(seconds, "La duración de la posposición", SNOOZE_SECONDS_MIN, SNOOZE_SECONDS_MAX)
+    except AutomationError as error:
+        return _failure(
+            error.error_code, str(error),
+            operation="snooze_set", applied=False,
+            snoozed=False, snooze_until=None,
+        )
+    target = env["now"]() + int(seconds)
+    return _snooze_set_expiry(target, "snooze_set", env)
+
+
+def snooze_set(minutes, env=None) -> dict:
+    """Snooze for whole ``minutes`` (1..1440), delegating to the seconds form."""
     env = _resolve_env(env)
     try:
         _integer(minutes, "La duración de la posposición", SNOOZE_MINUTES_MIN, SNOOZE_MINUTES_MAX)
@@ -586,22 +593,7 @@ def snooze_set(minutes, env=None) -> dict:
             operation="snooze_set", applied=False,
             snoozed=False, snooze_until=None,
         )
-    target = env["now"]() + int(minutes) * 60
-    return _snooze_set_expiry(target, "snooze_set", env, minutes=minutes)
-
-
-def snooze_until_tomorrow(env=None) -> dict:
-    """Snooze until the next local midnight (accurate across midnight/DST)."""
-    env = _resolve_env(env)
-    try:
-        target = until_tomorrow_epoch(env["local_now"]())
-    except AutomationError as error:
-        return _failure(
-            error.error_code, str(error),
-            operation="snooze_until_tomorrow", applied=False,
-            snoozed=False, snooze_until=None,
-        )
-    return _snooze_set_expiry(target, "snooze_until_tomorrow", env)
+    return snooze_set_seconds(int(minutes) * 60, env)
 
 
 def snooze_clear(env=None) -> dict:
@@ -655,36 +647,6 @@ def snooze_clear(env=None) -> dict:
 
 # ---------------------------------------------------------------------------
 # Transition ramp.
-
-def _ramp_start(env: dict, target_temperature: int, target_gamma: int) -> tuple[dict, object]:
-    """Read the current night light state and derive the ramp start values."""
-    current = env["read_nightlight"]()
-    if not current.get("available"):
-        return None, _failure(
-            _failure_code(current, "read_failed"),
-            current.get("error") or "No se pudo leer el estado de la luz nocturna",
-            operation="transition", applied=False,
-            temperature=None, gamma=None, applied_steps=[],
-        )
-    if current.get("identity") is True:
-        start_temperature = IDENTITY_TEMPERATURE
-    else:
-        start_temperature = current.get("temperature")
-        if start_temperature is None:
-            return None, _failure(
-                "read_failed", "La temperatura actual no está disponible",
-                operation="transition", applied=False,
-                temperature=None, gamma=None, applied_steps=[],
-            )
-    start_gamma = current.get("gamma")
-    if start_gamma is None:
-        return None, _failure(
-            "read_failed", "La gamma actual no está disponible",
-            operation="transition", applied=False,
-            temperature=None, gamma=None, applied_steps=[],
-        )
-    return {"temperature": int(start_temperature), "gamma": int(start_gamma)}, None
-
 
 def _run_ramp(
     env: dict,
@@ -755,111 +717,6 @@ def _run_ramp(
     return True, applied
 
 
-def transition(target_temperature, target_gamma, seconds, env=None) -> dict:
-    """Ramp temperature and gamma coherently over ``seconds`` (0..1800).
-
-    ``seconds == 0`` applies the exact target once (immediate mode).  Longer
-    ramps share one deadline, use monotonic bounded steps, honor the
-    cancellation token and never spawn a daemon.  Provenance and history are
-    committed only after the whole ramp succeeded.
-    """
-    env = _resolve_env(env)
-    try:
-        temperature = _integer(target_temperature, "La temperatura", TEMPERATURE_MIN, TEMPERATURE_MAX)
-        gamma = _integer(target_gamma, "La gamma", GAMMA_MIN, GAMMA_MAX)
-        seconds_value = _integer(
-            seconds, "La duración de la transición",
-            TRANSITION_SECONDS_MIN, TRANSITION_SECONDS_MAX,
-        )
-    except AutomationError as error:
-        return _failure(
-            error.error_code, str(error),
-            operation="transition", applied=False,
-            temperature=None, gamma=None, applied_steps=[],
-        )
-
-    token = _token(env)
-    if seconds_value == 0:
-        state = env["apply_values"](temperature, gamma)
-        if not state.get("available") or state.get("error"):
-            return _failure(
-                _failure_code(state, "apply_failed"),
-                state.get("error") or "No se pudo aplicar la transición",
-                operation="transition", applied=False,
-                temperature=None, gamma=None, applied_steps=[],
-            )
-        applied = [(temperature, gamma)]
-    else:
-        start, error = _ramp_start(env, temperature, gamma)
-        if start is None:
-            return error
-        ok, detail = _run_ramp(env, start, temperature, gamma, float(seconds_value), token)
-        if not ok:
-            return detail
-        applied = detail
-
-    now = env["now"]()
-    values = {"temperature": temperature, "gamma": gamma}
-    try:
-        profile = env["current_profile"]()
-    except Exception:
-        profile = None
-    override = build_manual_override(profile, now, "transition", values)
-
-    def _commit(current):
-        next_state = {
-            **current,
-            "origin": "manual",
-            "last_applied": {
-                "at": _iso_timestamp(now),
-                "origin": "manual",
-                "operation": "transition",
-                "values": values,
-            },
-        }
-        if override is not None:
-            next_state["manual_override"] = override
-        elif current.get("manual_override") is not None:
-            # The current schedule profile is temporarily unavailable, so a
-            # fresh period fingerprint cannot be captured. Keep the existing
-            # manual intent instead of clobbering it with None: reconcile is
-            # the authority on whether that override is still current.
-            next_state["manual_override"] = current["manual_override"]
-        else:
-            next_state["manual_override"] = None
-        return next_state
-
-    try:
-        env["update_state"](_commit)
-    except Exception as error:
-        code = "state_failed"
-        history_error = _append_history(
-            env,
-            _history_record(
-                "transition", "manual", now, values=values,
-                success=False, error_code=code,
-            ),
-        )
-        return _failure(
-            code,
-            str(error) if str(error) else "No se pudo guardar la transición",
-            operation="transition", applied=False,
-            temperature=None, gamma=None, applied_steps=list(applied),
-            history_error=history_error,
-        )
-    history_error = _append_history(
-        env,
-        _history_record("transition", "manual", now, values=values, success=True),
-    )
-    return _success(
-        operation="transition", applied=True,
-        temperature=temperature, gamma=gamma,
-        seconds=seconds_value, steps=len(applied),
-        applied_steps=list(applied), history_error=history_error,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Reconcile.
 
 def _profile_drift(profile: Mapping, current: Mapping) -> bool:
@@ -874,10 +731,42 @@ def _profile_drift(profile: Mapping, current: Mapping) -> bool:
     return abs(int(current_temperature) - int(target)) > DRIFT_TOLERANCE_TEMPERATURE
 
 
+def _apply_scheduled_display(env: dict, scheduled: Mapping) -> tuple[dict | None, dict | None]:
+    """Apply the brightness/gamma a period schedules; ``(values, failure)``.
+
+    The nightlight temperature belongs to the hyprsunset profile; brightness
+    and gamma are plugin-owned and only re-applied when the schedule enters
+    a period (or the schedule was just saved), never chased on drift.
+    """
+    values = {}
+    gamma = scheduled.get("gamma")
+    if gamma is not None:
+        state = env["apply_gamma"](int(gamma))
+        if not state.get("available") or state.get("error"):
+            return None, _failure(
+                _failure_code(state, "apply_failed"),
+                state.get("error") or "No se pudo aplicar la gamma programada",
+                operation="reconcile", applied=False, snoozed=False,
+            )
+        values["gamma"] = int(gamma)
+    brightness = scheduled.get("brightness")
+    if brightness is not None:
+        state = env["apply_brightness"](int(brightness))
+        if not state.get("available") or state.get("error"):
+            return None, _failure(
+                _failure_code(state, "brightness_write_failed"),
+                state.get("error") or "No se pudo aplicar el brillo programado",
+                operation="reconcile", applied=False, snoozed=False,
+            )
+        values["brightness"] = int(brightness)
+    return values, None
+
+
 def _apply_profile(
     env: dict, profile: Mapping, current: Mapping,
     transition_seconds: int, token: object,
-) -> tuple[dict, list | None]:
+    scheduled: Mapping | None = None,
+) -> tuple[dict, dict | None]:
     """Apply the schedule profile; returns ``(result, applied_values_or_None)``."""
     if profile.get("kind") == "identity":
         state = env["apply_natural"]()
@@ -887,7 +776,13 @@ def _apply_profile(
                 state.get("error") or "No se pudo aplicar el color natural",
                 operation="reconcile", applied=False, snoozed=False,
             ), None
-        return _success(operation="reconcile", applied=True, snoozed=False), _natural_values(state)
+        values = _natural_values(state)
+        if scheduled is not None:
+            display_values, display_failure = _apply_scheduled_display(env, scheduled)
+            if display_failure is not None:
+                return display_failure, None
+            values.update(display_values)
+        return _success(operation="reconcile", applied=True, snoozed=False), values
 
     target_temperature = profile.get("temperature")
     if target_temperature is None:
@@ -905,50 +800,72 @@ def _apply_profile(
         IDENTITY_TEMPERATURE if current.get("identity") is True else int(start["temperature"])
     )
     start_gamma = int(start["gamma"])
+    target_gamma = (
+        int(scheduled["gamma"])
+        if scheduled is not None and scheduled.get("gamma") is not None
+        else start_gamma
+    )
     if transition_seconds == 0:
-        state = env["apply_values"](target_temperature, start_gamma)
+        state = env["apply_values"](target_temperature, target_gamma)
         if not state.get("available") or state.get("error"):
             return _failure(
                 _failure_code(state, "apply_failed"),
                 state.get("error") or "No se pudo aplicar el perfil",
                 operation="reconcile", applied=False, snoozed=False,
             ), None
-        applied = [(target_temperature, start_gamma)]
+        applied = [(target_temperature, target_gamma)]
     else:
         ok, detail = _run_ramp(
             env,
             {"temperature": start_temperature, "gamma": start_gamma},
-            target_temperature, start_gamma,
+            target_temperature, target_gamma,
             float(transition_seconds), token,
             operation="reconcile",
         )
         if not ok:
             return detail, None
         applied = detail
-    values = {"temperature": target_temperature, "gamma": start_gamma}
+    values = {"temperature": target_temperature, "gamma": target_gamma}
+    if scheduled is not None and "brightness" in scheduled:
+        display_values, display_failure = _apply_scheduled_display(
+            env, {"brightness": scheduled["brightness"]}
+        )
+        if display_failure is not None:
+            return display_failure, None
+        values.update(display_values)
     return _success(operation="reconcile", applied=True, snoozed=False), values
 
 
-def _commit_reconcile(env: dict, values: dict) -> tuple[bool, str | None]:
+def _commit_reconcile(
+    env: dict, values: dict, period_applied: str | None = None
+) -> tuple[bool, str | None]:
     """Persist provenance and history for one reconcile apply.
 
     Returns ``(ok, history_error)``: ``ok`` is False only when the atomic
     provenance write failed (the caller must report an honest failure).
+    ``period_applied`` records the schedule period whose display values were
+    just applied, so the same period is not re-applied until the next
+    transition.
     """
     now = env["now"]()
+
+    def _commit(current):
+        next_state = {
+            **current,
+            "last_applied": {
+                "at": _iso_timestamp(now),
+                "origin": "automatic",
+                "operation": "reconcile_schedule",
+                "values": values,
+            },
+            "manual_override": None,
+        }
+        if period_applied is not None:
+            next_state["schedule_period_applied"] = period_applied
+        return next_state
+
     try:
-        env["update_state"](
-            lambda current: {
-                **current,
-                "last_applied": {
-                    "at": _iso_timestamp(now),
-                    "origin": "automatic",
-                    "operation": "reconcile_schedule",
-                    "values": values,
-                },
-                "manual_override": None,
-            }
-        )
+        env["update_state"](_commit)
     except Exception:
         return False, None
     return True, _append_history(
@@ -957,6 +874,17 @@ def _commit_reconcile(env: dict, values: dict) -> tuple[bool, str | None]:
             "reconcile_schedule", "automatic", now, values=values, success=True
         ),
     )
+
+
+def _pending_display(state: Mapping, profile: Mapping) -> Mapping | None:
+    """Display values scheduled for a period reconcile has not applied yet."""
+    display = state.get("schedule_display")
+    period = profile.get("period") if isinstance(profile, Mapping) else None
+    if not isinstance(display, Mapping) or period not in display:
+        return None
+    if state.get("schedule_period_applied") == period:
+        return None
+    return display[period]
 
 
 def reconcile(env=None) -> dict:
@@ -1079,12 +1007,17 @@ def reconcile(env=None) -> dict:
                 current.get("error") or "No se pudo leer el estado de la luz nocturna",
                 operation="reconcile", applied=False, snoozed=False,
             )
+        scheduled = _pending_display(state, profile)
         result, values = _apply_profile(
-            env, profile, current, state.get("transition_seconds", 0), token
+            env, profile, current, state.get("transition_seconds", 0), token,
+            scheduled=scheduled,
         )
         if not result.get("success"):
             return result
-        committed, history_error = _commit_reconcile(env, values)
+        committed, history_error = _commit_reconcile(
+            env, values,
+            period_applied=profile.get("period") if scheduled is not None else None,
+        )
         if not committed:
             return _failure(
                 "state_failed", "No se pudo guardar el perfil aplicado",
@@ -1096,6 +1029,7 @@ def reconcile(env=None) -> dict:
             operation="reconcile", applied=True, snoozed=False,
             temperature=values.get("temperature"),
             gamma=values.get("gamma"),
+            brightness=values.get("brightness"),
             history_error=history_error,
         )
 
@@ -1138,6 +1072,7 @@ def reconcile(env=None) -> dict:
             current.get("error") or "No se pudo leer el estado de la luz nocturna",
             operation="reconcile", applied=False, snoozed=False,
         )
+    scheduled = _pending_display(state, profile)
     if not _profile_drift(profile, current):
         if override is not None:
             try:
@@ -1150,14 +1085,38 @@ def reconcile(env=None) -> dict:
                     "No se pudo limpiar el modo manual del período anterior",
                     operation="reconcile", applied=False, snoozed=False,
                 )
-        return _success(operation="reconcile", applied=False, snoozed=False)
+        if scheduled is None:
+            return _success(operation="reconcile", applied=False, snoozed=False)
+        # Freshly saved schedule on an already-correct temperature: apply the
+        # scheduled display values alone instead of waiting for a transition.
+        display_values, display_failure = _apply_scheduled_display(env, scheduled)
+        if display_failure is not None:
+            return display_failure
+        committed, history_error = _commit_reconcile(
+            env, display_values, period_applied=profile.get("period")
+        )
+        if not committed:
+            return _failure(
+                "state_failed", "No se pudo guardar el perfil aplicado",
+                operation="reconcile", applied=False, snoozed=False,
+            )
+        return _success(
+            operation="reconcile", applied=True, snoozed=False,
+            gamma=display_values.get("gamma"),
+            brightness=display_values.get("brightness"),
+            history_error=history_error,
+        )
 
     result, values = _apply_profile(
-        env, profile, current, state.get("transition_seconds", 0), token
+        env, profile, current, state.get("transition_seconds", 0), token,
+        scheduled=scheduled,
     )
     if not result.get("success"):
         return result
-    committed, history_error = _commit_reconcile(env, values)
+    committed, history_error = _commit_reconcile(
+        env, values,
+        period_applied=profile.get("period") if scheduled is not None else None,
+    )
     if not committed:
         return _failure(
             "state_failed", "No se pudo guardar el perfil aplicado",
@@ -1169,6 +1128,7 @@ def reconcile(env=None) -> dict:
         operation="reconcile", applied=True, snoozed=False,
         temperature=values.get("temperature"),
         gamma=values.get("gamma"),
+        brightness=values.get("brightness"),
         history_error=history_error,
     )
 
@@ -1176,12 +1136,14 @@ def reconcile(env=None) -> dict:
 __all__ = [
     "AutomationError", "CancellationToken",
     "SNOOZE_MINUTES_MIN", "SNOOZE_MINUTES_MAX",
+    "SNOOZE_SECONDS_MIN", "SNOOZE_SECONDS_MAX",
     "TEMPERATURE_MIN", "TEMPERATURE_MAX", "GAMMA_MIN", "GAMMA_MAX",
+    "BRIGHTNESS_MIN", "BRIGHTNESS_MAX",
     "TRANSITION_SECONDS_MIN", "TRANSITION_SECONDS_MAX",
     "STEP_INTERVAL_SECONDS", "IDENTITY_TEMPERATURE",
     "DRIFT_TOLERANCE_TEMPERATURE", "IDENTITY_OVERRIDE_DURATION_SECONDS",
     "build_manual_override", "commit_manual_apply",
     "default_env", "ramp_schedule", "snooze_status",
-    "snooze_status_current", "snooze_set", "snooze_until_tomorrow",
-    "snooze_clear", "transition", "reconcile", "until_tomorrow_epoch",
+    "snooze_status_current", "snooze_set", "snooze_set_seconds",
+    "snooze_clear", "reconcile",
 ]

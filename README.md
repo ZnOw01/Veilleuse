@@ -7,22 +7,26 @@ from the bar.
 
 ## Features
 
-- Redesigned panel with Home, Automation and Settings views, direct
-  navigation and status glyphs.
-- Brightness for the focused or a selected monitor, limited to one physical
-  step per operation and confirmed by readback.
+- Redesigned panel with Home, Automation and Settings views, switched with
+  on-screen arrows or the `← →` keys.
+- Brightness for the focused or a selected monitor, written as one absolute
+  percentage per operation and confirmed by readback.
 - Night light from 2500 to 6500 K and gamma from 0 to 100 %.
-- Built-in and custom presets with temperature, gamma and optional brightness.
-- Snooze for a fixed time or until tomorrow, cancelable gradual transitions
-  and schedule reconciliation.
-- Day/night schedule with atomic updates to `~/.config/hypr/hyprsunset.conf`;
-  comments, permissions, foreign profiles and a `.bak` copy are preserved.
+- Day/night schedule where each period configures its time plus the same
+  three options the Home sliders drive (temperature, brightness, gamma),
+  entered as numbers.
+- Scheduled brightness and gamma are applied by the plugin when the schedule
+  enters a period, or right after saving it.
+- Snooze composed from a number and an hours/minutes/seconds unit,
+  cancelable at any time.
+- Atomic updates to `~/.config/hypr/hyprsunset.conf`; comments, permissions,
+  foreign profiles and a `.bak` copy are preserved.
 - Transactional schedule enable/disable with conflict detection.
-- Visible preflight, bounded history, operation provenance and a complete
-  Spanish/English interface.
+- English by default with a complete Spanish interface selectable in
+  settings.
 - Optional, reversible keyboard shortcut in `bindings.lua` (manual install,
   never automatic).
-- Mouse, arrow-key and `j/k/h/l` navigation.
+- Mouse and arrow-key navigation.
 
 ## Requirements
 

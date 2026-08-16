@@ -101,11 +101,13 @@ class SimulatedCommands:
                 if output is None:
                     output = f"{self.brightness_percent}\n"
                 return cp(tokens, 0, output, "")
-            # --no-osd --monitor NAME +1%|1%- → one-point write
+            # --no-osd --monitor NAME N% → absolute write, +N%/N%- stay relative
             if len(tokens) == 5 and tokens[2] == "--monitor":
                 if self.apply_brightness:
                     token = tokens[4]
-                    if token == "+1%":
+                    if token.endswith("%") and token[:-1].isdigit():
+                        self.brightness_percent = max(1, min(100, int(token[:-1])))
+                    elif token == "+1%":
                         self.brightness_percent = min(100, self.brightness_percent + 1)
                     elif token == "1%-":
                         self.brightness_percent = max(1, self.brightness_percent - 1)
@@ -308,24 +310,17 @@ class StateControlSliceBTests(HelperModuleTests):
 
     def test_status_adds_persistence_sections_without_dropping_live_fields(self):
         module = self.state_module()
-        module.write_config(
-            {
-                "schema": 1,
-                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-                "default_preset": "desk",
-            }
-        )
         module.write_state(
             dict(
                 module.DEFAULT_STATE,
                 schedule_enabled=False,
                 snooze_until=4102444800,
                 transition_seconds=45,
-                origin="preset",
+                origin="manual",
+                schedule_display={"night": {"brightness": 60, "gamma": 80}},
+                schedule_period_applied="night",
             )
         )
-        module.append_history({"time": "2026-08-13T10:00:00Z", "operation": "old", "origin": "manual"})
-        module.append_history({"time": "2026-08-13T11:00:00Z", "operation": "new", "origin": "preset"})
 
         code, output = self.run_cli("status")
         self.assertEqual(code, 0)
@@ -336,11 +331,16 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertIn("preflight", status)
         self.assertEqual(status["automation"]["schedule_enabled"], False)
         self.assertEqual(status["automation"]["transition_seconds"], 45)
-        self.assertEqual(status["automation"]["origin"], "preset")
-        self.assertEqual(status["presets"]["default_preset"], "desk")
-        self.assertEqual([item["name"] for item in status["presets"]["builtins"]], ["day", "evening", "night"])
-        self.assertEqual(status["presets"]["user"][0]["name"], "desk")
-        self.assertEqual([item["operation"] for item in status["history"]], ["new", "old"])
+        self.assertEqual(status["automation"]["origin"], "manual")
+        self.assertEqual(
+            status["automation"]["schedule_display"],
+            {"night": {"brightness": 60, "gamma": 80}},
+        )
+        self.assertEqual(status["automation"]["schedule_period_applied"], "night")
+        # Presets and history are internal now: status carries neither.
+        self.assertNotIn("presets", status)
+        self.assertNotIn("history", status)
+        self.assertNotIn("history_status", status)
 
     def test_corrupt_state_only_fails_automation_section(self):
         module = self.state_module()
@@ -353,10 +353,11 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertEqual(status["nightlight"]["temperature"], 3500)
         self.assertFalse(status["automation"]["available"])
         self.assertEqual(status["automation"]["error_code"], "invalid_json")
-        self.assertEqual(status["presets"]["default_preset"], "day")
-        self.assertEqual(status["history"], [])
+        self.assertIsNone(status["automation"]["schedule_display"])
 
-    def test_corrupt_config_and_history_fail_only_their_sections(self):
+    def test_corrupt_config_and_history_do_not_touch_status(self):
+        # The config and history documents are internal audit surfaces: a
+        # corrupt one must not degrade the status the panel renders.
         module = self.state_module()
         config = module.config_path()
         config.parent.mkdir(parents=True)
@@ -368,11 +369,7 @@ class StateControlSliceBTests(HelperModuleTests):
         status = json.loads(self.run_cli("status")[1])
         self.assertEqual(status["brightness"]["percent"], 42)
         self.assertEqual(status["nightlight"]["temperature"], 3500)
-        self.assertFalse(status["presets"]["available"])
-        self.assertEqual(status["presets"]["error_code"], "invalid_json")
-        self.assertEqual(status["history"], [])
-        self.assertFalse(status["history_status"]["available"])
-        self.assertEqual(status["history_status"]["error_code"], "invalid_json")
+        self.assertTrue(status["automation"]["available"])
 
     def test_preflight_reports_bounded_read_only_checks_with_stable_errors(self):
         calls = []
@@ -439,50 +436,6 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertEqual(brightness["error_code"], "missing_command")
         self.assertIn("Comando ausente", brightness["error"])
 
-    def test_history_cli_lists_newest_first_and_clear_is_explicit(self):
-        module = self.state_module()
-        module.append_history({"time": "2026-08-13T10:00:00Z", "operation": "old"})
-        module.append_history({"time": "2026-08-13T11:00:00Z", "operation": "new"})
-
-        code, output = self.run_cli("history", "list")
-        self.assertEqual(code, 0)
-        self.assertEqual([item["operation"] for item in json.loads(output)["history"]], ["new", "old"])
-
-        code, output = self.run_cli("history", "clear")
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["history"], [])
-        self.assertTrue(module.history_path().exists())
-        self.assertEqual(module.history_path().read_text(encoding="utf-8"), "")
-
-    def test_settings_get_set_validates_presets_and_does_not_touch_schedule(self):
-        module = self.state_module()
-        module.write_config(
-            {
-                "schema": 1,
-                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-                "default_preset": "desk",
-            }
-        )
-        schedule = self.xdg / "hypr" / "hyprsunset.conf"
-        schedule.parent.mkdir(parents=True)
-        schedule.write_text("# untouched\n", encoding="utf-8")
-
-        code, output = self.run_cli("settings", "get")
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["settings"]["default_preset"], "desk")
-
-        code, output = self.run_cli("settings", "set", "--default-preset", "evening")
-        self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["settings"]["default_preset"], "evening")
-        self.assertEqual(module.read_config()["default_preset"], "evening")
-        self.assertEqual(schedule.read_text(encoding="utf-8"), "# untouched\n")
-
-        code, output = self.run_cli("settings", "set", "--default-preset", "missing")
-        self.assertNotEqual(code, 0)
-        self.assertEqual(json.loads(output)["error_code"], "invalid_config")
-        self.assertEqual(module.read_config()["default_preset"], "evening")
-
-
 class BrightnessTests(HelperModuleTests):
     def test_brightness_read_uses_focused_monitor(self):
         code, output = self.run_cli("brightness")
@@ -491,25 +444,25 @@ class BrightnessTests(HelperModuleTests):
         self.assertEqual(result["percent"], 42)
         self.assertEqual(result["monitor"], "eDP-1")
 
-    def test_brightness_set_delegates_one_relative_step_to_same_monitor(self):
+    def test_brightness_set_writes_one_absolute_token_to_same_monitor(self):
         code, output = self.run_cli("brightness", "60")
         self.assertEqual(code, 0)
         result = json.loads(output)
-        self.assertEqual(result["brightness"]["percent"], 43)
+        self.assertEqual(result["brightness"]["percent"], 60)
         writes = self.sim.brightness_writes()
         self.assertEqual(len(writes), 1)
-        self.assertEqual(writes[0], ["omarchy-brightness-display", "--no-osd", "--monitor", "eDP-1", "+1%"])
+        self.assertEqual(writes[0], ["omarchy-brightness-display", "--no-osd", "--monitor", "eDP-1", "60%"])
 
-    def test_brightness_set_clamps_intent_but_never_moves_more_than_one_point(self):
+    def test_brightness_set_clamps_intent_into_the_writable_range(self):
         code, output = self.run_cli("brightness", "0")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["brightness"]["percent"], 41)
+        self.assertEqual(json.loads(output)["brightness"]["percent"], 1)
         code, output = self.run_cli("brightness", "150")
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["brightness"]["percent"], 42)
+        self.assertEqual(json.loads(output)["brightness"]["percent"], 100)
         writes = self.sim.brightness_writes()
-        self.assertEqual(writes[0][4], "1%-")
-        self.assertEqual(writes[1][4], "+1%")
+        self.assertEqual(writes[0][4], "1%")
+        self.assertEqual(writes[1][4], "100%")
 
     def test_brightness_equal_target_issues_no_write(self):
         code, output = self.run_cli("brightness", "42")
@@ -534,18 +487,14 @@ class FinalIntegrationCliTests(HelperModuleTests):
         parser = vc.build_parser()
         commands = (
             ("brightness", "60", "--monitor", "DP-1"),
-            ("preset", "list"),
-            ("preset", "save", "desk", "--temperature", "4200", "--gamma", "85"),
-            ("preset", "delete", "desk"),
-            ("preset", "apply", "reading", "--monitor", "focused", "--transition-seconds", "0"),
             ("snooze", "status"),
             ("snooze", "set", "--minutes", "30"),
-            ("snooze", "until-tomorrow"),
+            ("snooze", "set", "--seconds", "90"),
             ("snooze", "clear"),
-            ("transition", "--temperature", "4200", "--gamma", "85", "--seconds", "0"),
             ("schedule", "status"),
             ("schedule", "get"),
             ("schedule", "set", "--day-time", "06:00", "--night-time", "15:30", "--day-temp", "6000", "--night-temp", "3500"),
+            ("schedule", "set", "--day-time", "06:00", "--night-time", "15:30", "--day-temp", "6000", "--night-temp", "3500", "--day-brightness", "80", "--day-gamma", "100", "--night-brightness", "55", "--night-gamma", "85"),
             ("schedule", "enable"),
             ("schedule", "disable"),
             ("reconcile",),
@@ -555,7 +504,7 @@ class FinalIntegrationCliTests(HelperModuleTests):
                 args = parser.parse_args(command)
                 self.assertTrue(callable(args.handler))
 
-    def test_brightness_explicit_monitor_is_validated_and_wired_to_native_step(self):
+    def test_brightness_explicit_monitor_is_validated_and_wired_to_absolute_write(self):
         code, output = self.run_cli("brightness", "60", "--monitor", "DP-1")
         self.assertEqual(code, 0, output)
         result = json.loads(output)
@@ -563,27 +512,48 @@ class FinalIntegrationCliTests(HelperModuleTests):
         writes = self.sim.brightness_writes()
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0][3], "DP-1")
-        self.assertEqual(writes[0][4], "+1%")
+        self.assertEqual(writes[0][4], "60%")
 
-    def test_custom_preset_commands_return_status_compatible_payloads(self):
+    def test_schedule_set_persists_display_values_and_arms_the_marker(self):
+        schedule = vc.config_path()
+        schedule.parent.mkdir(parents=True, exist_ok=True)
+        schedule.write_text(
+            "profile {\n    time = 06:00\n    identity = true\n}\n\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n",
+            encoding="utf-8",
+        )
+        module = vc._state_module()
+        module.write_state(
+            dict(module.DEFAULT_STATE, schedule_period_applied="night",
+                 schedule_display={"night": {"brightness": 40}})
+        )
+
         code, output = self.run_cli(
-            "preset", "save", "desk", "--temperature", "4200", "--gamma", "85", "--brightness", "45"
+            "schedule", "set", "--day-time", "06:00", "--night-time", "15:30",
+            "--day-temp", "6000", "--night-temp", "3500",
+            "--day-brightness", "80", "--day-gamma", "100",
+            "--night-brightness", "55", "--night-gamma", "85",
         )
         self.assertEqual(code, 0, output)
-        saved = json.loads(output)
-        self.assertTrue(saved["presets"]["available"])
-        self.assertEqual(saved["presets"]["user"][0]["name"], "desk")
+        status = json.loads(output)
+        self.assertEqual(
+            status["automation"]["schedule_display"],
+            {
+                "day": {"brightness": 80, "gamma": 100},
+                "night": {"brightness": 55, "gamma": 85},
+            },
+        )
+        # Saving arms the current period so reconcile applies the fresh
+        # values instead of waiting for the next transition.
+        self.assertIsNone(status["automation"]["schedule_period_applied"])
 
-        code, output = self.run_cli("preset", "apply", "desk", "--monitor", "focused", "--transition-seconds", "0")
+        # Display values are optional: saving without them clears the map.
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "06:00", "--night-time", "15:30",
+            "--day-temp", "6000", "--night-temp", "3500",
+        )
         self.assertEqual(code, 0, output)
-        applied = json.loads(output)
-        self.assertEqual(applied["automation"]["origin"], "preset")
-        self.assertEqual(applied["automation"]["last_applied"]["preset"], "desk")
-        self.assertTrue(all(call[4] in ("+1%", "1%-") for call in self.sim.brightness_writes()))
-
-        code, output = self.run_cli("preset", "delete", "desk")
-        self.assertEqual(code, 0, output)
-        self.assertEqual(json.loads(output)["presets"]["user"], [])
+        self.assertEqual(json.loads(output)["automation"]["schedule_display"], {})
 
     def test_snooze_transition_reconcile_and_schedule_toggle_are_structured(self):
         schedule = vc.config_path()
@@ -597,9 +567,8 @@ class FinalIntegrationCliTests(HelperModuleTests):
         for command in (
             ("snooze", "status"),
             ("snooze", "set", "--minutes", "30"),
+            ("snooze", "set", "--seconds", "90"),
             ("snooze", "clear"),
-            ("snooze", "until-tomorrow"),
-            ("transition", "--temperature", "4200", "--gamma", "85", "--seconds", "0"),
             ("reconcile",),
         ):
             with self.subTest(command=command):
@@ -617,69 +586,42 @@ class FinalIntegrationCliTests(HelperModuleTests):
         self.assertTrue(json.loads(output)["automation"]["schedule_enabled"])
 
     def test_new_command_errors_have_stable_json_codes(self):
-        code, output = self.run_cli(
-            "preset", "save", "NotValid", "--temperature", "4200", "--gamma", "85"
-        )
+        code, output = self.run_cli("snooze", "set")
         self.assertNotEqual(code, 0)
         payload = json.loads(output)
-        self.assertEqual(payload["error_code"], "invalid_preset")
+        self.assertEqual(payload["error_code"], "invalid_argument")
         self.assertTrue(payload["error"])
 
-    def test_transition_config_valid_seconds(self):
-        code, output = self.run_cli("transition-config", "--seconds", "45")
-        self.assertEqual(code, 0)
-        payload = json.loads(output)
-        self.assertIn("automation", payload)
-        self.assertEqual(payload["automation"]["transition_seconds"], 45)
-
-    def test_transition_config_integer_out_of_range(self):
-        code, output = self.run_cli("transition-config", "--seconds", "2000")
-        self.assertNotEqual(code, 0)
-        payload = json.loads(output)
-        self.assertEqual(payload["error_code"], "invalid_transition")
-
-    def test_transition_config_non_integer(self):
-        code, output = self.run_cli("transition-config", "--seconds", "abc")
+    def test_schedule_set_display_out_of_range_reports_stable_error(self):
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "06:00", "--night-time", "15:30",
+            "--day-temp", "6000", "--night-temp", "3500", "--night-brightness", "101",
+        )
         self.assertNotEqual(code, 0)
         payload = json.loads(output)
         self.assertEqual(payload["error_code"], "invalid_argument")
 
-    def test_transition_config_preserves_other_state(self):
-        module = vc._state_module()
-        module.write_config(
-            {
-                "schema": 1,
-                "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-                "default_preset": "desk",
-            }
-        )
-        module.write_state(
-            dict(
-                module.DEFAULT_STATE,
-                schedule_enabled=False,
-                snooze_until=4102444800,
-                transition_seconds=30,
-                origin="preset",
-            )
-        )
-        code, output = self.run_cli("transition-config", "--seconds", "60")
-        self.assertEqual(code, 0)
-        status = json.loads(output)
-        self.assertEqual(status["automation"]["transition_seconds"], 60)
-        self.assertEqual(status["automation"]["origin"], "preset")
-        self.assertEqual(status["automation"]["schedule_enabled"], False)
+    def test_schedule_set_derives_identity_day_from_temperature(self):
+        schedule = vc.config_path()
+        schedule.parent.mkdir(parents=True, exist_ok=True)
 
-    def test_transition_config_corrupt_state_emits_error(self):
-        module = vc._state_module()
-        path = module.state_path()
-        path.parent.mkdir(parents=True)
-        path.write_text("{\"schema\": 1,", encoding="utf-8")
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "06:00", "--night-time", "15:30",
+            "--day-temp", "6000", "--night-temp", "3500",
+        )
+        self.assertEqual(code, 0, output)
+        text_written = schedule.read_text(encoding="utf-8")
+        self.assertIn("identity = true", text_written)
+        self.assertTrue(json.loads(output)["schedule"]["day_identity"])
 
-        code, output = self.run_cli("transition-config", "--seconds", "45")
-        self.assertNotEqual(code, 0)
-        payload = json.loads(output)
-        self.assertIn("error_code", payload)
-        self.assertTrue(payload["error"])
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "06:00", "--night-time", "15:30",
+            "--day-temp", "5950", "--night-temp", "3500",
+        )
+        self.assertEqual(code, 0, output)
+        text_written = schedule.read_text(encoding="utf-8")
+        self.assertIn("temperature = 5950", text_written)
+        self.assertFalse(json.loads(output)["schedule"]["day_identity"])
 
 
 class NightlightTests(HelperModuleTests):
@@ -972,12 +914,12 @@ class ScheduleTests(HelperModuleTests):
             "--day-time", "07:00",
             "--night-temp", "4000",
             "--day-temp", "5900",
-            "--no-natural-day",
         )
         self.assertEqual(code, 0)
         result = json.loads(output)
         self.assertEqual(result["schedule"]["night_time"], "21:00")
         self.assertEqual(result["schedule"]["day_time"], "07:00")
+        self.assertFalse(result["schedule"]["day_identity"])
         text = path.read_text(encoding="utf-8")
         self.assertIn("# keep me", text)
         self.assertIn("21:00", text)
@@ -1004,7 +946,6 @@ class ScheduleTests(HelperModuleTests):
             "--day-time", "06:00",
             "--night-temp", "3800",
             "--day-temp", "6000",
-            "--natural-day",
         )
         self.assertEqual(code, 0)
         text = path.read_text(encoding="utf-8")
@@ -1021,8 +962,7 @@ class ScheduleTests(HelperModuleTests):
             "--night-time", "21:00",
             "--day-time", "07:00",
             "--night-temp", "4000",
-            "--day-temp", "6000",
-            "--no-natural-day",
+            "--day-temp", "5950",
         )
         self.assertEqual(code, 0)
         text = vc.config_path().read_text(encoding="utf-8")
@@ -1394,14 +1334,14 @@ class ReadmeLimitsTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         claim = re.search(r"Night light from (\d+) to (\d+) K", readme)
         self.assertIsNotNone(claim, "README must state the night-light temperature range")
-        slider = self.panel_slider_range("id: temperatureRow", "id: gammaRow")
+        slider = self.panel_slider_range("id: temperatureColumn", "id: gammaColumn")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
 
     def test_readme_gamma_range_matches_the_panel_slider(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         claim = re.search(r"gamma from (\d+) to (\d+)\s*%", readme)
         self.assertIsNotNone(claim, "README must state the gamma range")
-        slider = self.panel_slider_range("id: gammaRow", "id: scheduleSurface")
+        slider = self.panel_slider_range("id: gammaColumn", "id: automationRoute")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
 
     def test_readme_does_not_state_a_brightness_range_the_panel_does_not_share(self):

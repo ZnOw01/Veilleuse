@@ -12,14 +12,12 @@ for path in (
     Path('scripts/schedule_toggle_utils.py'),
     Path('scripts/shortcut_utils.py'),
     Path('scripts/automation_utils.py'),
-    Path('scripts/preset_utils.py'),
 ):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
 PY
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_veilleuse_control.py'
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p test_automation_utils.py
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p test_state_utils.py
-PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p test_preset_utils.py
 PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 -m unittest discover -s tests -p 'test_schedule_toggle_utils.py'
 node --test tests/UiModel.test.js tests/model.test.mjs tests/layout.test.mjs tests/i18n.test.js tests/uiModelV2.test.js tests/errorCodes.test.js
 /usr/bin/python3 -m json.tool manifest.json >/dev/null

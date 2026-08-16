@@ -12,66 +12,50 @@ Panel {
     property Item anchorItem: null
     property var state: root.normalizeCombined({})
     property string route: "home"
-    property string locale: "es"
-    property string applyScope: "session"
+    property string locale: "en"
     property string selectedMonitor: "focused"
-    property string preferredPreset: "day"
-    property string customPresetName: ""
     property string shortcutKeys: "SUPER+SHIFT+N"
-    property int transitionSeconds: 8
-    property bool scheduleEditorOpen: false
-    property bool presetsLoaded: false
-    property bool historyLoaded: false
-    property bool preflightLoaded: false
-    property var presetItems: []
-    property var historyItems: []
-    property var preflightState: ({})
-    property string lastAppliedText: ""
-    property string operationOrigin: "unknown"
-    property var cursor: Model.cursorStart()
-    property bool scheduleExpanded: false
-    property string editStart: "06:00"
-    property string editEnd: "15:30"
-    property bool editNaturalDay: true
-    property string editDayTemperature: "6000"
-    property string editNightTemperature: "3500"
+    property int snoozeAmount: 30
+    property string snoozeUnit: "minutes"
     property string lastError: ""
     property string feedbackText: ""
     property bool actionPending: false
     property int latestRequestId: 0
     property int queuedRequestId: 0
     property int processRequestId: 0
-    property var pendingSteps: { "brightness": 0, "temperature": 0, "gamma": 0 }
     property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
     property var queuedCommand: []
-    property string queuedPresetPrevious: ""
-    property int queuedPresetRequestId: 0
-    property bool presetDeleteArmed: false
-    property string presetDeleteArmedName: ""
     property bool stoppingForLatest: false
     property string processOutput: ""
     property string processError: ""
+    // Schedule editor drafts: times, temperatures and the optional display
+    // values (brightness/gamma) each period schedules. Empty display drafts
+    // mean "leave the period without scheduled display values".
+    property var cursor: Model.cursorStart()
+    property string editStart: "06:00"
+    property string editEnd: "15:30"
+    property string editDayTemperature: "6000"
+    property string editDayBrightness: ""
+    property string editDayGamma: ""
+    property string editNightTemperature: "3500"
+    property string editNightBrightness: ""
+    property string editNightGamma: ""
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool stateReady: state.available === true
-    readonly property string statusText: !stateReady ? root.text("unavailable") : (state.enabled ? root.text("enabled") : root.text("disabled"))
-    readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature, root.locale).error
-    readonly property string errorText: root.lastError !== "" ? root.lastError : (root.scheduleExpanded && root.scheduleValidationError !== "" ? root.scheduleValidationError : root.localizeErrorString(root.state.error || ""))
-    readonly property string periodText: root.stateReady && root.state.schedule.period === "day" ? root.text("period_day") : (root.stateReady && root.state.schedule.period === "night" ? root.text("period_night") : root.statusText)
-    readonly property string manualOverrideText: root.text("manual_override")
-    readonly property string heroMeta: root.periodText + (Model.isManualOverride(root.state) ? " · " + root.manualOverrideText : "")
-    readonly property real valueColumnWidth: Style.space(54)
+    readonly property string errorText: root.lastError !== "" ? root.lastError : root.localizeErrorString(root.state.error || "")
     readonly property var routeOptions: Model.routeOrder()
     readonly property var monitorOptions: root.monitorChoices()
-    readonly property var presetOptions: root.presetChoices()
-    readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : root.operationOrigin
+    readonly property string routeTitle: root.text(root.route)
+    readonly property string previousRoute: Model.adjacentRoute(root.route, -1)
+    readonly property string nextRoute: Model.adjacentRoute(root.route, 1)
+    readonly property string automationOrigin: root.state.automation && root.state.automation.origin ? String(root.state.automation.origin) : "unknown"
     readonly property bool automationReady: Boolean(root.state.automation && root.state.automation.available === true)
     readonly property bool scheduleEnabled: Boolean(root.automationReady && root.state.automation.schedule_enabled !== false)
     readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
-    readonly property string scopeText: I18n.t(root.applyScope === "persistent" ? "persistent" : "session", root.locale)
     readonly property bool snoozeActive: Boolean(root.state.automation && root.state.automation.snoozed)
     // Minutes left on the active snooze, recomputed whenever the helper
     // refreshes the combined status (open, actions, reconcile).
@@ -81,6 +65,15 @@ Panel {
             return 0;
         return Math.max(0, Math.round((until - Date.now() / 1000) / 60));
     }
+    readonly property var snoozeSeconds: Model.snoozeDurationSeconds(root.snoozeAmount, root.snoozeUnit)
+    readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma, root.locale).error
+    // Focus-owned controls suspend the arrow keyboard so editors and popup
+    // lists receive their keys normally.
+    readonly property bool keyCatcherBlocked: startEditor.activeFocus || endEditor.activeFocus
+        || dayTemperatureEditor.field.activeFocus || dayBrightnessEditor.field.activeFocus || dayGammaEditor.field.activeFocus
+        || nightTemperatureEditor.field.activeFocus || nightBrightnessEditor.field.activeFocus || nightGammaEditor.field.activeFocus
+        || snoozeEditor.field.activeFocus || shortcutField.activeFocus
+        || monitorSelector.popupOpen || localeSelector.popupOpen
 
     function normalizedPath(value) {
         var candidate = String(value || "");
@@ -99,14 +92,10 @@ Panel {
 
     // Localize a structured diagnostic without mangling an already-localized
     // literal: known error codes map through the dictionaries, the model's
-    // Spanish "not confirmed" fallback maps to the active locale, and every
+    // English "not confirmed" fallback maps to the active locale, and every
     // other literal passes through verbatim.
     function localizeErrorString(value) {
         return Model.localizeStateError(value, root.locale);
-    }
-
-    function toggleNightlight() {
-        root.request(["nightlight", "toggle"], "toggle");
     }
 
     function normalizeCombined(raw) {
@@ -116,14 +105,11 @@ Panel {
             schedule_enabled: input.schedule_enabled !== false,
             snooze_until: null,
             snoozed: false,
-            transition_seconds: root.transitionSeconds,
             origin: "unknown",
-            last_applied: null
+            schedule_display: null,
+            schedule_period_applied: null
         };
-        normalized.presets = input.presets && typeof input.presets === "object" ? input.presets : { builtins: [], user: [] };
-        normalized.history = Array.isArray(input.history) ? input.history : [];
         normalized.monitors = Array.isArray(input.monitors) ? input.monitors : [];
-        normalized.preflight = input.preflight && typeof input.preflight === "object" ? input.preflight : {};
         return normalized;
     }
 
@@ -131,41 +117,32 @@ Panel {
         var next = normalizeCombined(base);
         var input = raw && typeof raw === "object" ? raw : {};
         if (input.automation && typeof input.automation === "object") next.automation = input.automation;
-        if (input.presets && typeof input.presets === "object") next.presets = input.presets;
-        if (Array.isArray(input.history)) next.history = input.history;
         if (Array.isArray(input.monitors)) next.monitors = input.monitors;
-        if (input.preflight && typeof input.preflight === "object") next.preflight = input.preflight;
         if (input.origin) root.operationOrigin = String(input.origin);
-        if (input.last_applied) root.lastAppliedText = root.formatLastApplied(input.last_applied);
-        if (input.automation && input.automation.last_applied)
-            root.lastAppliedText = root.formatLastApplied(input.automation.last_applied);
         return next;
     }
+
+    property string operationOrigin: "unknown"
 
     function navigateToRoute(nextRoute) {
         if (root.routeOptions.indexOf(nextRoute) === -1) return;
         if (nextRoute !== root.route) {
-            root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
             root.dragTarget = Model.dragTargetEmpty();
             root.cursor = Model.cursorStart();
-            if (nextRoute !== "automation") {
-                root.scheduleExpanded = false;
-                root.scheduleEditorOpen = false;
-            }
         }
         root.route = nextRoute;
-        // Structured-only responses (history, preflight) carry no state, so
-        // returning home re-reads the physical baseline the sliders must show.
+        // Returning home re-reads the physical baseline the sliders show.
         if (nextRoute === "home") root.requestStatus();
-        if (nextRoute === "automation" && !root.scheduleEditorOpen) root.request(["schedule", "status"], "schedule-status");
-        if (nextRoute === "settings" && !root.preflightLoaded) root.request(["preflight"], "preflight");
+        if (nextRoute === "automation") {
+            root.populateScheduleEditor();
+            root.request(["schedule", "status"], "schedule-status");
+        }
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
 
-    // Focusable buttons steal the active focus on click, which would leave
-    // j/k/h/l dead and Enter re-firing the button. Deferred through
-    // Qt.callLater so the button's own focus grab settles first and the key
-    // catcher wins the frame after.
+    // Focusable buttons steal the active focus on click, which would leave the
+    // arrow keys dead. Deferred through Qt.callLater so the button's own focus
+    // grab settles first and the key catcher wins the frame after.
     function refocusKeyCatcher() {
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
@@ -180,20 +157,6 @@ Panel {
         return choices;
     }
 
-    function presetChoices() {
-        var builtins = [
-            { value: "day", label: text("preset_day") },
-            { value: "evening", label: text("preset_evening") },
-            { value: "night", label: text("preset_night") }
-        ];
-        var user = root.state && root.state.presets && Array.isArray(root.state.presets.user) ? root.state.presets.user : [];
-        for (var i = 0; i < user.length; i++) {
-            var name = user[i] && user[i].name ? String(user[i].name) : "";
-            if (name) builtins.push({ value: name, label: name });
-        }
-        return builtins;
-    }
-
     function glyphForState(value) {
         var input = value || {};
         var automation = input.automation || {};
@@ -201,32 +164,6 @@ Panel {
         if (input.available !== true) return "󰌙";
         if (input.enabled === true) return automation.origin === "preset" ? "󰏘" : "󰖙";
         return automation.schedule_enabled === false ? "󰅙" : "󰖔";
-    }
-
-    function formatLastApplied(value) {
-        if (!value || typeof value !== "object") return "";
-        var preset = value.preset ? String(value.preset) : "";
-        var origin = value.origin ? I18n.t("origin_" + String(value.origin), root.locale) : "";
-        var stamp = value.at ? String(value.at) : "";
-        return [preset, origin, stamp].filter(function(part) { return part !== ""; }).join(" · ");
-    }
-
-    function formatHistoryEntry(entry) {
-        if (!entry || typeof entry !== "object")
-            return root.text("unknown");
-        var origin = entry.origin ? I18n.t("origin_" + String(entry.origin), root.locale) : "";
-        var operation = entry.operation ? String(entry.operation) : "";
-        var stamp = entry.time ? String(entry.time) : "";
-        return [operation, origin, stamp].filter(function(part) { return part !== ""; }).join(" · ");
-    }
-
-    // The preset the helper physically applied last, distinct from the picker
-    // selection: the buttons mark this one as "applied now".
-    function appliedPresetName() {
-        var applied = root.state.automation && root.state.automation.last_applied;
-        if (applied && applied.preset && root.state.automation.origin === "preset")
-            return String(applied.preset);
-        return "";
     }
 
     function persistInline(values) {
@@ -241,10 +178,7 @@ Panel {
 
     function setInlineSetting(name, value) {
         if (name === "locale") root.locale = String(value);
-        if (name === "applyScope") root.applyScope = String(value);
         if (name === "monitor") root.selectedMonitor = String(value);
-        if (name === "preferredPreset") root.preferredPreset = String(value);
-        if (name === "transitionSeconds") root.transitionSeconds = Number(value);
         if (name === "shortcutKeys") root.shortcutKeys = String(value);
         var values = {};
         values[name] = value;
@@ -255,45 +189,14 @@ Panel {
         return root.request(command, operation);
     }
 
-    // Optimistic selection: the preset buttons highlight the requested preset
-    // before the helper confirms it. The previous selection is kept for the
-    // request that applied it so handleExit can revert the highlight when the
-    // apply fails and no preset was physically written.
-    function applyPreset(name) {
-        root.queuedPresetPrevious = root.preferredPreset;
-        root.preferredPreset = String(name);
-        root.queuedPresetRequestId = root.issue(["preset", "apply", String(name), "--monitor", root.selectedMonitor, "--transition-seconds", String(root.transitionSeconds)], "preset");
-    }
-
-    function saveCustomPreset() {
-        var name = String(root.customPresetName || "").trim();
-        if (name === "" || !root.stateReady || root.actionPending)
-            return ;
-        root.request(["preset", "save", name,
-                      "--temperature", String(root.state.temperature),
-                      "--gamma", String(root.state.gamma),
-                      "--brightness", String(root.state.brightness.percent)], "preset-save");
-    }
-
-    function deleteSelectedCustomPreset() {
-        var name = String(root.preferredPreset || "");
-        if (Model.BUILTIN_PRESETS.indexOf(name) !== -1 || name === "" || root.actionPending)
-            return ;
-        root.request(["preset", "delete", name], "preset-delete");
-    }
-
     function toggleSchedule(enabled) {
         root.issue(["schedule", enabled ? "enable" : "disable"], "schedule-toggle");
     }
 
-    function setSnooze(minutes) {
-        root.issue(["snooze", "set", "--minutes", String(minutes)], "snooze");
-    }
-
-    function setTransition(seconds) {
-        root.transitionSeconds = Math.max(0, Math.min(1800, Number(seconds)));
-        root.persistInline({ transitionSeconds: root.transitionSeconds });
-        root.issue(["transition-config", "--seconds", String(root.transitionSeconds)], "transition-config");
+    function applySnooze() {
+        if (root.snoozeSeconds === null || root.actionPending)
+            return ;
+        root.issue(["snooze", "set", "--seconds", String(root.snoozeSeconds)], "snooze");
     }
 
     function settingsCommand(name, args) {
@@ -329,27 +232,25 @@ Panel {
         return latestRequestId;
     }
 
-    function queueMutation(name, value) {
+    function queueMutation(section, value) {
         if (!stateReady)
             return ;
 
-        if (name === "brightness")
-            request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], name);
+        if (section === "brightness")
+            request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], section);
         else
-            request(["nightlight", name, String(Math.round(value))], name);
+            request(["nightlight", section, String(Math.round(value))], section);
     }
 
-    // Pointer drag intent for a slider. The helper enforces one physical
-    // point per brightness write, so the newest absolute target is recorded
-    // and the readback chase in reconcilePending converges on it without the
-    // slider ever reverting to a stale confirmed value.
+    // Pointer drag intent for a slider: the helper writes absolute values in
+    // one shot, so the newest target is recorded for the label while the
+    // readback is in flight and cleared once the confirmed state reaches it.
     function queueDragMutation(section, value) {
-        root.pendingSteps[section] = 0;
         root.dragTarget = Model.dragTargetPush(root.dragTarget, section, value);
         root.queueMutation(section, value);
     }
 
-    // A slider shows its pending drag target while the chase is in flight so
+    // A slider shows its pending drag target while the write is in flight so
     // the value the finger last aimed at stays on screen; once the readback
     // reaches it the target clears and the confirmed state takes over.
     function displayValue(section, fallback) {
@@ -357,18 +258,35 @@ Panel {
         return typeof target === "number" && isFinite(target) ? target : fallback;
     }
 
+    function scheduleDisplayDraft(period, field) {
+        if (period === "day" && field === "brightness") return editDayBrightness;
+        if (period === "day" && field === "gamma") return editDayGamma;
+        if (period === "night" && field === "brightness") return editNightBrightness;
+        if (period === "night" && field === "gamma") return editNightGamma;
+        return "";
+    }
+
     function queueSchedule() {
         if (!stateReady || actionPending || !scheduleFieldsValid())
             return ;
 
-        request(["schedule", "set", "--day-time", editStart,
-                 "--night-time", editEnd, "--day-temp", editDayTemperature,
-                 "--night-temp", editNightTemperature,
-                 editNaturalDay ? "--natural-day" : "--no-natural-day"], "schedule");
+        var command = ["schedule", "set", "--day-time", editStart,
+                       "--night-time", editEnd, "--day-temp", editDayTemperature,
+                       "--night-temp", editNightTemperature];
+        var periods = [["day", "brightness", "dayBrightness"],
+                       ["day", "gamma", "dayGamma"],
+                       ["night", "brightness", "nightBrightness"],
+                       ["night", "gamma", "nightGamma"]];
+        for (var i = 0; i < periods.length; i++) {
+            var draft = scheduleDisplayDraft(periods[i][0], periods[i][1]);
+            if (draft !== "")
+                command = command.concat(["--" + periods[i][0] + "-" + periods[i][1], draft]);
+        }
+        request(command, "schedule");
     }
 
     function scheduleFieldsValid() {
-        return Model.validateScheduleFields(editStart, editEnd, editNaturalDay, editDayTemperature, editNightTemperature).valid;
+        return Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma).valid;
     }
 
     function launchLatest() {
@@ -382,36 +300,6 @@ Panel {
         processError = "";
         helperProcess.command = queuedCommand;
         helperProcess.running = true;
-    }
-
-    function consumeStructuredPayload(payload) {
-        var data = payload && typeof payload === "object" ? payload : {};
-        var changed = false;
-        if (data.preflight && typeof data.preflight === "object") {
-            root.preflightState = data.preflight;
-            root.preflightLoaded = true;
-            changed = true;
-        }
-        if (data.presets && typeof data.presets === "object") {
-            root.state = root.mergeCombined(root.state, data);
-            root.presetItems = Array.isArray(data.presets.list) ? data.presets.list : [];
-            root.presetsLoaded = true;
-            changed = true;
-        }
-        if (Array.isArray(data.history)) {
-            root.historyItems = data.history;
-            root.state = root.mergeCombined(root.state, data);
-            root.historyLoaded = true;
-            changed = true;
-        }
-        if (data.automation && data.automation.last_applied) {
-            root.lastAppliedText = root.formatLastApplied(data.automation.last_applied);
-            changed = true;
-        } else if (data.last_applied) {
-            root.lastAppliedText = root.formatLastApplied(data.last_applied);
-            changed = true;
-        }
-        return changed;
     }
 
     // A superseded exit still describes a write that physically applied: the
@@ -434,8 +322,7 @@ Panel {
         if (!patch)
             return ;
 
-        var before = state;
-        state = root.mergeCombined(Model.mergeStatePatch(before, patch), before);
+        state = root.mergeCombined(Model.mergeStatePatch(state, patch), patch);
     }
 
     function handleExit(exitCode) {
@@ -457,7 +344,6 @@ Panel {
         } catch (error) {
             payload = null;
         }
-        var structured = root.consumeStructuredPayload(payload);
         var responseState = payload && payload.state ? payload.state : payload;
         var result = Model.commitResponse(root.state, {
             "requestId": requestId,
@@ -466,36 +352,25 @@ Panel {
             "state": responseState
         });
         if (result.accepted) {
-            var previousState = state;
             state = root.mergeCombined(result.state, responseState);
-            root.historyItems = Array.isArray(state.history) ? state.history : root.historyItems;
             actionPending = false;
             lastError = root.localizeErrorString(result.state.error);
             if (responseState && responseState.manual_persist_error) {
                 lastError = root.text("manualPersistError");
             }
-            root.reconcilePending(previousState);
+            root.reconcilePending();
             if (queuedOperation === "schedule") {
                 feedbackText = root.text("saved");
                 feedbackTimer.restart();
-                scheduleExpanded = false;
-                scheduleEditorOpen = false;
+                root.populateScheduleEditor();
             }
 
-            return ;
-        }
-        if (structured && exitCode === 0 && payload && payload.ok !== false) {
-            actionPending = false;
-            lastError = "";
-            root.dragTarget = Model.dragTargetEmpty();
             return ;
         }
         actionPending = false;
         root.dragTarget = Model.dragTargetEmpty();
         if (queuedOperation === "status")
             state = root.normalizeCombined({});
-        if (queuedOperation === "preset" && root.queuedPresetRequestId === requestId)
-            root.preferredPreset = root.queuedPresetPrevious;
 
         var payloadError = payload && payload.error ? String(payload.error) : "";
         var payloadCode = payload && payload.error_code ? String(payload.error_code) : "";
@@ -506,65 +381,42 @@ Panel {
             lastError = root.localizeErrorString(payloadError || (failedState && failedState.error ? failedState.error : "")) || processError || root.text("not_confirmed");
     }
 
-    function moveCursor(dx, dy) {
-        if (dx !== 0 && stateReady && root.route === "home" && !root.scheduleExpanded) {
-            var section = Model.routeSections(root.route)[cursor.section];
-            var confirmed = null;
-            if (section === "brightness")
-                confirmed = state.brightness.percent;
-            else if (section === "temperature")
-                confirmed = state.temperature;
-            else if (section === "gamma")
-                confirmed = state.gamma;
-            if (typeof confirmed === "number") {
-                var step = Model.keyboardStep(section, dx, confirmed, root.pendingSteps[section]);
-                root.pendingSteps[section] = step.pending;
-                root.dragTarget = Model.dragTargetPush(root.dragTarget, section, null);
-                queueMutation(section, step.value);
-            }
-        }
-        var key = dy > 0 ? "j" : (dy < 0 ? "k" : (dx > 0 ? "l" : "h"));
-        var routeJump = Model.navigateCursorRoute(root.route, cursor, key, root.scheduleExpanded);
-        if (routeJump && routeJump.route !== root.route) {
-            root.navigateToRoute(routeJump.route);
-            cursor = { "section": routeJump.section, "field": 0 };
-            return ;
-        }
-        cursor = Model.moveCursor(cursor, key, root.route, root.scheduleExpanded);
+    function moveCursorVertically(direction) {
+        var key = direction > 0 ? "ArrowDown" : "ArrowUp";
+        cursor = Model.moveCursor(cursor, key, root.route);
     }
 
-    function reconcilePending(previous) {
-        if (root.route !== "home" || root.scheduleExpanded) {
-            root.pendingSteps = { "brightness": 0, "temperature": 0, "gamma": 0 };
+    function switchRouteBy(direction) {
+        root.navigateToRoute(Model.adjacentRoute(root.route, direction));
+    }
+
+    function reconcilePending() {
+        if (root.route !== "home") {
             root.dragTarget = Model.dragTargetEmpty();
             return ;
         }
-        var result = Model.reconcilePendingSteps(previous, root.state, root.pendingSteps, root.queuedOperation);
-        root.pendingSteps = result.pending;
-        for (var i = 0; i < result.requests.length; i++)
-            root.queueMutation(result.requests[i].section, result.requests[i].value);
-
-        var drag = Model.reconcileDragTargets(previous, root.state, root.dragTarget, root.queuedOperation);
+        var drag = Model.reconcileDragTargets(state, root.state, root.dragTarget, root.queuedOperation);
         root.dragTarget = drag.target;
         for (var j = 0; j < drag.requests.length; j++)
             root.queueMutation(drag.requests[j].section, drag.requests[j].value);
     }
 
     function handleCloseRequested() {
-        if (scheduleExpanded) {
-            scheduleExpanded = false;
-            scheduleEditorOpen = false;
-            keyCatcher.forceActiveFocus();
-            return ;
-        }
         root.close();
     }
 
-    function leaveScheduleEditor(editor, cursorField) {
-        editor.focus = false;
-        if (cursorField !== undefined)
-            cursor = { "section": 3, "field": cursorField };
-        keyCatcher.forceActiveFocus();
+    function populateScheduleEditor() {
+        var schedule = root.state.schedule || {};
+        root.editStart = schedule.day_time || "06:00";
+        root.editEnd = schedule.night_time || "15:30";
+        root.editDayTemperature = String(schedule.day_temp || 6000);
+        root.editNightTemperature = String(schedule.night_temp || 3500);
+        var display = root.state.automation && root.state.automation.schedule_display
+            ? root.state.automation.schedule_display : {};
+        root.editDayBrightness = display.day && display.day.brightness !== undefined ? String(display.day.brightness) : "";
+        root.editDayGamma = display.day && display.day.gamma !== undefined ? String(display.day.gamma) : "";
+        root.editNightBrightness = display.night && display.night.brightness !== undefined ? String(display.night.brightness) : "";
+        root.editNightGamma = display.night && display.night.gamma !== undefined ? String(display.night.gamma) : "";
     }
 
     function activateCursor() {
@@ -575,88 +427,34 @@ Panel {
 
             return ;
         }
+        if (section === "monitor") {
+            monitorSelector.open();
+            return ;
+        }
         if (section === "scheduleToggle") {
             if (automationReady && !actionPending)
                 root.toggleSchedule(!root.scheduleEnabled);
 
             return ;
         }
-        if (section === "transition") {
-            transitionEditor.field.forceActiveFocus();
+        if (section === "schedule") {
+            startEditor.forceActiveFocus();
             return ;
         }
         if (section === "snooze") {
-            if (cursor.field === 0)
-                root.setSnooze(30);
-            else if (cursor.field === 1)
-                root.setSnooze(120);
-            else if (cursor.field === 2)
-                root.settingsCommand("snooze", ["until-tomorrow"]);
-            else
-                root.settingsCommand("snooze", ["clear"]);
-
-            return ;
-        }
-        if (section === "schedule") {
-            if (!scheduleExpanded) {
-                scheduleExpanded = true;
-                scheduleEditorOpen = true;
-                editStart = state.schedule.start || "06:00";
-                editEnd = state.schedule.end || "15:30";
-                editNaturalDay = state.schedule.day_identity === true;
-                editDayTemperature = String(state.schedule.day_temp || 6000);
-                editNightTemperature = String(state.schedule.night_temp || 3500);
-                return ;
-            }
-            if (cursor.field === 0)
-                startEditor.forceActiveFocus();
-            else if (cursor.field === 1)
-                endEditor.forceActiveFocus();
-            else if (cursor.field === 2)
-                naturalDayEditor.forceActiveFocus();
-            else if (cursor.field === 3)
-                dayTemperatureEditor.field.forceActiveFocus();
-            else if (cursor.field === 4)
-                scheduleTemperatureEditor.field.forceActiveFocus();
-            else
-                queueSchedule();
-
+            root.applySnooze();
             return ;
         }
         if (section === "locale") {
             localeSelector.open();
             return ;
         }
-        if (section === "scope") {
-            scopeSelector.open();
-            return ;
-        }
-        if (section === "preset") {
-            presetSelector.open();
-            return ;
-        }
-        if (section === "preflight") {
-            if (!actionPending)
-                root.settingsCommand("preflight", []);
-
-            return ;
-        }
         if (section === "shortcut") {
             shortcutField.forceActiveFocus();
             return ;
         }
-        if (section === "shortcutActions") {
-            if (cursor.field === 0)
-                root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
-            else
-                root.settingsCommand("shortcut", ["remove"]);
-        }
-    }
-
-    function setScheduleEditorFocus(editor) {
-        if (scheduleExpanded)
-            editor.forceActiveFocus();
-
+        if (section === "shortcutActions")
+            root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
     }
 
     moduleName: "io.github.znow01.veilleuse"
@@ -673,7 +471,7 @@ Panel {
         function toggle() { root.toggle(); }
 
         function toggleNightlight() {
-            root.toggleNightlight();
+            root.request(["nightlight", "toggle"], "toggle");
         }
     }
 
@@ -685,13 +483,10 @@ Panel {
     Component.onCompleted: {
         // Quickshell has no `module`/`require`, so UiModel.js boots without the
         // locale library; hand it the imported I18n namespace so t() honors the
-        // persisted locale instead of the bundled Spanish fallback.
+        // persisted locale instead of the bundled English fallback.
         Model.setI18n(I18n);
-        root.locale = String(root.setting("locale", "es"));
-        root.applyScope = String(root.setting("applyScope", "session"));
+        root.locale = String(root.setting("locale", "en"));
         root.selectedMonitor = String(root.setting("monitor", "focused"));
-        root.preferredPreset = String(root.setting("preferredPreset", "day"));
-        root.transitionSeconds = Number(root.setting("transitionSeconds", 8));
         root.shortcutKeys = String(root.setting("shortcutKeys", "SUPER+SHIFT+N"));
         requestStatus();
     }
@@ -710,17 +505,6 @@ Panel {
         interval: 2200
         repeat: false
         onTriggered: root.feedbackText = ""
-    }
-
-    Timer {
-        id: presetDeleteArmTimer
-
-        interval: 3000
-        repeat: false
-        onTriggered: {
-            root.presetDeleteArmed = false;
-            root.presetDeleteArmedName = "";
-        }
     }
 
     Timer {
@@ -777,18 +561,49 @@ Panel {
         contentWidth: keyboardPanel.fittedContentWidth(Style.space(380))
         contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, Style.space(560))
 
-        PanelKeyCatcher {
+        // Arrows-only keyboard: Left/Right switch views, Up/Down move the
+        // cursor, Enter/Space activate, Esc closes. Editors and popup lists
+        // own their keys through the blocked gate.
+        Item {
             id: keyCatcher
 
             anchors.fill: parent
-            blocked: startEditor.activeFocus || endEditor.activeFocus || naturalDayEditor.activeFocus || dayTemperatureEditor.field.activeFocus || scheduleTemperatureEditor.field.activeFocus || transitionEditor.field.activeFocus || shortcutField.activeFocus || customPresetName.activeFocus || monitorSelector.popupOpen || localeSelector.popupOpen || scopeSelector.popupOpen || presetSelector.popupOpen
-            onMoveRequested: function(dx, dy) {
-                root.moveCursor(dx, dy);
-            }
-            onActivateRequested: root.activateCursor()
-            onCloseRequested: root.handleCloseRequested()
-            onTabRequested: function(direction) {
-                root.switchPanel(direction);
+            focus: true
+
+            Keys.priority: Keys.BeforeItem
+            Keys.onPressed: function(event) {
+                if (root.keyCatcherBlocked)
+                    return ;
+                if (event.key === Qt.Key_Escape) {
+                    root.handleCloseRequested();
+                    event.accepted = true;
+                    return ;
+                }
+                if (event.key === Qt.Key_Left) {
+                    root.switchRouteBy(-1);
+                    event.accepted = true;
+                    return ;
+                }
+                if (event.key === Qt.Key_Right) {
+                    root.switchRouteBy(1);
+                    event.accepted = true;
+                    return ;
+                }
+                if (event.key === Qt.Key_Up) {
+                    root.moveCursorVertically(-1);
+                    event.accepted = true;
+                    return ;
+                }
+                if (event.key === Qt.Key_Down) {
+                    root.moveCursorVertically(1);
+                    event.accepted = true;
+                    return ;
+                }
+                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                    root.activateCursor();
+                    event.accepted = true;
+                    return ;
+                }
             }
         }
 
@@ -809,44 +624,58 @@ Panel {
                 width: panelFlick.width
                 spacing: Style.spacing.panelGap
 
+                // View switching: just the arrows, plus the name of the view
+                // you are on.
                 Row {
-                    id: routeNav
-
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.leftMargin: Style.spacing.rowPaddingX
                     anchors.rightMargin: Style.spacing.rowPaddingX
                     spacing: Style.spacing.controlGap
 
-                    Button {
-                        text: root.text("home")
-                        selected: root.route === "home"
-                        focusable: true
+                    PanelActionButton {
+                        iconText: "󰅁"
+                        tooltipText: root.text(root.previousRoute)
                         foreground: root.foreground
-                        onClicked: root.navigateToRoute("home")
+                        focusable: true
+                        Accessible.name: root.text(root.previousRoute)
+                        Accessible.role: Accessible.Button
+                        onClicked: {
+                            root.switchRouteBy(-1);
+                            root.refocusKeyCatcher();
+                        }
                     }
 
-                    Button {
-                        text: root.text("automation")
-                        selected: root.route === "automation"
-                        focusable: true
-                        foreground: root.foreground
-                        onClicked: root.navigateToRoute("automation")
+                    Text {
+                        width: parent.width - 2 * (Style.space(30) + Style.spacing.controlGap)
+                        text: root.routeTitle
+                        color: root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.title
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        elide: Text.ElideRight
+                        anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    Button {
-                        text: root.text("settings")
-                        selected: root.route === "settings"
-                        focusable: true
+                    PanelActionButton {
+                        iconText: "󰅂"
+                        tooltipText: root.text(root.nextRoute)
                         foreground: root.foreground
-                        onClicked: root.navigateToRoute("settings")
+                        focusable: true
+                        Accessible.name: root.text(root.nextRoute)
+                        Accessible.role: Accessible.Button
+                        onClicked: {
+                            root.switchRouteBy(1);
+                            root.refocusKeyCatcher();
+                        }
                     }
                 }
 
                 CursorSurface {
                     id: heroSurface
 
-                    visible: root.route === "home" && !root.scheduleExpanded
+                    visible: root.route === "home"
                     width: parent.width
                     hasCursor: root.cursor.section === 0
                     foreground: root.foreground
@@ -861,14 +690,12 @@ Panel {
                         anchors.leftMargin: Style.spacing.rowPaddingX
                         anchors.rightMargin: Style.spacing.rowPaddingX
                         title: root.text("night_light")
-                        meta: root.stateReady ? root.heroMeta : root.text("unavailable")
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         iconOpacity: root.stateReady ? 1 : 0.45
 
                         iconComponent: Component {
                             Text {
-                                id: heroGlyph
                                 text: root.heroGlyph
                                 color: root.foreground
                                 font.family: root.fontFamily
@@ -898,19 +725,21 @@ Panel {
                 Column {
                     id: homeRoute
 
-                    visible: root.route === "home" && !root.scheduleExpanded
+                    visible: root.route === "home"
                     width: parent.width
                     spacing: Style.spacing.panelGap
 
-                    BorderSurface {
+                    // Live controls: what acts on the screen right now. One
+                    // row of label + live value per slider, slider below.
+                    CursorSurface {
                         width: parent.width
-                        implicitHeight: homeSummary.implicitHeight + Style.spacing.rowPaddingX * 2
-                        color: Style.normalFill
-                        borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
-                        radius: Style.cornerRadius
+                        hasCursor: root.cursor.section === 1
+                        foreground: root.foreground
+                        implicitHeight: brightnessColumn.implicitHeight + Style.spacing.rowPaddingX
 
                         Column {
-                            id: homeSummary
+                            id: brightnessColumn
+
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
@@ -918,78 +747,36 @@ Panel {
                             anchors.rightMargin: Style.spacing.rowPaddingX
                             spacing: Style.spacing.labelGap
 
-                            Text {
-                                text: root.text("live_now") + "  ·  " + root.provenanceText
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                                font.bold: true
-                            }
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
 
-                            Text {
-                                text: root.lastAppliedText === "" ? root.text("unknown") : root.lastAppliedText
-                                color: Qt.darker(root.foreground, 1.35)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                elide: Text.ElideRight
-                            }
+                                Text {
+                                    id: brightnessLabel
 
-                            Text {
-                                // Every helper call passes through here: the
-                                // panel answers with a visible working state
-                                // instead of silently disabling buttons.
-                                visible: root.actionPending
-                                text: "● " + root.text("working")
-                                color: Qt.darker(root.foreground, 1.35)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.caption
-                            }
-                        }
-                    }
+                                    text: root.text("brightness")
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    elide: Text.ElideRight
+                                    width: parent.width - brightnessValue.implicitWidth - Style.spacing.controlGap
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
 
-                    // Live controls first: what acts on the screen right now.
-                    // Saved configuration (presets, monitor, history) follows
-                    // below the separators, so importance reads at a glance.
-                    PanelSectionHeader {
-                        text: root.text("live_controls")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
+                                Text {
+                                    id: brightnessValue
 
-                    PanelSectionHeader {
-                        text: root.text("brightness")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    CursorSurface {
-                        width: parent.width
-                        hasCursor: root.cursor.section === 1
-                        foreground: root.foreground
-                        implicitHeight: brightnessRow.implicitHeight + Style.spacing.rowPaddingX
-
-                        Row {
-                            id: brightnessRow
-
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
-
-                            Text {
-                                text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
+                                    text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                width: parent.width
                                 bar: root.bar
                                 value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
                                 minimum: 1
@@ -999,101 +786,115 @@ Panel {
                                 enabled: root.stateReady
                                 onMoved: function(v) { root.queueDragMutation("brightness", v) }
                             }
-
                         }
 
-                    }
-
-                    PanelSeparator {
-                        foreground: root.foreground
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("temperature")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
                     }
 
                     CursorSurface {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
-                        implicitHeight: temperatureRow.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: temperatureColumn.implicitHeight + Style.spacing.rowPaddingX
 
-                        Row {
-                            id: temperatureRow
+                        Column {
+                            id: temperatureColumn
 
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
+                            spacing: Style.spacing.labelGap
 
-                            Text {
-                                text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
+
+                                Text {
+                                    id: temperatureLabel
+
+                                    text: root.text("temperature")
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    elide: Text.ElideRight
+                                    width: parent.width - temperatureValue.implicitWidth - Style.spacing.controlGap
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    id: temperatureValue
+
+                                    text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                width: parent.width
                                 bar: root.bar
                                 value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
                                 minimum: 2500
                                 maximum: 6500
-                                step: 50
+                                step: 1
                                 integer: true
                                 enabled: root.stateReady
                                 onMoved: function(v) { root.queueDragMutation("temperature", v) }
                             }
-
                         }
 
-                    }
-
-                    PanelSeparator {
-                        foreground: root.foreground
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("gamma")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
                     }
 
                     CursorSurface {
                         width: parent.width
                         hasCursor: root.cursor.section === 3
                         foreground: root.foreground
-                        implicitHeight: gammaRow.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: gammaColumn.implicitHeight + Style.spacing.rowPaddingX
 
-                        Row {
-                            id: gammaRow
+                        Column {
+                            id: gammaColumn
 
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
+                            spacing: Style.spacing.labelGap
 
-                            Text {
-                                text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.body
-                                width: root.valueColumnWidth
-                                horizontalAlignment: Text.AlignRight
-                                anchors.verticalCenter: parent.verticalCenter
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
+
+                                Text {
+                                    id: gammaLabel
+
+                                    text: root.text("gamma")
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    elide: Text.ElideRight
+                                    width: parent.width - gammaValue.implicitWidth - Style.spacing.controlGap
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
+                                Text {
+                                    id: gammaValue
+
+                                    text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
+                                    color: root.foreground
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.body
+                                    font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
                             }
 
                             PanelSlider {
-                                width: parent.width - root.valueColumnWidth - Style.spacing.controlGap
+                                width: parent.width
                                 bar: root.bar
                                 value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
                                 minimum: 0
@@ -1103,7 +904,6 @@ Panel {
                                 enabled: root.stateReady
                                 onMoved: function(v) { root.queueDragMutation("gamma", v) }
                             }
-
                         }
 
                     }
@@ -1112,205 +912,30 @@ Panel {
                         foreground: root.foreground
                     }
 
-                    PanelSectionHeader {
-                        text: root.text("presets")
+                    CursorSurface {
+                        width: parent.width
+                        hasCursor: root.cursor.section === 4
                         foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
+                        implicitHeight: monitorSelector.implicitHeight + Style.spacing.rowPaddingX
 
-                    Row {
-                        width: parent.width
-                        spacing: Style.spacing.controlGap
+                        SearchableDropdown {
+                            id: monitorSelector
 
-                        Button {
-                            // "●" marks the preset the helper physically
-                            // applied; the highlighted button is only the
-                            // picker selection. Two different states, two
-                            // different visual signals.
-                            text: root.appliedPresetName() === "day" ? "● " + root.text("preset_day") : root.text("preset_day")
-                            selected: root.preferredPreset === "day"
-                            focusable: true
-                            bordered: true
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            label: root.text("monitor")
+                            value: root.selectedMonitor
+                            options: root.monitorOptions
                             foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "day" ? root.text("applied_preset") + ": " + root.text("preset_day") : root.text("preset_day")
-                            Accessible.role: Accessible.Button
-                            onClicked: {
-                                root.applyPreset("day");
-                                root.refocusKeyCatcher();
-                            }
+                            accent: Color.accent
+                            showLabel: true
+                            onPopupOpenChanged: if (!monitorSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
+                            onChanged: function(value) { root.setInlineSetting("monitor", value) }
                         }
 
-                        Button {
-                            text: root.appliedPresetName() === "evening" ? "● " + root.text("preset_evening") : root.text("preset_evening")
-                            selected: root.preferredPreset === "evening"
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "evening" ? root.text("applied_preset") + ": " + root.text("preset_evening") : root.text("preset_evening")
-                            Accessible.role: Accessible.Button
-                            onClicked: {
-                                root.applyPreset("evening");
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        Button {
-                            text: root.appliedPresetName() === "night" ? "● " + root.text("preset_night") : root.text("preset_night")
-                            selected: root.preferredPreset === "night"
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending
-                            Accessible.name: root.appliedPresetName() === "night" ? root.text("applied_preset") + ": " + root.text("preset_night") : root.text("preset_night")
-                            Accessible.role: Accessible.Button
-                            onClicked: {
-                                root.applyPreset("night");
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        PanelActionButton {
-                            iconText: "󰑓"
-                            tooltipText: root.text("reload_presets")
-                            foreground: root.foreground
-                            focusable: true
-                            Accessible.name: root.text("reload_presets")
-                            Accessible.role: Accessible.Button
-                            onClicked: {
-                                root.settingsCommand("preset", ["list"]);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-                    }
-
-                    // Saving and deleting operate on a *named* preset: the
-                    // label says the field creates a new one, and delete
-                    // shows its target and asks for a second click.
-                    Column {
-                        width: parent.width
-                        spacing: Style.spacing.labelGap
-
-                        Text {
-                            text: root.text("new_preset_name")
-                            color: Qt.darker(root.foreground, 1.35)
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.caption
-                        }
-
-                        Row {
-                            width: parent.width
-                            spacing: Style.spacing.controlGap
-
-                            TextField {
-                                id: customPresetName
-                                width: parent.width - saveCustomPresetButton.implicitWidth - deleteCustomPresetButton.implicitWidth - Style.spacing.controlGap * 2
-                                text: root.customPresetName
-                                placeholderText: root.text("preset_name")
-                                foreground: root.foreground
-                                font.family: root.fontFamily
-                                onTextChanged: root.customPresetName = text
-                                onAccepted: {
-                                    root.saveCustomPreset();
-                                    keyCatcher.forceActiveFocus();
-                                }
-                                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-                            }
-
-                            Button {
-                                id: saveCustomPresetButton
-                                text: root.text("save_current_preset")
-                                focusable: true
-                                bordered: true
-                                foreground: root.foreground
-                                enabled: root.stateReady && !root.actionPending && customPresetName.text.trim() !== ""
-                                onClicked: {
-                                    root.saveCustomPreset();
-                                    root.refocusKeyCatcher();
-                                }
-                            }
-
-                            Button {
-                                id: deleteCustomPresetButton
-                                // Name the target only when it is actually
-                                // deletable: implying a built-in can be
-                                // deleted would invite the wrong click.
-                                text: root.presetDeleteArmed
-                                      ? root.text("delete_preset_confirm")
-                                      : (Model.BUILTIN_PRESETS.indexOf(root.preferredPreset) === -1
-                                         ? root.text("delete_custom_preset") + " '" + root.preferredPreset + "'"
-                                         : root.text("delete_custom_preset"))
-                                focusable: true
-                                bordered: true
-                                foreground: root.presetDeleteArmed ? Color.urgent : root.foreground
-                                enabled: root.stateReady && !root.actionPending && Model.BUILTIN_PRESETS.indexOf(root.preferredPreset) === -1 && root.preferredPreset !== ""
-                                onClicked: {
-                                    if (!root.presetDeleteArmed || root.presetDeleteArmedName !== root.preferredPreset) {
-                                        root.presetDeleteArmed = true;
-                                        root.presetDeleteArmedName = String(root.preferredPreset);
-                                        presetDeleteArmTimer.restart();
-                                    } else {
-                                        root.presetDeleteArmed = false;
-                                        presetDeleteArmTimer.stop();
-                                        root.deleteSelectedCustomPreset();
-                                    }
-                                    root.refocusKeyCatcher();
-                                }
-                            }
-                        }
-                    }
-
-                    SearchableDropdown {
-                        id: monitorSelector
-                        width: parent.width
-                        label: root.text("monitor")
-                        value: root.selectedMonitor
-                        options: root.monitorOptions
-                        foreground: root.foreground
-                        accent: Color.accent
-                        showLabel: true
-                        onPopupOpenChanged: if (!monitorSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
-                        onChanged: function(value) { root.setInlineSetting("monitor", value) }
-                    }
-
-                    // One unambiguous history affordance: a button that loads
-                    // the list, with the latest event bound to it once loaded.
-                    Button {
-                        text: root.text("view_history")
-                        width: parent.width
-                        leftAlign: true
-                        focusable: true
-                        bordered: true
-                        foreground: root.foreground
-                        onClicked: {
-                            root.settingsCommand("history", ["list"]);
-                            root.refocusKeyCatcher();
-                        }
-                    }
-
-                    // The list the button loads, at a glance: the three most
-                    // recent entries with their outcome, then the button for
-                    // the full bounded history.
-                    Column {
-                        visible: root.historyLoaded && root.historyItems.length > 0
-                        width: parent.width
-                        spacing: Style.spacing.labelGap
-
-                        Repeater {
-                            model: root.historyItems.slice(0, 3)
-
-                            Text {
-                                required property var modelData
-
-                                width: parent.width
-                                text: (modelData.success === false ? "✗ " : "✓ ") + root.formatHistoryEntry(modelData)
-                                color: modelData.success === false ? Color.urgent : Qt.darker(root.foreground, 1.35)
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                elide: Text.ElideRight
-                            }
-                        }
                     }
                 }
 
@@ -1349,13 +974,12 @@ Panel {
                                     font.bold: true
                                 }
 
+                                // The switch already says whether the schedule
+                                // runs: the text carries the programmed window
+                                // only while it is enabled.
                                 Text {
-                                    // Carries real state, not a static echo
-                                    // of the switch: when enabled it shows the
-                                    // programmed window, when paused it says so.
-                                    text: root.scheduleEnabled
-                                          ? root.text("schedule_runs") + " · " + (root.state.schedule.start || "06:00") + " → " + (root.state.schedule.end || "15:30")
-                                          : root.text("schedule_disabled")
+                                    visible: root.scheduleEnabled && root.stateReady
+                                    text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
                                     color: Qt.darker(root.foreground, 1.35)
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.bodySmall
@@ -1364,6 +988,7 @@ Panel {
 
                             ToggleSwitch {
                                 id: scheduleToggle
+
                                 checked: root.scheduleEnabled
                                 busy: !root.automationReady || root.actionPending
                                 foreground: root.foreground
@@ -1374,166 +999,387 @@ Panel {
                         }
                     }
 
-                    Text {
+                    // The schedule itself: each period sets its time and the
+                    // same three options the Home sliders drive, entered as
+                    // numbers.
+                    CursorSurface {
                         width: parent.width
-                        text: root.text("midnight_explanation")
-                        color: Qt.darker(root.foreground, 1.35)
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        wrapMode: Text.WordWrap
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("transition")
+                        hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        fontFamily: root.fontFamily
+                        implicitHeight: scheduleEditorColumn.implicitHeight + Style.spacing.rowPaddingX
+
+                        Column {
+                            id: scheduleEditorColumn
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.rowGap
+
+                            PanelSectionHeader {
+                                text: root.text("day_period")
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                            }
+
+                            Column {
+                                width: parent.width
+                                spacing: Style.spacing.labelGap
+
+                                Text {
+                                    text: root.text("start")
+                                    color: Qt.darker(root.foreground, 1.35)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                }
+
+                                TextField {
+                                    id: startEditor
+
+                                    width: parent.width
+                                    foreground: root.foreground
+                                    font.family: root.fontFamily
+                                    text: root.editStart
+                                    inputMask: "99:99"
+                                    onTextChanged: root.editStart = text
+                                    onAccepted: endEditor.forceActiveFocus()
+                                    Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                                }
+
+                            }
+
+                            NumberField {
+                                id: dayTemperatureEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("temperature") + " (K)"
+                                value: Number(root.editDayTemperature || 6000)
+                                from: 5900
+                                to: 6500
+                                stepSize: 50
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editDayTemperature = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            NumberField {
+                                id: dayBrightnessEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("brightness") + " (%)"
+                                value: Number(root.editDayBrightness || 100)
+                                from: 1
+                                to: 100
+                                stepSize: 5
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editDayBrightness = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            NumberField {
+                                id: dayGammaEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("gamma") + " (%)"
+                                value: Number(root.editDayGamma || 100)
+                                from: 0
+                                to: 100
+                                stepSize: 5
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editDayGamma = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            PanelSectionHeader {
+                                text: root.text("night_period")
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                            }
+
+                            Column {
+                                width: parent.width
+                                spacing: Style.spacing.labelGap
+
+                                Text {
+                                    text: root.text("end")
+                                    color: Qt.darker(root.foreground, 1.35)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.bodySmall
+                                }
+
+                                TextField {
+                                    id: endEditor
+
+                                    width: parent.width
+                                    foreground: root.foreground
+                                    font.family: root.fontFamily
+                                    text: root.editEnd
+                                    inputMask: "99:99"
+                                    onTextChanged: root.editEnd = text
+                                    onAccepted: dayTemperatureEditor.field.forceActiveFocus()
+                                    Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                                }
+
+                            }
+
+                            NumberField {
+                                id: nightTemperatureEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("temperature") + " (K)"
+                                value: Number(root.editNightTemperature || 3500)
+                                from: 2500
+                                to: 5000
+                                stepSize: 50
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editNightTemperature = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            NumberField {
+                                id: nightBrightnessEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("brightness") + " (%)"
+                                value: Number(root.editNightBrightness || 100)
+                                from: 1
+                                to: 100
+                                stepSize: 5
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editNightBrightness = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            NumberField {
+                                id: nightGammaEditor
+
+                                width: parent.width
+                                fieldWidth: parent.width
+                                label: root.text("gamma") + " (%)"
+                                value: Number(root.editNightGamma || 100)
+                                from: 0
+                                to: 100
+                                stepSize: 5
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                onModified: value => root.editNightGamma = String(value)
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
+                            Button {
+                                text: root.text("save")
+                                width: parent.width
+                                leftAlign: false
+                                bordered: true
+                                focusable: true
+                                foreground: root.foreground
+                                enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
+                                onClicked: {
+                                    root.queueSchedule();
+                                    root.refocusKeyCatcher();
+                                }
+                            }
+
+                        }
+
                     }
 
-                    Row {
+                    // Snooze: enter a duration, pick its unit, apply.
+                    CursorSurface {
                         width: parent.width
-                        spacing: Style.spacing.controlGap
+                        hasCursor: root.cursor.section === 2
+                        foreground: root.foreground
+                        implicitHeight: snoozeColumn.implicitHeight + Style.spacing.rowPaddingX
 
-                        NumberField {
-                            id: transitionEditor
-                            width: parent.width - transitionApply.implicitWidth - Style.spacing.controlGap
-                            fieldWidth: width
-                            value: root.transitionSeconds
-                            from: 0
-                            to: 1800
-                            stepSize: 1
-                            foreground: root.foreground
-                            fontFamily: root.fontFamily
-                            hasCursor: root.cursor.section === 1
-                            onModified: function(value) { root.transitionSeconds = Number(value) }
-                            field.Keys.priority: Keys.BeforeItem
-                            field.Keys.onPressed: function(event) {
-                                if (event.key === Qt.Key_Escape) {
-                                    keyCatcher.forceActiveFocus();
-                                    event.accepted = true;
-                                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                    root.setTransition(root.transitionSeconds);
-                                    keyCatcher.forceActiveFocus();
-                                    event.accepted = true;
+                        Column {
+                            id: snoozeColumn
+
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.controlGap
+
+                            PanelSectionHeader {
+                                text: root.text("snooze")
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                            }
+
+                            // The active snooze is a fact the user set and must
+                            // be able to verify at a glance.
+                            Text {
+                                visible: root.snoozeActive
+                                width: parent.width
+                                text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
+                                color: Color.urgent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                elide: Text.ElideRight
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
+
+                                NumberField {
+                                    id: snoozeEditor
+
+                                    value: root.snoozeAmount
+                                    from: 1
+                                    to: 86400
+                                    stepSize: 1
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    onModified: value => root.snoozeAmount = value
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            root.applySnooze();
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    text: root.text("unit_hours")
+                                    selected: root.snoozeUnit === "hours"
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    onClicked: {
+                                        root.snoozeUnit = "hours";
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+
+                                Button {
+                                    text: root.text("unit_minutes")
+                                    selected: root.snoozeUnit === "minutes"
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    onClicked: {
+                                        root.snoozeUnit = "minutes";
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+
+                                Button {
+                                    text: root.text("unit_seconds")
+                                    selected: root.snoozeUnit === "seconds"
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    onClicked: {
+                                        root.snoozeUnit = "seconds";
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
+
+                                Button {
+                                    text: root.text("snooze_set")
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    enabled: root.snoozeSeconds !== null && !root.actionPending
+                                    onClicked: {
+                                        root.applySnooze();
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+
+                                Button {
+                                    visible: root.snoozeActive
+                                    text: root.text("clear_snooze")
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.snoozeActive ? Color.urgent : root.foreground
+                                    enabled: !root.actionPending
+                                    onClicked: {
+                                        root.settingsCommand("snooze", ["clear"]);
+                                        root.refocusKeyCatcher();
+                                    }
                                 }
                             }
                         }
 
-                        Button {
-                            id: transitionApply
-                            text: root.text("seconds")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            enabled: root.stateReady && !root.actionPending
-                            onClicked: {
-                                root.setTransition(root.transitionSeconds);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("snooze")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    // The active snooze is a fact the user set and must be
-                    // able to verify at a glance, not infer from a glyph.
-                    Text {
-                        visible: root.snoozeActive
-                        width: parent.width
-                        text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
-                        color: Color.urgent
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        elide: Text.ElideRight
-                    }
-
-                    // Equal 2x2 cells: every action gets the same width, so no
-                    // label truncates and the row cannot look unbalanced.
-                    GridLayout {
-                        width: parent.width
-                        columns: 2
-                        columnSpacing: Style.spacing.controlGap
-                        rowSpacing: Style.spacing.controlGap
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: root.text("snooze_30")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 2 && root.cursor.field === 0
-                            onClicked: {
-                                root.setSnooze(30);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: root.text("snooze_120")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 2 && root.cursor.field === 1
-                            onClicked: {
-                                root.setSnooze(120);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: root.text("until_tomorrow")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 2 && root.cursor.field === 2
-                            onClicked: {
-                                root.settingsCommand("snooze", ["until-tomorrow"]);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        Button {
-                            Layout.fillWidth: true
-                            text: root.text("clear_snooze")
-                            focusable: true
-                            bordered: true
-                            foreground: root.snoozeActive ? Color.urgent : root.foreground
-                            hasCursor: root.cursor.section === 2 && root.cursor.field === 3
-                            onClicked: {
-                                root.settingsCommand("snooze", ["clear"]);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-                    }
-
-                    Button {
-                        text: root.scheduleExpanded ? root.text("cancel") : root.text("edit_schedule")
-                        width: parent.width
-                        leftAlign: true
-                        bordered: true
-                        focusable: true
-                        foreground: root.foreground
-                        enabled: !root.actionPending
-                        onClicked: {
-                            if (root.scheduleExpanded) {
-                                root.scheduleExpanded = false;
-                                root.scheduleEditorOpen = false;
-                            } else {
-                                root.scheduleExpanded = true;
-                                root.scheduleEditorOpen = true;
-                                root.editStart = root.state.schedule.start || "06:00";
-                                root.editEnd = root.state.schedule.end || "15:30";
-                                root.editNaturalDay = root.state.schedule.day_identity === true;
-                                root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
-                                root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
-                            }
-                            root.refocusKeyCatcher();
-                        }
                     }
                 }
 
@@ -1550,95 +1396,31 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
-                    Dropdown {
-                        id: localeSelector
+                    CursorSurface {
                         width: parent.width
-                        label: root.text("language")
-                        value: root.locale
-                        options: [
-                            { value: "es", label: root.text("spanish") },
-                            { value: "en", label: root.text("english") }
-                        ]
-                        foreground: root.foreground
                         hasCursor: root.cursor.section === 0
-                        onPopupOpenChanged: if (!localeSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
-                        onChanged: function(value) { root.setInlineSetting("locale", value) }
-                    }
-
-                    Dropdown {
-                        id: scopeSelector
-                        width: parent.width
-                        label: root.text("apply_scope")
-                        value: root.applyScope
-                        options: [
-                            { value: "session", label: root.text("session") },
-                            { value: "persistent", label: root.text("persistent") }
-                        ]
                         foreground: root.foreground
-                        hasCursor: root.cursor.section === 1
-                        onPopupOpenChanged: if (!scopeSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
-                        onChanged: function(value) { root.setInlineSetting("applyScope", value) }
-                    }
+                        implicitHeight: localeSelector.implicitHeight + Style.spacing.rowPaddingX
 
-                    Text {
-                        width: parent.width
-                        text: root.text("scope_help")
-                        color: Qt.darker(root.foreground, 1.35)
-                        font.family: root.fontFamily
-                        font.pixelSize: Style.font.bodySmall
-                        wrapMode: Text.WordWrap
-                    }
+                        Dropdown {
+                            id: localeSelector
 
-                    Dropdown {
-                        id: presetSelector
-                        width: parent.width
-                        label: root.text("default_preset")
-                        value: root.preferredPreset
-                        options: root.presetOptions
-                        foreground: root.foreground
-                        hasCursor: root.cursor.section === 2
-                        onPopupOpenChanged: if (!presetSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
-                        onChanged: function(value) {
-                            root.preferredPreset = value;
-                            root.setInlineSetting("preferredPreset", value);
-                            root.settingsCommand("settings", ["set", "--default-preset", value]);
-                        }
-                    }
-
-                    PanelSectionHeader {
-                        text: root.text("preflight")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    // The check button carries its own result badge once run,
-                    // instead of a loose status line detached from the action.
-                    Row {
-                        width: parent.width
-                        spacing: Style.spacing.controlGap
-
-                        Button {
-                            text: root.text("run_preflight")
-                            leftAlign: true
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 3
-                            enabled: !root.actionPending
-                            onClicked: {
-                                root.settingsCommand("preflight", []);
-                                root.refocusKeyCatcher();
-                            }
-                        }
-
-                        Text {
-                            visible: root.preflightLoaded
+                            anchors.left: parent.left
+                            anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
-                            text: root.preflightState.ok === true ? "● " + root.text("preflight_ok") : "● " + root.text("preflight_failed")
-                            color: root.preflightState.ok === true ? root.foreground : Color.urgent
-                            font.family: root.fontFamily
-                            font.pixelSize: Style.font.bodySmall
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            label: root.text("language")
+                            value: root.locale
+                            options: [
+                                { value: "en", label: root.text("english") },
+                                { value: "es", label: root.text("spanish") }
+                            ]
+                            foreground: root.foreground
+                            onPopupOpenChanged: if (!localeSelector.popupOpen) Qt.callLater(function() { keyCatcher.forceActiveFocus(); })
+                            onChanged: function(value) { root.setInlineSetting("locale", value) }
                         }
+
                     }
 
                     PanelSectionHeader {
@@ -1647,51 +1429,69 @@ Panel {
                         fontFamily: root.fontFamily
                     }
 
-                    TextField {
-                        id: shortcutField
+                    CursorSurface {
                         width: parent.width
-                        text: root.shortcutKeys
-                        placeholderText: root.text("shortcut_keys")
+                        hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        font.family: root.fontFamily
-                        hasCursor: root.cursor.section === 4
-                        onAccepted: {
-                            root.setInlineSetting("shortcutKeys", text);
-                            keyCatcher.forceActiveFocus();
-                        }
-                        Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-                    }
+                        implicitHeight: shortcutColumn.implicitHeight + Style.spacing.rowPaddingX
 
-                    Row {
-                        width: parent.width
-                        spacing: Style.spacing.controlGap
+                        Column {
+                            id: shortcutColumn
 
-                        Button {
-                            text: root.text("install_shortcut")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 5 && root.cursor.field === 0
-                            enabled: !root.actionPending
-                            onClicked: {
-                                root.setInlineSetting("shortcutKeys", shortcutField.text);
-                                root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
-                                root.refocusKeyCatcher();
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: Style.spacing.rowPaddingX
+                            anchors.rightMargin: Style.spacing.rowPaddingX
+                            spacing: Style.spacing.controlGap
+
+                            TextField {
+                                id: shortcutField
+
+                                width: parent.width
+                                text: root.shortcutKeys
+                                placeholderText: root.text("shortcut_keys")
+                                foreground: root.foreground
+                                font.family: root.fontFamily
+                                onAccepted: {
+                                    root.setInlineSetting("shortcutKeys", text);
+                                    keyCatcher.forceActiveFocus();
+                                }
+                                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                            }
+
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.controlGap
+
+                                Button {
+                                    text: root.text("install_shortcut")
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2
+                                    enabled: !root.actionPending && shortcutField.text.trim() !== ""
+                                    onClicked: {
+                                        root.setInlineSetting("shortcutKeys", shortcutField.text);
+                                        root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+
+                                Button {
+                                    text: root.text("remove_shortcut")
+                                    focusable: true
+                                    bordered: true
+                                    foreground: root.foreground
+                                    enabled: !root.actionPending
+                                    onClicked: {
+                                        root.settingsCommand("shortcut", ["remove"]);
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
                             }
                         }
 
-                        Button {
-                            text: root.text("remove_shortcut")
-                            focusable: true
-                            bordered: true
-                            foreground: root.foreground
-                            hasCursor: root.cursor.section === 5 && root.cursor.field === 1
-                            enabled: !root.actionPending
-                            onClicked: {
-                                root.settingsCommand("shortcut", ["remove"]);
-                                root.refocusKeyCatcher();
-                            }
-                        }
                     }
                 }
 
@@ -1721,9 +1521,21 @@ Panel {
                     wrapMode: Text.WordWrap
                 }
 
-                // The keyboard model is the panel's fastest path but is
-                // invisible until discovered; one quiet line keeps it
-                // discoverable without a tutorial.
+                Text {
+                    visible: root.route === "automation" && root.scheduleValidationError !== ""
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.spacing.rowPaddingX
+                    anchors.rightMargin: Style.spacing.rowPaddingX
+                    text: root.scheduleValidationError
+                    color: Color.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+
+                // One quiet line keeps the arrow model discoverable without a
+                // tutorial.
                 Text {
                     anchors.left: parent.left
                     anchors.right: parent.right
@@ -1735,269 +1547,6 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
-                }
-
-                Column {
-                    id: scheduleRoute
-                    visible: root.route === "automation"
-                    width: parent.width
-                    spacing: Style.spacing.labelGap
-
-                    PanelSectionHeader {
-                        text: root.text("schedule")
-                        foreground: root.foreground
-                        fontFamily: root.fontFamily
-                    }
-
-                    CursorSurface {
-                        id: scheduleSurface
-
-                        width: parent.width
-                        hasCursor: root.cursor.section === 3
-                        foreground: root.foreground
-                        implicitHeight: scheduleColumn.implicitHeight + Style.spacing.rowPaddingX
-
-                        Column {
-                            id: scheduleColumn
-
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.verticalCenter: parent.verticalCenter
-                            anchors.leftMargin: Style.spacing.rowPaddingX
-                            anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
-
-                            Button {
-                                visible: !root.scheduleExpanded
-                                width: parent.width
-                                text: root.stateReady ? ((root.state.schedule.start || "06:00") + "  →  " + (root.state.schedule.end || "15:30") + "  ·  " + (root.state.schedule.temperature || 2500) + " K") : root.text("unavailable")
-                                leftAlign: true
-                                focusable: true
-                                hasCursor: root.cursor.section === 3 && !root.scheduleExpanded
-                                foreground: root.foreground
-                                enabled: !root.actionPending
-                                onClicked: {
-                                    root.scheduleExpanded = !root.scheduleExpanded;
-                                    if (root.scheduleExpanded) {
-                                        root.scheduleEditorOpen = true;
-                                        root.editStart = root.state.schedule.start || "06:00";
-                                        root.editEnd = root.state.schedule.end || "15:30";
-                                        root.editNaturalDay = root.state.schedule.day_identity === true;
-                                        root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
-                                        root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
-                                    } else {
-                                        root.scheduleEditorOpen = false;
-                                    }
-                                }
-                            }
-
-                            Column {
-                                visible: root.scheduleExpanded
-                                width: parent.width
-                                spacing: Style.spacing.rowGap
-
-                                Column {
-                                    width: parent.width
-                                    spacing: Style.spacing.labelGap
-
-                                    Text {
-                                        text: root.text("start")
-                                        color: root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        width: parent.width
-                                    }
-
-                                    TextField {
-                                        id: startEditor
-
-                                        width: parent.width
-                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 0
-                                        foreground: root.foreground
-                                        font.family: root.fontFamily
-                                        text: root.editStart
-                                        inputMask: "99:99"
-                                        onTextChanged: root.editStart = text
-                                        onAccepted: endEditor.forceActiveFocus()
-                                        Keys.onEscapePressed: {
-                                            root.leaveScheduleEditor(startEditor);
-                                        }
-                                    }
-
-                                }
-
-                                Column {
-                                    width: parent.width
-                                    spacing: Style.spacing.labelGap
-
-                                    Text {
-                                        text: root.text("end")
-                                        color: root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        width: parent.width
-                                    }
-
-                                    TextField {
-                                        id: endEditor
-
-                                        width: parent.width
-                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 1
-                                        foreground: root.foreground
-                                        font.family: root.fontFamily
-                                        text: root.editEnd
-                                        inputMask: "99:99"
-                                        onTextChanged: root.editEnd = text
-                                        onAccepted: naturalDayEditor.forceActiveFocus()
-                                        Keys.onEscapePressed: {
-                                            root.leaveScheduleEditor(endEditor);
-                                        }
-                                    }
-
-                                }
-
-                                Column {
-                                    width: parent.width
-                                    spacing: Style.spacing.labelGap
-
-                                    Text {
-                                        text: root.text("natural_day")
-                                        color: root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        width: parent.width
-                                    }
-
-                                    ToggleSwitch {
-                                        id: naturalDayEditor
-
-                                        checked: root.editNaturalDay
-                                        busy: !root.stateReady || root.actionPending
-                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 2
-                                        foreground: root.foreground
-                                        Accessible.name: root.text("natural_day")
-                                        onToggled: root.editNaturalDay = !root.editNaturalDay
-                                        Keys.onEscapePressed: root.leaveScheduleEditor(naturalDayEditor, 2)
-                                        Keys.onReturnPressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
-                                        Keys.onEnterPressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
-                                        Keys.onSpacePressed: if (!busy) root.editNaturalDay = !root.editNaturalDay
-                                    }
-
-                                }
-
-                                Column {
-                                    width: parent.width
-                                    spacing: Style.spacing.labelGap
-
-                                    Text {
-                                        text: root.text("day_temperature")
-                                        color: root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        width: parent.width
-                                    }
-
-                                    NumberField {
-                                        id: dayTemperatureEditor
-
-                                        width: parent.width
-                                        fieldWidth: parent.width
-                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 3
-                                        foreground: root.foreground
-                                        fontFamily: root.fontFamily
-                                        value: Number(root.editDayTemperature || 6000)
-                                        from: 5900
-                                        to: 6500
-                                        stepSize: 100
-                                        onModified: value => root.editDayTemperature = String(value)
-                                        field.Keys.priority: Keys.BeforeItem
-                                        field.Keys.onPressed: function(event) {
-                                            if (event.key === Qt.Key_Escape) {
-                                                root.leaveScheduleEditor(dayTemperatureEditor.field, 3);
-                                                event.accepted = true;
-                                            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                                root.leaveScheduleEditor(dayTemperatureEditor.field, 4);
-                                                event.accepted = true;
-                                            }
-                                        }
-                                    }
-
-                                }
-
-                                Column {
-                                    width: parent.width
-                                    spacing: Style.spacing.labelGap
-
-                                    Text {
-                                        text: root.text("night_temperature")
-                                        color: root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        width: parent.width
-                                    }
-
-                                    NumberField {
-                                        id: scheduleTemperatureEditor
-
-                                        width: parent.width
-                                        fieldWidth: parent.width
-                                        hasCursor: root.cursor.section === 3 && root.cursor.field === 4
-                                        foreground: root.foreground
-                                        fontFamily: root.fontFamily
-                                        value: Number(root.editNightTemperature || 3500)
-                                        from: 2500
-                                        to: 5000
-                                        stepSize: 100
-                                        onModified: value => root.editNightTemperature = String(value)
-                                        field.Keys.priority: Keys.BeforeItem
-                                        field.Keys.onPressed: function(event) {
-                                            if (event.key === Qt.Key_Escape) {
-                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 4);
-                                                event.accepted = true;
-                                            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                                root.leaveScheduleEditor(scheduleTemperatureEditor.field, 5);
-                                                event.accepted = true;
-                                            }
-                                        }
-                                    }
-
-                                }
-
-                                Button {
-                                    text: root.text("save")
-                                    width: parent.width
-                                    leftAlign: false
-                                    bordered: true
-                                    focusable: true
-                                    hasCursor: root.cursor.section === 3 && root.cursor.field === 5
-                                    foreground: root.foreground
-                                    enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
-                                    onClicked: {
-                                        root.queueSchedule();
-                                        root.refocusKeyCatcher();
-                                    }
-                                }
-
-                            }
-
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            enabled: !root.scheduleExpanded
-                            onClicked: {
-                                root.scheduleExpanded = true;
-                                root.scheduleEditorOpen = true;
-                                root.editStart = root.state.schedule.start || "06:00";
-                                root.editEnd = root.state.schedule.end || "15:30";
-                                root.editNaturalDay = root.state.schedule.day_identity === true;
-                                root.editDayTemperature = String(root.state.schedule.day_temp || 6000);
-                                root.editNightTemperature = String(root.state.schedule.night_temp || 3500);
-                            }
-                        }
-
-                    }
-
                 }
 
             }

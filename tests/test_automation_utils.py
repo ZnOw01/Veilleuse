@@ -6,7 +6,6 @@ applicators and (optionally) the real ``state_utils`` persistence backed by a
 temporary XDG home.  No live shell commands or real time are ever used.
 """
 
-import calendar
 import copy
 import datetime
 import json
@@ -151,29 +150,32 @@ class FakeNightlight:
         }
 
 
-class FakeDST(datetime.tzinfo):
-    """Pinned local timezone: CEST offsets in [2026-03-29 02:00, 2026-10-25 02:00)."""
+class FakeDisplay:
+    """Injected scheduled-display applicator (brightness / gamma)."""
 
-    START = datetime.datetime(2026, 3, 29, 2, 0, 0)
-    END = datetime.datetime(2026, 10, 25, 2, 0, 0)
+    def __init__(self, brightness=50):
+        self.brightness = brightness
+        self.gamma = None
+        self.brightness_writes = []
+        self.gamma_writes = []
+        self.fail_brightness = False
+        self.fail_gamma = False
 
-    def _naive(self, dt):
-        return dt.replace(tzinfo=None)
+    def apply_brightness(self, percent):
+        if self.fail_brightness:
+            return {"available": False, "percent": None, "error": "ddc busy"}
+        self.brightness = int(percent)
+        self.brightness_writes.append(int(percent))
+        return {"available": True, "percent": int(percent), "error": None}
 
-    def utcoffset(self, dt):
-        naive = self._naive(dt)
-        if naive is not None and self.START <= naive < self.END:
-            return datetime.timedelta(hours=2)
-        return datetime.timedelta(hours=1)
-
-    def dst(self, dt):
-        naive = self._naive(dt)
-        if naive is not None and self.START <= naive < self.END:
-            return datetime.timedelta(hours=1)
-        return datetime.timedelta(0)
-
-    def tzname(self, dt):
-        return "CEST" if self.dst(dt) else "CET"
+    def apply_gamma(self, percent):
+        if self.fail_gamma:
+            return {"available": False, "identity": None, "temperature": None,
+                    "gamma": None, "error": "gamma rejected"}
+        self.gamma = int(percent)
+        self.gamma_writes.append(int(percent))
+        return {"available": True, "identity": False, "temperature": None,
+                "gamma": int(percent), "error": None}
 
 
 class AutomationUtilsTest(unittest.TestCase):
@@ -197,8 +199,13 @@ class AutomationUtilsTest(unittest.TestCase):
         self.clock = FakeClock()
         self.token = None
         self.nightlight = FakeNightlight()
-        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
-        self.local_now = datetime.datetime(2026, 3, 28, 23, 30, tzinfo=FakeDST())
+        self.display = FakeDisplay()
+        self.profile = {
+            "available": True,
+            "kind": "temperature",
+            "temperature": 3500,
+            "period": "night",
+        }
 
     def tearDown(self):
         self.environment.stop()
@@ -219,7 +226,6 @@ class AutomationUtilsTest(unittest.TestCase):
     def env(self, **overrides):
         env = {
             "now": self.clock.now,
-            "local_now": lambda: self.local_now,
             "monotonic": self.clock.monotonic,
             "sleep": self.clock.sleep,
             "read_state": state_utils.read_state,
@@ -228,6 +234,8 @@ class AutomationUtilsTest(unittest.TestCase):
             "read_nightlight": self.nightlight.read,
             "apply_values": self.nightlight.apply_values,
             "apply_natural": self.nightlight.apply_natural,
+            "apply_brightness": self.display.apply_brightness,
+            "apply_gamma": self.display.apply_gamma,
             "current_profile": lambda: self.profile,
             "token": lambda: self.token,
         }
@@ -304,6 +312,30 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(self.nightlight.naturals, 0)
         self.assertFalse(self.state_file().exists())
 
+    def test_snooze_set_seconds_applies_and_persists_expiry(self):
+        # The panel composes number + unit; seconds is the base unit, so a
+        # 90-second snooze keeps working exactly as requested.
+        result = automation.snooze_set_seconds(90, env=self.env())
+        self.assertTrue(result["success"])
+        self.assertTrue(result["snoozed"])
+        self.assertEqual(result["snooze_until"], 1000.0 + 90)
+        state = self.read_state()
+        self.assertEqual(state["snooze_until"], 1090.0)
+        self.assertEqual(state["last_applied"]["operation"], "snooze_set")
+
+    def test_snooze_set_seconds_bounds(self):
+        for seconds in (9, -1, 86401, 12.5, True, "60"):
+            result = automation.snooze_set_seconds(seconds, env=self.env())
+            self.assertFalse(result["success"], seconds)
+            self.assertEqual(result["error_code"], "invalid_argument", seconds)
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertFalse(self.state_file().exists())
+
+    def test_snooze_minutes_delegate_to_seconds(self):
+        result = automation.snooze_set(30, env=self.env())
+        self.assertTrue(result["success"])
+        self.assertEqual(result["snooze_until"], 1000.0 + 30 * 60)
+
     def test_snooze_set_apply_failure_persists_nothing(self):
         self.nightlight.fail_first = 1
         result = automation.snooze_set(30, env=self.env())
@@ -339,74 +371,6 @@ class AutomationUtilsTest(unittest.TestCase):
         state = self.read_state()
         self.assertEqual(state["snooze_until"], 2800.0)
         self.assertEqual(state["last_applied"]["origin"], "snooze")
-
-    def test_until_tomorrow_across_midnight(self):
-        local_now = datetime.datetime(2026, 3, 28, 23, 30, tzinfo=FakeDST())
-        target = automation.until_tomorrow_epoch(local_now)
-        expected = calendar.timegm(datetime.datetime(2026, 3, 29).timetuple()) - 3600
-        self.assertEqual(target, float(expected))
-        self.assertEqual(
-            target - local_now.timestamp(),
-            30 * 60,
-        )
-
-    def test_until_tomorrow_after_midnight_is_full_next_day(self):
-        local_now = datetime.datetime(2026, 3, 28, 0, 30, tzinfo=FakeDST())
-        target = automation.until_tomorrow_epoch(local_now)
-        expected = calendar.timegm(datetime.datetime(2026, 3, 29).timetuple()) - 3600
-        self.assertEqual(target, float(expected))
-        self.assertEqual(target - local_now.timestamp(), 23 * 3600 + 30 * 60)
-
-    def test_until_tomorrow_across_dst_spring_forward(self):
-        local_now = datetime.datetime(2026, 3, 29, 1, 30, tzinfo=FakeDST())
-        target = automation.until_tomorrow_epoch(local_now)
-        expected = calendar.timegm(datetime.datetime(2026, 3, 30).timetuple()) - 7200
-        self.assertEqual(target, float(expected))
-        # 21.5 real hours: the next local midnight is one hour further away.
-        self.assertEqual(target - local_now.timestamp(), 21.5 * 3600)
-
-    def test_until_tomorrow_across_dst_fall_back(self):
-        local_now = datetime.datetime(2026, 10, 24, 23, 30, tzinfo=FakeDST())
-        target = automation.until_tomorrow_epoch(local_now)
-        expected = calendar.timegm(datetime.datetime(2026, 10, 25).timetuple()) - 7200
-        self.assertEqual(target, float(expected))
-        self.assertEqual(target - local_now.timestamp(), 30 * 60)
-
-    def test_until_tomorrow_fixed_offset_prefers_zone_database(self):
-        # Production builds local_now via astimezone(): a fixed offset that is
-        # stale once the local zone crosses a DST boundary. The epoch must be
-        # resolved by the system zone database for that midnight, not stamped
-        # with the offset captured at *now*.
-        stale = datetime.timezone(datetime.timedelta(hours=1))
-        with mock.patch.object(
-            automation.time, "mktime", return_value=1774742400.0
-        ) as mktime:
-            epoch = automation.until_tomorrow_epoch(
-                datetime.datetime(2026, 3, 28, 23, 30, tzinfo=stale)
-            )
-        mktime.assert_called_once()
-        self.assertEqual(epoch, 1774742400.0)
-
-    def test_until_tomorrow_dynamic_zone_does_not_use_system_database(self):
-        with mock.patch.object(
-            automation.time, "mktime", return_value=0.0
-        ) as mktime:
-            epoch = automation.until_tomorrow_epoch(
-                datetime.datetime(2026, 3, 28, 23, 30, tzinfo=FakeDST())
-            )
-        mktime.assert_not_called()
-        expected = datetime.datetime(2026, 3, 29, tzinfo=FakeDST()).timestamp()
-        self.assertEqual(epoch, expected)
-
-    def test_snooze_until_tomorrow_orchestration(self):
-        result = automation.snooze_until_tomorrow(env=self.env())
-        self.assertTrue(result["success"], result)
-        expected = automation.until_tomorrow_epoch(self.local_now)
-        self.assertEqual(result["snooze_until"], expected)
-        state = self.read_state()
-        self.assertEqual(state["snooze_until"], expected)
-        self.assertEqual(state["last_applied"]["operation"], "snooze_until_tomorrow")
-        self.assertEqual(self.nightlight.naturals, 1)
 
     def test_snooze_clear_persists_and_records_history(self):
         self.initial_state(snooze_until=2800.0, origin="snooze")
@@ -486,169 +450,6 @@ class AutomationUtilsTest(unittest.TestCase):
 
     # ------------------------------------------------------------------ \
     # transition
-
-    def test_transition_immediate_mode_zero_seconds_applies_exact_once(self):
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        self.assertTrue(result["applied"])
-        self.assertEqual(result["temperature"], 4000)
-        self.assertEqual(result["gamma"], 80)
-        self.assertEqual(self.nightlight.applications, [(4000, 80)])
-        self.assertEqual(self.clock.sleeps, [])
-        self.assertEqual(self.nightlight.naturals, 0)
-
-    def test_transition_validates_ranges(self):
-        for target in (
-            (2499, 80, 10),
-            (6501, 80, 10),
-            (4000, -1, 10),
-            (4000, 101, 10),
-            (4000, 80, -1),
-            (4000, 80, 1801),
-            (4000, 80, 1.5),
-            (True, 80, 10),
-        ):
-            result = automation.transition(*target, env=self.env())
-            self.assertFalse(result["success"], target)
-            self.assertEqual(result["error_code"], "invalid_argument", target)
-        self.assertEqual(self.nightlight.applications, [])
-
-    def test_transition_ramp_is_monotonic_bounded_and_ends_exact(self):
-        result = automation.transition(4000, 80, 60, env=self.env())
-        self.assertTrue(result["success"], result)
-        applications = self.nightlight.applications
-        self.assertEqual(len(applications), 60)
-        temperatures = [values[0] for values in applications]
-        gammas = [values[1] for values in applications]
-        # Monotonic toward the targets, never overshooting.
-        self.assertEqual(temperatures, sorted(temperatures))
-        self.assertEqual(gammas, sorted(gammas, reverse=True))
-        for value in temperatures:
-            self.assertTrue(3500 <= value <= 4000, value)
-        for value in gammas:
-            self.assertTrue(80 <= value <= 90, value)
-        # Per-step deltas are bounded by the ramp geometry (+1 rounding).
-        for previous, current in zip(temperatures, temperatures[1:]):
-            self.assertLessEqual(current - previous, 9)
-        # Final step is exactly the requested target.
-        self.assertEqual(applications[-1], (4000, 80))
-        # One bounded sleep per intermediate step; deadline never exceeded.
-        self.assertEqual(len(self.clock.sleeps), 59)
-        self.assertLessEqual(self.clock.monotonic(), 60)
-        self.assertEqual(result["steps"], 60)
-        self.assertEqual(result["temperature"], 4000)
-        self.assertEqual(result["gamma"], 80)
-
-    def test_transition_ramp_consolidates_steps_without_value_change(self):
-        result = automation.transition(3500, 90, 30, env=self.env())
-        self.assertTrue(result["success"], result)
-        self.assertEqual(self.nightlight.applications, [(3500, 90)])
-        # Timing is still bounded and honored even without redundant IPC.
-        self.assertEqual(len(self.clock.sleeps), 29)
-        self.assertLessEqual(self.clock.monotonic(), 30)
-
-    def test_transition_ramp_starting_from_natural_uses_identity_temperature(self):
-        self.nightlight = FakeNightlight(temperature=3500, gamma=90, identity=True)
-        result = automation.transition(6500, 100, 10, env=self.env())
-        self.assertTrue(result["success"], result)
-        applications = self.nightlight.applications
-        self.assertEqual(applications[0], (6050, 91))
-        self.assertEqual(applications[-1], (6500, 100))
-        temperatures = [values[0] for values in applications]
-        self.assertEqual(temperatures, sorted(temperatures))
-        self.assertEqual(result["temperature"], 6500)
-
-    def test_transition_cancellation_stops_with_honest_partial(self):
-        token = FakeToken(clock=self.clock, trip_monotonic=5.0)
-        result = automation.transition(
-            4000, 80, 60, env=self.env(token=lambda: token)
-        )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_code"], "cancelled")
-        self.assertEqual(len(self.nightlight.applications), 5)
-        applied = result["applied_steps"]
-        self.assertEqual(applied, self.nightlight.applications)
-        temperatures = [values[0] for values in applied]
-        self.assertEqual(temperatures, sorted(temperatures))
-        self.assertEqual(result["temperature"], applied[-1][0])
-        self.assertEqual(result["gamma"], applied[-1][1])
-        # Nothing was applied once the token was set.
-        self.assertGreaterEqual(self.clock.monotonic(), 5.0)
-
-    def test_transition_deadline_exceeded_stops_honest_partial(self):
-        def lying_sleep(_seconds):
-            self.clock.advance(4.0)
-
-        result = automation.transition(
-            4000, 80, 60, env=self.env(sleep=lying_sleep)
-        )
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_code"], "deadline")
-        applied = result["applied_steps"]
-        self.assertEqual(len(applied), 15)
-        self.assertEqual(applied, self.nightlight.applications)
-        self.assertEqual(result["temperature"], applied[-1][0])
-        self.assertLessEqual(self.clock.monotonic(), 60)
-
-    def test_transition_ramp_absorbs_per_step_ipc_overhead(self):
-        # Real apply_values costs tens of milliseconds of hyprctl IPC per
-        # step. The ramp must absorb that cost with shorter sleeps instead of
-        # burning the shared deadline and aborting right before the exact
-        # target step.
-        real_sleep = self.clock.sleep
-
-        def slow_ipc_sleep(seconds):
-            real_sleep(seconds)
-            self.clock.monotonic_value += 0.05
-
-        result = automation.transition(
-            4000, 80, 60, env=self.env(sleep=slow_ipc_sleep)
-        )
-        self.assertTrue(result["success"], result)
-        applications = self.nightlight.applications
-        self.assertEqual(applications[-1], (4000, 80))
-        self.assertLessEqual(
-            self.clock.monotonic(), 60 + automation.RAMP_FINAL_GRACE_SECONDS
-        )
-
-    def test_transition_read_failure_fails_closed(self):
-        self.nightlight.read_error = True
-        result = automation.transition(4000, 80, 10, env=self.env())
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_code"], "read_failed")
-        self.assertEqual(self.nightlight.applications, [])
-
-    def test_transition_apply_failure_mid_ramp_is_honest(self):
-        self.nightlight.fail_at = 2
-        result = automation.transition(4000, 80, 60, env=self.env())
-        self.assertFalse(result["success"])
-        self.assertEqual(result["error_code"], "apply_failed")
-        self.assertEqual(len(self.nightlight.applications), 1)
-        self.assertEqual(result["applied_steps"], [(3508, 90)])
-
-    def test_transition_commits_provenance_and_history_on_success(self):
-        automation.transition(4000, 80, 0, env=self.env())
-        state = self.read_state()
-        last = state["last_applied"]
-        self.assertEqual(last["origin"], "manual")
-        self.assertEqual(last["operation"], "transition")
-        self.assertEqual(last["at"], ISO)
-        self.assertEqual(last["values"], {"temperature": 4000, "gamma": 80})
-        records = self.read_history()
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["operation"], "transition")
-        self.assertEqual(records[0]["origin"], "manual")
-        self.assertTrue(records[0]["success"])
-        self.assertEqual(records[0]["temperature"], 4000)
-        self.assertEqual(records[0]["gamma"], 80)
-
-    def test_transition_failure_does_not_touch_provenance(self):
-        self.nightlight.fail_at = 2
-        automation.transition(4000, 80, 60, env=self.env())
-        self.assertIsNone(self.read_state()["last_applied"])
-
-    # ------------------------------------------------------------------ \
-    # reconcile
 
     def test_reconcile_noop_when_no_drift_and_idempotent(self):
         result = automation.reconcile(env=self.env())
@@ -876,50 +677,6 @@ class AutomationUtilsTest(unittest.TestCase):
         record.update(changes)
         return record
 
-    def test_transition_records_manual_override_for_identity_period(self):
-        self.profile = {"available": True, "kind": "identity"}
-        result = automation.transition(4500, 90, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        state = self.read_state()
-        self.assertEqual(state["manual_override"]["profile"], {"kind": "identity"})
-        self.assertEqual(state["manual_override"]["operation"], "transition")
-        self.assertEqual(
-            state["manual_override"]["values"], {"temperature": 4500, "gamma": 90}
-        )
-        self.assertIn("at", state["manual_override"])
-
-    def test_transition_records_manual_override_for_temperature_period(self):
-        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        state = self.read_state()
-        self.assertEqual(
-            state["manual_override"]["profile"],
-            {"kind": "temperature", "temperature": 3500},
-        )
-
-    def test_transition_with_unavailable_profile_records_no_override(self):
-        self.profile = {"available": False, "error": "no schedule"}
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        self.assertIsNone(self.read_state()["manual_override"])
-
-    def test_transition_preserves_override_when_profile_unavailable(self):
-        # A manual transition whose period fingerprint cannot be captured must
-        # keep the existing manual intent, exactly like commit_manual_apply:
-        # reconcile is the authority on whether that override is still current.
-        existing = self.manual_override()
-        self.initial_state(manual_override=existing)
-        self.profile = {"available": False, "error": "no schedule"}
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        self.assertEqual(self.read_state()["manual_override"], existing)
-
-    def test_transition_sets_top_level_origin_manual(self):
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
-        self.assertEqual(self.read_state()["origin"], "manual")
-
     def test_commit_manual_apply_preserves_override_when_profile_unavailable(self):
         existing = self.manual_override()
         self.initial_state(manual_override=existing)
@@ -934,8 +691,9 @@ class AutomationUtilsTest(unittest.TestCase):
 
     def test_identity_override_gets_deterministic_finite_boundary(self):
         self.profile = {"available": True, "kind": "identity"}
-        result = automation.transition(4500, 90, 0, env=self.env())
-        self.assertTrue(result["success"], result)
+        automation.commit_manual_apply(
+            self.env(), "nightlight_temperature", {"temperature": 4500, "gamma": 90}
+        )
         override = self.read_state()["manual_override"]
         self.assertIn("until", override)
         expected = datetime.datetime.fromtimestamp(
@@ -945,8 +703,9 @@ class AutomationUtilsTest(unittest.TestCase):
 
     def test_temperature_override_has_no_time_boundary(self):
         self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
-        result = automation.transition(4000, 80, 0, env=self.env())
-        self.assertTrue(result["success"], result)
+        automation.commit_manual_apply(
+            self.env(), "nightlight_temperature", {"temperature": 4000, "gamma": 80}
+        )
         override = self.read_state()["manual_override"]
         self.assertEqual(override["profile"], {"kind": "temperature", "temperature": 3500})
         self.assertNotIn("until", override)
@@ -1193,15 +952,123 @@ class AutomationUtilsTest(unittest.TestCase):
     # ------------------------------------------------------------------ \
     # fail-closed defaults
 
+    def test_reconcile_period_drift_applies_scheduled_display_once(self):
+        # Entering a period with scheduled display values applies brightness
+        # and gamma alongside the profile temperature, records the period so
+        # the next reconcile is a no-op, and reports both values.
+        self.initial_state(
+            schedule_display={"night": {"brightness": 60, "gamma": 80}},
+            schedule_period_applied="night",
+        )
+        # A marker matching the period means the display values were already
+        # applied: force a fresh entry the way saving the schedule does.
+        state_utils.update_state(lambda current: dict(current, schedule_period_applied=None))
+        self.nightlight.temperature = 5000
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.display.brightness_writes, [60])
+        self.assertEqual(self.display.gamma_writes, [])
+        self.assertEqual(self.nightlight.applications, [(3500, 80)])
+        state = self.read_state()
+        self.assertEqual(state["schedule_period_applied"], "night")
+        self.assertEqual(
+            state["last_applied"]["values"],
+            {"temperature": 3500, "gamma": 80, "brightness": 60},
+        )
+
+        second = automation.reconcile(env=self.env())
+        self.assertTrue(second["success"])
+        self.assertFalse(second["applied"])
+        self.assertEqual(self.display.brightness_writes, [60])
+        self.assertEqual(self.display.gamma_writes, [])
+        self.assertEqual(self.nightlight.applications, [(3500, 80)])
+
+    def test_reconcile_display_only_when_temperature_already_matches(self):
+        # A freshly saved schedule with unchanged temperatures must still
+        # apply its display values: reconcile treats the cleared marker as a
+        # pending period entry even without drift.
+        self.nightlight.temperature = 3500
+        self.initial_state(
+            schedule_display={"night": {"brightness": 40, "gamma": 75}},
+            schedule_period_applied=None,
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.applications, [])
+        self.assertEqual(self.display.brightness_writes, [40])
+        self.assertEqual(self.display.gamma_writes, [75])
+        self.assertEqual(self.read_state()["schedule_period_applied"], "night")
+
+    def test_reconcile_ignores_display_for_other_period(self):
+        self.nightlight.temperature = 5000
+        self.initial_state(
+            schedule_display={"day": {"brightness": 70}},
+            schedule_period_applied="day",
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])  # temperature drift still applies
+        self.assertEqual(self.display.brightness_writes, [])
+        # No scheduled values exist for the night period, so the day marker
+        # survives untouched.
+        self.assertEqual(self.read_state()["schedule_period_applied"], "day")
+
+    def test_reconcile_display_failure_is_honest_and_retried(self):
+        self.initial_state(
+            schedule_display={"night": {"brightness": 60}},
+            schedule_period_applied=None,
+        )
+        self.display.fail_brightness = True
+        result = automation.reconcile(env=self.env())
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "brightness_write_failed")
+        self.assertIsNone(self.read_state()["schedule_period_applied"])
+
+        self.display.fail_brightness = False
+        retried = automation.reconcile(env=self.env())
+        self.assertTrue(retried["success"], retried)
+        self.assertEqual(self.display.brightness_writes, [60])
+        self.assertEqual(self.read_state()["schedule_period_applied"], "night")
+
+    def test_reconcile_identity_period_applies_scheduled_display(self):
+        self.profile = {
+            "available": True,
+            "kind": "identity",
+            "period": "day",
+        }
+        self.initial_state(
+            schedule_display={"day": {"brightness": 90, "gamma": 95}},
+            schedule_period_applied=None,
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.nightlight.naturals, 1)
+        self.assertEqual(self.display.brightness_writes, [90])
+        self.assertEqual(self.display.gamma_writes, [95])
+        self.assertEqual(self.read_state()["schedule_period_applied"], "day")
+
+    def test_reconcile_expired_snooze_applies_scheduled_display(self):
+        self.initial_state(
+            snooze_until=self.clock.now() - 1,
+            schedule_display={"night": {"brightness": 55, "gamma": 85}},
+            schedule_period_applied=None,
+        )
+        result = automation.reconcile(env=self.env())
+        self.assertTrue(result["success"], result)
+        self.assertTrue(result["applied"])
+        self.assertEqual(self.display.brightness_writes, [55])
+        self.assertEqual(self.display.gamma_writes, [])
+        self.assertEqual(self.nightlight.applications, [(3500, 85)])
+        self.assertEqual(self.read_state()["schedule_period_applied"], "night")
+
     def test_defaults_fail_closed_without_live_commands(self):
         result = automation.snooze_set(30)
         self.assertFalse(result["success"])
         self.assertEqual(result["error_code"], "helper_unavailable")
         self.assertFalse(self.state_file().exists())
-
-        transition = automation.transition(4000, 80, 10)
-        self.assertFalse(transition["success"])
-        self.assertEqual(transition["error_code"], "helper_unavailable")
 
         reconcile = automation.reconcile()
         self.assertFalse(reconcile["success"])

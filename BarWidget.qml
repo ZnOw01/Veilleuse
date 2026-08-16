@@ -26,7 +26,7 @@ BarWidget {
         var state = value || {};
         var automation = state.automation || {};
         var origin = automation.origin ? String(automation.origin) : "unknown";
-        return I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "es");
+        return I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "en");
     }
 
     function injectPanel() {

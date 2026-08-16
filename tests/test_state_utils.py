@@ -76,59 +76,91 @@ class StateUtilsTest(unittest.TestCase):
         self.assertFalse(self.state_file().exists())
         self.assertFalse(self.history_file().exists())
 
-    def test_builtins_are_the_time_of_day_ladder(self):
-        # day/evening/night replace the activity presets: they map to how the
-        # user already thinks about warmth (and to the schedule's own
-        # day/night), instead of guessing what "cinema" means.
-        self.assertEqual(
-            state_utils.BUILTIN_PRESETS,
-            {
-                "day": {"temperature": 6000, "gamma": 100},
-                "evening": {"temperature": 4500, "gamma": 90},
-                "night": {"temperature": 3200, "gamma": 80},
-            },
-        )
-        self.assertEqual(state_utils.DEFAULT_CONFIG["default_preset"], "day")
+    def test_config_is_preset_free_and_defaults_to_schema_only(self):
+        # Presets are gone from the product: the config document carries
+        # nothing but its schema, and no preset surface exists in the module.
+        self.assertEqual(state_utils.DEFAULT_CONFIG, {"schema": 1})
+        self.assertFalse(hasattr(state_utils, "BUILTIN_PRESETS"))
+        state_utils.write_config({"schema": 1})
+        self.assertEqual(state_utils.read_config(), {"schema": 1})
 
-    def test_legacy_default_preset_migrates_to_closest_builtin(self):
-        # A config written by the previous version names an activity preset
-        # as the default; without migration the whole document would fail
-        # validation and brick the plugin. Map each legacy name to the
-        # closest warmth in the new ladder.
-        for legacy, migrated in (
-            ("reading", "night"),
-            ("work", "evening"),
-            ("cinema", "night"),
-        ):
-            config = {
-                "schema": 1,
-                "presets": {},
-                "default_preset": legacy,
-            }
-            state_utils.write_config(config)
-            self.assertEqual(
-                state_utils.read_config()["default_preset"], migrated, legacy
-            )
-
-    def test_legacy_default_preset_kept_when_user_preset_owns_the_name(self):
-        # After the rename "reading" is a valid custom name; a user preset
-        # owning it must win over the legacy mapping.
-        config = {
+    def test_legacy_preset_documents_migrate_on_read(self):
+        # A config written by a preset-era release must keep loading instead
+        # of failing validation and bricking the plugin: the legacy preset
+        # keys are dropped and the document normalizes to schema-only.
+        legacy = {
             "schema": 1,
-            "presets": {"reading": {"temperature": 4000, "gamma": 85}},
-            "default_preset": "reading",
-        }
-        state_utils.write_config(config)
-        self.assertEqual(state_utils.read_config()["default_preset"], "reading")
-
-    def test_config_and_state_are_strictly_validated_and_written_mode_0600(self):
-        config = {
-            "schema": 1,
-            "presets": {
-                "desk": {"temperature": 4200, "gamma": 85, "brightness": 70}
-            },
+            "presets": {"desk": {"temperature": 4200, "gamma": 85}},
             "default_preset": "desk",
         }
+        self.config_file().parent.mkdir(parents=True, exist_ok=True)
+        self.config_file().write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertEqual(state_utils.read_config(), {"schema": 1})
+
+        legacy_zero = {
+            "schema": 0,
+            "presets": {"desk": {"temperature": 4200, "gamma": 85}},
+            "default_preset": "desk",
+        }
+        self.config_file().write_text(json.dumps(legacy_zero), encoding="utf-8")
+        self.assertEqual(state_utils.read_config(), {"schema": 1})
+
+    def test_schedule_display_and_applied_period_are_validated(self):
+        display = {
+            "day": {"brightness": 80, "gamma": 100},
+            "night": {"brightness": 60, "gamma": 90},
+        }
+        normalized = state_utils.write_state(
+            dict(
+                state_utils.DEFAULT_STATE,
+                schedule_display=display,
+                schedule_period_applied="night",
+            )
+        )
+        self.assertEqual(normalized["schedule_display"], display)
+        self.assertEqual(normalized["schedule_period_applied"], "night")
+        self.assertIsNone(state_utils.DEFAULT_STATE["schedule_display"])
+        self.assertIsNone(state_utils.DEFAULT_STATE["schedule_period_applied"])
+
+        invalid_states = [
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"brightness": 0}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"brightness": 101}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"gamma": 101}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"dawn": {"brightness": 80}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"brightness": 80}, "night": None}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"brightness": True}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display={"day": {"contrast": 5}}),
+            dict(state_utils.DEFAULT_STATE, schedule_display="night"),
+            dict(state_utils.DEFAULT_STATE, schedule_period_applied="dawn"),
+            # The applied-period marker only makes sense while the matching
+            # period carries display values; anything else is stale data.
+            dict(state_utils.DEFAULT_STATE, schedule_period_applied="day"),
+            dict(
+                state_utils.DEFAULT_STATE,
+                schedule_display={"night": {"brightness": 60}},
+                schedule_period_applied="day",
+            ),
+        ]
+        for candidate in invalid_states:
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(state_utils.StateError) as error:
+                    state_utils.write_state(candidate)
+                self.assertEqual(error.exception.error_code, "invalid_state")
+
+        # Applied period matching a period that does carry display values is
+        # the one valid combination.
+        partial = state_utils.write_state(
+            dict(
+                state_utils.DEFAULT_STATE,
+                schedule_display={"night": {"brightness": 60}},
+                schedule_period_applied="night",
+            )
+        )
+        self.assertEqual(partial["schedule_period_applied"], "night")
+
+    def test_config_and_state_are_strictly_validated_and_written_mode_0600(self):
+        config = {"schema": 1}
         state = {
             "schema": 1,
             "schedule_enabled": False,
@@ -144,6 +176,11 @@ class StateUtilsTest(unittest.TestCase):
             },
             "schedule_disabled": None,
             "manual_override": None,
+            "schedule_display": {
+                "day": {"brightness": 80, "gamma": 100},
+                "night": {"brightness": 55, "gamma": 85},
+            },
+            "schedule_period_applied": "day",
         }
         state_utils.write_config(config)
         state_utils.write_state(state)

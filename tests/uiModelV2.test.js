@@ -1,163 +1,121 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const Model = require('../UiModel.js');
+const UiModel = require('../UiModel.js');
 const I18n = require('../I18n.js');
 
-test('copy remains the native Spanish default and is sourced from I18n.es', () => {
-  assert.equal(Model.copy, I18n.es);
-  assert.equal(Model.copy.heroTitle, 'Luz nocturna');
-  assert.equal(Model.copy.brightness, 'Brillo');
-  assert.equal(Model.copy.unavailable, 'No disponible');
-  assert.equal(Model.copy.disabled, 'Color natural');
+test('copy is the native English default and is sourced from I18n.en', () => {
+  assert.equal(UiModel.copy, I18n.en);
+  assert.equal(UiModel.copy.heroTitle, 'Night light');
 });
 
-test('normalizeState and validateScheduleFields stay backward compatible in Spanish', () => {
-  const state = Model.normalizeState({ available: true, enabled: true, brightness: 50, temperature: 3500, gamma: 100 });
-  assert.equal(state.error, '');
-  const unavailable = Model.normalizeState({});
-  assert.equal(unavailable.error, 'Estado no confirmado');
-  assert.deepEqual(Model.validateScheduleFields('06:00', '06:00', true, 6000, 3500), {
-    valid: false,
-    error: 'Las horas de día y noche deben ser diferentes'
+test('bundled fallback copy keeps exact key parity with the I18n English dictionary', () => {
+  assert.deepEqual(
+    Object.keys(UiModel.DEFAULT_COPY).sort(),
+    Object.keys(I18n.en).sort()
+  );
+  for (const key of Object.keys(UiModel.DEFAULT_COPY)) {
+    assert.equal(UiModel.DEFAULT_COPY[key], I18n.en[key], `DEFAULT_COPY.${key}`);
+  }
+});
+
+test('normalizeState and validateScheduleFields stay backward compatible in English', () => {
+  const state = UiModel.normalizeState({
+    available: true,
+    enabled: true,
+    brightness: { available: true, percent: 55 },
+    nightlight: { available: true, enabled: true, temperature: 3500, gamma: 90 }
   });
+  assert.equal(state.available, true);
+  assert.equal(state.brightnessPercent, 55);
+  assert.equal(state.temperature, 3500);
+  assert.equal(state.gamma, 90);
+
+  const result = UiModel.validateScheduleFields('06:00', '15:30', '6000', '', '', '3500', '', '', 'en');
+  assert.deepEqual(result, { valid: true, error: '' });
 });
 
-test('copyFor() returns the locale dictionary with Spanish as the default', () => {
-  assert.equal(Model.copyFor('es'), I18n.es);
-  assert.equal(Model.copyFor('en'), I18n.en);
-  assert.equal(Model.copyFor('fr'), I18n.es);
+test('copyFor() returns the locale dictionary with English as the default', () => {
+  assert.equal(UiModel.copyFor('es'), I18n.es);
+  assert.equal(UiModel.copyFor('en'), I18n.en);
+  assert.equal(UiModel.copyFor('fr'), I18n.en);
 });
 
 test('t() delegates to the locale-aware lookup and stays pure', () => {
-  assert.equal(Model.t('save', 'en'), 'Save changes');
-  assert.equal(Model.t('save', 'es'), Model.copy.save);
-  assert.equal(Model.t('save'), Model.copy.save);
+  assert.equal(UiModel.t('routeSettings', 'es'), 'Ajustes');
+  assert.equal(UiModel.t('routeSettings', 'en'), 'Settings');
+  assert.equal(UiModel.t('unknown_key', 'en'), 'unknown_key');
 });
 
 test('error codes localize to the requested locale with a safe unknown fallback', () => {
-  assert.equal(Model.errorCodeMessage('settingsWrite', 'es'), I18n.es.errSettingsWrite);
-  assert.equal(Model.errorCodeMessage('settingsWrite', 'en'), I18n.en.errSettingsWrite);
-  assert.equal(Model.errorCodeMessage('monitorUnavailable', 'en'), 'The selected monitor is unavailable.');
-  assert.equal(Model.errorCodeMessage('totally-unknown-code', 'en'), I18n.en.errUnknown);
-  assert.equal(Model.errorCodeMessage('totally-unknown-code', 'es'), I18n.es.errUnknown);
+  assert.equal(UiModel.errorCodeMessage('monitor_unavailable', 'es'), I18n.es.errMonitorUnavailable);
+  assert.equal(UiModel.errorCodeMessage('monitor_unavailable', 'en'), I18n.en.errMonitorUnavailable);
+  assert.equal(UiModel.errorCodeMessage('no_such_code', 'en'), I18n.en.errUnknown);
 });
 
 test('localizeError maps known codes and leaves existing literals untouched', () => {
-  assert.equal(Model.localizeError('scheduleInvalid', 'en'), I18n.en.errScheduleInvalid);
-  assert.equal(Model.localizeError('scheduleInvalid', 'es'), I18n.es.errScheduleInvalid);
-  assert.equal(Model.localizeError('Estado no confirmado', 'en'), 'Estado no confirmado');
-  assert.equal(Model.localizeError('', 'en'), '');
-  assert.equal(Model.localizeError('', 'es'), '');
+  assert.equal(UiModel.localizeError('timeout', 'en'), I18n.en.errTimeout);
+  const literal = 'El monitor seleccionado no está habilitado';
+  assert.equal(UiModel.localizeError(literal, 'en'), literal);
+  assert.equal(UiModel.localizeError(null, 'en'), '');
 });
 
 test('routes expose the three compact views in order', () => {
-  assert.deepEqual(Model.routeOrder(), ['home', 'automation', 'settings']);
-  assert.equal(Model.routeStart, undefined, 'routeStart was superseded by per-route cursor sections');
-  assert.equal(Model.moveRoute, undefined, 'moveRoute was superseded by navigateCursorRoute');
-  assert.equal(Model.routeLabel, undefined, 'routeLabel was superseded by t("routeHome") style lookups');
+  assert.deepEqual(UiModel.routeOrder(), ['home', 'automation', 'settings']);
+  assert.deepEqual(UiModel.routeSections('home'), ['nightLight', 'brightness', 'temperature', 'gamma', 'monitor']);
+  assert.deepEqual(UiModel.routeSections('automation'), ['scheduleToggle', 'schedule', 'snooze']);
+  assert.deepEqual(UiModel.routeSections('settings'), ['locale', 'shortcut', 'shortcutActions']);
+});
+
+test('adjacentRoute rings through the views for the left/right arrows', () => {
+  assert.equal(UiModel.adjacentRoute('home', 1), 'automation');
+  assert.equal(UiModel.adjacentRoute('automation', 1), 'settings');
+  assert.equal(UiModel.adjacentRoute('settings', 1), 'home');
+  assert.equal(UiModel.adjacentRoute('home', -1), 'settings');
+  assert.equal(UiModel.adjacentRoute('automation', -1), 'home');
 });
 
 test('provenance labels localize each automation origin', () => {
-  assert.equal(Model.provenanceLabel('automatic', 'es'), 'Automática');
-  assert.equal(Model.provenanceLabel('automatic', 'en'), 'Automatic');
-  assert.equal(Model.provenanceLabel('manual', 'en'), 'Manual');
-  assert.equal(Model.provenanceLabel('preset', 'en'), 'Preset');
-  assert.equal(Model.provenanceLabel('snooze', 'en'), 'Snoozed');
-  assert.equal(Model.provenanceLabel('mystery', 'en'), 'Unknown');
-  assert.equal(Model.provenanceLabel(null, 'en'), 'Unknown');
+  assert.equal(UiModel.provenanceLabel('automatic', 'es'), 'Automática');
+  assert.equal(UiModel.provenanceLabel('manual', 'en'), 'Manual');
+  // "preset" only survives in persisted history; it still renders sanely.
+  assert.equal(UiModel.provenanceLabel('preset', 'en'), 'Preset');
+  assert.equal(UiModel.provenanceLabel('anything', 'en'), I18n.en.provenanceUnknown);
 });
 
-test('midnight explanation is a localized, non-empty sentence', () => {
-  assert.ok(Model.midnightExplanation('es').length > 40);
-  assert.ok(Model.midnightExplanation('en').length > 40);
-  assert.notEqual(Model.midnightExplanation('es'), Model.midnightExplanation('en'));
+test('schedule display values normalize per period and drop junk fields', () => {
+  assert.deepEqual(
+    UiModel.scheduleDisplayValues({
+      schedule_display: {
+        day: { brightness: 80, gamma: 100 },
+        night: { brightness: 55, gamma: 85 }
+      }
+    }),
+    { day: { brightness: 80, gamma: 100 }, night: { brightness: 55, gamma: 85 } }
+  );
+  assert.deepEqual(
+    UiModel.scheduleDisplayValues({ schedule_display: { day: { brightness: 70 } } }),
+    { day: { brightness: 70 } }
+  );
+  assert.deepEqual(UiModel.scheduleDisplayValues({}), {});
+  assert.deepEqual(UiModel.scheduleDisplayValues({ schedule_display: { dawn: { brightness: 5 } } }), {});
+  assert.deepEqual(
+    UiModel.scheduleDisplayValues({ schedule_display: { night: { brightness: 101, gamma: 85 } } }),
+    { night: { gamma: 85 } }
+  );
 });
 
-test('preflight view model localizes status and per-check errors', () => {
-  const result = Model.preflightStatus({
-    checks: [
-      { name: 'helper', ok: true, warn: false, error: null },
-      { name: 'brightness', ok: false, warn: false, error: 'settingsWrite' }
-    ]
-  }, 'en');
-  assert.equal(result.ok, false);
-  assert.equal(result.failed, 1);
-  assert.equal(result.status, I18n.en.preflightStatusFail);
-  assert.equal(result.checks.length, 2);
-  assert.equal(result.checks[1].error, I18n.en.errSettingsWrite);
-
-  const allGood = Model.preflightStatus({ checks: [{ name: 'helper', ok: true }] }, 'es');
-  assert.equal(allGood.ok, true);
-  assert.equal(allGood.status, I18n.es.preflightStatusOk);
-
-  const warning = Model.preflightStatus({ checks: [{ name: 'hyprctl', ok: true, warn: true }] }, 'en');
-  assert.equal(warning.ok, false);
-  assert.equal(warning.status, I18n.en.preflightStatusWarn);
-
-  // Missing checks fail closed to a safe unknown-state view.
-  const empty = Model.preflightStatus({}, 'en');
-  assert.equal(empty.ok, false);
-});
-
-test('preset view model surfaces options with builtin flags and labels', () => {
-  const vm = Model.presetViewModel([
-    { name: 'day', builtin: true },
-    { name: 'custom' }
-  ], 'day', 'en');
-  assert.equal(vm.length, 2);
-  assert.equal(vm[0].name, 'day');
-  assert.equal(vm[0].builtin, true);
-  assert.equal(vm[0].selected, true);
-  assert.equal(vm[1].selected, false);
-  assert.equal(vm[0].applyLabel, I18n.en.presetApply);
-  assert.equal(vm[0].builtinLabel, I18n.en.presetBuiltIn);
-  assert.equal(vm[0].applyLabel, vm[1].applyLabel);
-});
-
-test('snooze view model reports active status and action labels', () => {
-  const active = Model.snoozeViewModel({
-    snoozed: true,
-    schedule_enabled: true,
-    transition_seconds: '5'
-  }, 'en');
-  assert.equal(active.snoozed, true);
-  assert.equal(active.scheduleEnabled, true);
-  assert.equal(active.statusLabel, I18n.en.snoozeStatusActive);
-  assert.equal(active.snoozeClearLabel, I18n.en.snoozeClear);
-  assert.equal(active.snoozeSetLabel, I18n.en.snoozeSet);
-
-  const off = Model.snoozeViewModel({ snoozed: false }, 'es');
-  assert.equal(off.snoozed, false);
-  assert.equal(off.statusLabel, I18n.es.snoozeStatusOff);
-});
-
-test('settings view model localizes scope, language and shortcut fields', () => {
-  const vm = Model.settingsViewModel({
-    locale: 'en',
-    apply_scope: 'persistent',
-    default_preset: 'day',
-    shortcut_keys: 'SUPER, L'
-  }, 'en');
-  assert.equal(vm.language, 'en');
-  assert.equal(vm.applyScope, 'persistent');
-  assert.equal(vm.defaultPreset, 'day');
-  assert.equal(vm.shortcutKeys, 'SUPER, L');
-  assert.equal(vm.languageLabel, I18n.en.language);
-  assert.equal(vm.applyScopeLabel, I18n.en.applyScope);
-  assert.equal(vm.sessionLabel, I18n.en.applyScopeSession);
-  assert.equal(vm.persistentLabel, I18n.en.applyScopePersistent);
-});
-
-test('history view model bounds to 50 records and localizes labels', () => {
-  const records = Array.from({ length: 60 }, (_, i) => ({ time: `t${i}`, operation: 'op', origin: 'manual' }));
-  const vm = Model.historyViewModel(records, 'en');
-  assert.equal(vm.records.length, 50);
-  assert.equal(vm.empty, false);
-  assert.equal(vm.emptyLabel, I18n.en.historyEmpty);
-  assert.equal(vm.clearLabel, I18n.en.historyClear);
-
-  const none = Model.historyViewModel([], 'es');
-  assert.equal(none.empty, true);
-  assert.equal(none.records.length, 0);
+test('snoozeDurationSeconds composes number plus unit inside the helper window', () => {
+  assert.equal(UiModel.snoozeDurationSeconds(90, 'seconds'), 90);
+  assert.equal(UiModel.snoozeDurationSeconds(30, 'minutes'), 1800);
+  assert.equal(UiModel.snoozeDurationSeconds(2, 'hours'), 7200);
+  assert.equal(UiModel.snoozeDurationSeconds(24, 'hours'), 86400);
+  // Below the 10 s floor, above the 24 h ceiling, or plain invalid.
+  assert.equal(UiModel.snoozeDurationSeconds(5, 'seconds'), null);
+  assert.equal(UiModel.snoozeDurationSeconds(25, 'hours'), null);
+  assert.equal(UiModel.snoozeDurationSeconds(0, 'minutes'), null);
+  assert.equal(UiModel.snoozeDurationSeconds(-3, 'minutes'), null);
+  assert.equal(UiModel.snoozeDurationSeconds(10, 'days'), null);
+  assert.equal(UiModel.snoozeDurationSeconds('abc', 'minutes'), null);
+  assert.equal(UiModel.snoozeDurationSeconds(null, 'minutes'), null);
 });
