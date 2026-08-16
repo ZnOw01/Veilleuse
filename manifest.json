@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.znow01.veilleuse",
   "name": "Veilleuse",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "author": "ZnOw01",
   "license": "MIT",
   "description": "Native brightness, night light and schedule control.",
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Veilleuse",
-    "description": "Ajusta la luz nocturna y los controles de pantalla.",
+    "description": "Adjusts the night light and display controls.",
     "category": "Display",
     "allowMultiple": false,
     "defaultSection": "right"
