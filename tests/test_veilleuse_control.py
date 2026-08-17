@@ -2103,7 +2103,7 @@ class V2ReleaseTests(unittest.TestCase):
         for relative in (
             "manifest.json",
             "README.md",
-            "preview.png",
+            "previewv3.png",
             "BarWidget.qml",
             "scripts/veilleuse-control",
             "scripts/schedule_utils.py",
