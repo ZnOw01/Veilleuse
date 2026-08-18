@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.znow01.veilleuse",
   "name": "Veilleuse",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "author": "ZnOw01",
   "license": "MIT",
   "description": "Native brightness, night light and schedule control.",

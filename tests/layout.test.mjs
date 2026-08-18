@@ -50,6 +50,21 @@ test('slider value labels track the drag target like the knob does', () => {
   assert.equal(labels.length, 6, 'each slider binds knob and label through displayValue');
 });
 
+test('mouse hover moves the panel cursor onto the hovered row', () => {
+  // The Omarchy cursor contract: every navigable section binds hasCursor to
+  // a cursor.section index and a HoverHandler points the cursor at that same
+  // index, so hover + arrows drive one single cursor.
+  assert.match(qml, /function cursorToSection\(index\)/);
+  const sections = [...qml.matchAll(/hasCursor:\s*root\.cursor\.section === (\d+)/g)].map(m => m[1]);
+  assert.ok(sections.length >= 9, `expected all routes to be hover-navigable, got ${sections.length}`);
+  for (const index of [...new Set(sections)]) {
+    const cursorTargets = qml.match(new RegExp(`root\\.cursorToSection\\(${index}\\)`, 'g')) || [];
+    const hasCursorCount = sections.filter(s => s === index).length;
+    assert.ok(cursorTargets.length >= hasCursorCount,
+      `section ${index} must hover-set the cursor it claims (${cursorTargets.length} hover(s) for ${hasCursorCount} hasCursor binding(s))`);
+  }
+});
+
 test('the keyboard is arrows-only and owned by an inline key catcher', () => {
   assert.doesNotMatch(qml, /PanelKeyCatcher/);
   assert.match(qml, /Keys\.priority:\s*Keys\.BeforeItem/);

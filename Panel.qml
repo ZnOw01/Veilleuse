@@ -386,6 +386,16 @@ Panel {
         cursor = Model.moveCursor(cursor, key, root.route);
     }
 
+    // Mouse hover targets the same single cursor the arrows walk: the row
+    // under the pointer becomes the navigable section so Enter activates it
+    // and Left/Right adjust it. This is the Omarchy cursor contract.
+    function cursorToSection(index) {
+        var names = Model.routeSections(root.route);
+        if (index < 0 || index >= names.length)
+            return;
+        root.cursor = { section: index, field: 0 };
+    }
+
     function switchRouteBy(direction) {
         root.navigateToRoute(Model.adjacentRoute(root.route, direction));
     }
@@ -706,6 +716,10 @@ Panel {
                     foreground: root.foreground
                     implicitHeight: hero.implicitHeight + Style.spacing.rowPaddingX
 
+                    HoverHandler {
+                        onHoveredChanged: if (hovered) root.cursorToSection(0)
+                    }
+
                     PanelHero {
                         id: hero
 
@@ -761,6 +775,10 @@ Panel {
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
                         implicitHeight: brightnessColumn.implicitHeight + Style.spacing.rowPaddingX
+
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(1)
+                        }
 
                         Column {
                             id: brightnessColumn
@@ -821,6 +839,10 @@ Panel {
                         foreground: root.foreground
                         implicitHeight: temperatureColumn.implicitHeight + Style.spacing.rowPaddingX
 
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(2)
+                        }
+
                         Column {
                             id: temperatureColumn
 
@@ -879,6 +901,10 @@ Panel {
                         hasCursor: root.cursor.section === 3
                         foreground: root.foreground
                         implicitHeight: gammaColumn.implicitHeight + Style.spacing.rowPaddingX
+
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(3)
+                        }
 
                         Column {
                             id: gammaColumn
@@ -943,6 +969,10 @@ Panel {
                         foreground: root.foreground
                         implicitHeight: monitorSelector.implicitHeight + Style.spacing.rowPaddingX
 
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(4)
+                        }
+
                         SearchableDropdown {
                             id: monitorSelector
 
@@ -977,6 +1007,10 @@ Panel {
                         color: Style.normalFill
                         borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
                         radius: Style.cornerRadius
+
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(0)
+                        }
 
                         Row {
                             id: automationHeader
@@ -1032,6 +1066,10 @@ Panel {
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
                         implicitHeight: scheduleEditorColumn.implicitHeight + Style.spacing.rowPaddingX
+
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(1)
+                        }
 
                         Column {
                             id: scheduleEditorColumn
@@ -1282,6 +1320,10 @@ Panel {
                         foreground: root.foreground
                         implicitHeight: snoozeColumn.implicitHeight + Style.spacing.rowPaddingX
 
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(2)
+                        }
+
                         Column {
                             id: snoozeColumn
 
@@ -1427,6 +1469,10 @@ Panel {
                         foreground: root.foreground
                         implicitHeight: localeSelector.implicitHeight + Style.spacing.rowPaddingX
 
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(0)
+                        }
+
                         Dropdown {
                             id: localeSelector
 
@@ -1460,6 +1506,10 @@ Panel {
                         foreground: root.foreground
                         implicitHeight: shortcutColumn.implicitHeight + Style.spacing.rowPaddingX
 
+                        HoverHandler {
+                            onHoveredChanged: if (hovered) root.cursorToSection(1)
+                        }
+
                         Column {
                             id: shortcutColumn
 
@@ -1488,6 +1538,10 @@ Panel {
                             Row {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
+
+                                HoverHandler {
+                                    onHoveredChanged: if (hovered) root.cursorToSection(2)
+                                }
 
                                 Button {
                                     text: root.text("install_shortcut")

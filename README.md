@@ -16,14 +16,14 @@ Scheduled brightness, temperature, and gamma are applied when the active period 
 
 ## Keyboard
 
-| Key     | Action                |
-| ------- | --------------------- |
-| `← →`   | Switch view           |
-| `↑ ↓`   | Move between controls |
-| `Enter` | Activate              |
-| `Esc`   | Close                 |
+| Key     | Action                                                                  |
+| ------- | ----------------------------------------------------------------------- |
+| `← →`   | Adjust the focused slider (`brightness` +1, `temperature` +50 K, `gamma` +1); switch view elsewhere |
+| `↑ ↓`   | Move between controls                                                   |
+| `Enter` | Activate                                                                |
+| `Esc`   | Close                                                                   |
 
-Mouse input is also supported.
+Mouse hover moves the focus to the row under the pointer, so `← →` adjust the slider you are hovering and `Enter` activates the row beneath it. Drag works as usual.
 
 ## CLI
 
@@ -74,7 +74,11 @@ Update:
 
 ```bash
 omarchy plugin update io.github.znow01.veilleuse --yes
+# Reload the plugin in the running shell: plugin update only touches git.
+omarchy-shell shell rescanPlugins
 ```
+
+`omarchy plugin update` fetches and fast-forwards the checkout and validates the manifest, but it does **not** notify the running shell — the widget keeps executing the previously loaded QML. `rescanPlugins` unloads and recreates the plugin components from disk (also how `plugin add`, `enable`, and `disable` behave), so run it to pick up the new code without restarting the shell. A full shell restart applies changes with no further action.
 
 Disable:
 
