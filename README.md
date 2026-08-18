@@ -2,7 +2,7 @@
 
 An **Omarchy Quattro** bar plugin for brightness, night light, and day/night scheduling.
 
-![Veilleuse](previewv3.png)
+![Veilleuse](preview.png)
 
 ## Panel
 

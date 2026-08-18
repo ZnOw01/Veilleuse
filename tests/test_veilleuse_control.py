@@ -1332,14 +1332,14 @@ class ReadmeLimitsTests(unittest.TestCase):
 
     def test_readme_temperature_range_matches_the_panel_slider(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"Night light from (\d+) to (\d+) K", readme)
+        claim = re.search(r"Temperature range: `(\d+)–(\d+) K`", readme)
         self.assertIsNotNone(claim, "README must state the night-light temperature range")
         slider = self.panel_slider_range("id: temperatureColumn", "id: gammaColumn")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
 
     def test_readme_gamma_range_matches_the_panel_slider(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"gamma from (\d+) to (\d+)\s*%", readme)
+        claim = re.search(r"Gamma range: `(\d+)–(\d+)%`", readme)
         self.assertIsNotNone(claim, "README must state the gamma range")
         slider = self.panel_slider_range("id: gammaColumn", "id: automationRoute")
         self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
@@ -2103,7 +2103,7 @@ class V2ReleaseTests(unittest.TestCase):
         for relative in (
             "manifest.json",
             "README.md",
-            "previewv3.png",
+            "preview.png",
             "BarWidget.qml",
             "scripts/veilleuse-control",
             "scripts/schedule_utils.py",
@@ -2190,15 +2190,14 @@ class ReadmeShortcutTests(unittest.TestCase):
             self.assertIn(needle, self.readme, f"README must mention {needle!r}")
 
     def test_readme_states_installation_is_never_automatic(self):
-        self.assertIn("never installs shortcuts automatically", self.readme)
-
+        self.assertIn("does not install a shortcut automatically", self.readme)
     def test_readme_documents_fixed_command_and_marker_block(self):
         self.assertIn("omarchy-shell -q io.github.znow01.veilleuse toggleNightlight", self.readme)
         self.assertIn("-- >>> Veilleuse shortcut >>>", self.readme)
 
     def test_readme_documents_single_backup_and_exact_removal(self):
         self.assertIn("bindings.lua.bak", self.readme)
-        self.assertIn("reverts the file to its previous content", self.readme)
+        self.assertIn("backup is created before modification", self.readme)
 
 
 if __name__ == "__main__":
