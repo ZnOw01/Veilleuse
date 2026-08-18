@@ -13,6 +13,15 @@ var ROUTE_SECTIONS = {
 
 var DRAG_SECTIONS = ['brightness', 'temperature', 'gamma'];
 
+// Keyboard steps for the Left/Right arrows on a slider section: temperature
+// moves by the same 50 K grain as the schedule editor, brightness and gamma
+// by one point per press.
+var KEYBOARD_STEPS = {
+  brightness: 1,
+  temperature: 50,
+  gamma: 1
+};
+
 // Load I18n when running under Node (CommonJS module present). Quickshell has
 // no `require`, so the bundled DEFAULT_COPY below keeps the panel fully
 // functional in its native English default until the locale wiring is added.
@@ -111,7 +120,7 @@ var DEFAULT_COPY = {
   focusedMonitor: 'Focused monitor',
   working: 'Applying…',
   minutesShort: 'min',
-  keyboardHints: '← → switch view · ↑ ↓ move · Enter activate · Esc close'
+  keyboardHints: '← → adjust / switch view · ↑ ↓ move · Enter activate · Esc close'
 };
 
 var copy = (I18n && I18n.en) ? I18n.en : DEFAULT_COPY;
@@ -163,6 +172,24 @@ function adjacentRoute(route, direction) {
   if (index === -1) index = 0;
   var next = (index + (direction < 0 ? -1 : 1) + ROUTES.length) % ROUTES.length;
   return ROUTES[next];
+}
+
+// Slider sections respond to the Left/Right arrows: step the live value
+// instead of switching routes while the cursor owns a slider.
+function isSliderSection(section) {
+  return DRAG_SECTIONS.indexOf(section) !== -1;
+}
+
+// Next value for a keyboard step on a slider section, clamped to the
+// section range. Returns null when the section is not a slider.
+function stepSliderValue(section, direction, current) {
+  var range = SECTION_RANGES[section];
+  var step = KEYBOARD_STEPS[section];
+  if (!range || !step) return null;
+  var number = Number(current);
+  if (current === null || current === undefined || current === "" || !isFinite(number))
+    number = range.min;
+  return boundedInteger(number + (direction < 0 ? -step : step), range.min, range.max);
 }
 
 var SECTION_RANGES = {
@@ -583,6 +610,8 @@ if (typeof module !== 'undefined' && module.exports) {
     cursorStart: cursorStart,
     moveCursor: moveCursor,
     adjacentRoute: adjacentRoute,
+    isSliderSection: isSliderSection,
+    stepSliderValue: stepSliderValue,
     dragTargetEmpty: dragTargetEmpty,
     dragTargetPush: dragTargetPush,
     reconcileDragTargets: reconcileDragTargets,

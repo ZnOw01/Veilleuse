@@ -53,15 +53,17 @@ test('slider value labels track the drag target like the knob does', () => {
 test('the keyboard is arrows-only and owned by an inline key catcher', () => {
   assert.doesNotMatch(qml, /PanelKeyCatcher/);
   assert.match(qml, /Keys\.priority:\s*Keys\.BeforeItem/);
-  assert.match(qml, /Qt\.Key_Left[\s\S]*?root\.switchRouteBy\(-1\)/);
-  assert.match(qml, /Qt\.Key_Right[\s\S]*?root\.switchRouteBy\(1\)/);
+  // Left/Right adjust the slider the cursor owns and only fall back to view
+  // switching outside the drag sections.
+  assert.match(qml, /Qt\.Key_Left[\s\S]*?root\.adjustSliderBy\(-1\)[\s\S]*?root\.switchRouteBy\(-1\)/);
+  assert.match(qml, /Qt\.Key_Right[\s\S]*?root\.adjustSliderBy\(1\)[\s\S]*?root\.switchRouteBy\(1\)/);
   assert.match(qml, /Qt\.Key_Up[\s\S]*?root\.moveCursorVertically\(-1\)/);
   assert.match(qml, /Qt\.Key_Down[\s\S]*?root\.moveCursorVertically\(1\)/);
   assert.match(qml, /Qt\.Key_Return[\s\S]*?root\.activateCursor\(\)/);
   assert.match(qml, /Qt\.Key_Escape[\s\S]*?root\.handleCloseRequested\(\)/);
   // The vim-era letter keys are gone from the model and the panel.
   assert.doesNotMatch(qml, /'j'|'k'|'h'|'l'/);
-  assert.match(i18n, /keyboardHints:\s*'← → switch view · ↑ ↓ move · Enter activate · Esc close'/);
+  assert.match(i18n, /keyboardHints:\s*'← → adjust \/ switch view · ↑ ↓ move · Enter activate · Esc close'/);
 });
 
 test('view switching is the two chevrons plus the current view name', () => {

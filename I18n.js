@@ -105,7 +105,7 @@ var en = {
   focusedMonitor: 'Focused monitor',
   working: 'Applying…',
   minutesShort: 'min',
-  keyboardHints: '← → switch view · ↑ ↓ move · Enter activate · Esc close'
+  keyboardHints: '← → adjust / switch view · ↑ ↓ move · Enter activate · Esc close'
 };
 
 var es = {
@@ -195,7 +195,7 @@ var es = {
   focusedMonitor: 'Monitor enfocado',
   working: 'Aplicando…',
   minutesShort: 'min',
-  keyboardHints: '← → cambiar vista · ↑ ↓ moverse · Enter activar · Esc cerrar'
+  keyboardHints: '← → ajustar / cambiar vista · ↑ ↓ moverse · Enter activar · Esc cerrar'
 };
 
 var KEYS = (function () {

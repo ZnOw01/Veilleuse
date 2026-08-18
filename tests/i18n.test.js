@@ -110,6 +110,6 @@ test('the preset-era UI keys are gone and the schedule keys survive', () => {
 });
 
 test('keyboard hints describe the arrows-only model in both locales', () => {
-  assert.equal(I18n.en.keyboardHints, '← → switch view · ↑ ↓ move · Enter activate · Esc close');
-  assert.equal(I18n.es.keyboardHints, '← → cambiar vista · ↑ ↓ moverse · Enter activar · Esc cerrar');
+  assert.equal(I18n.en.keyboardHints, '← → adjust / switch view · ↑ ↓ move · Enter activate · Esc close');
+  assert.equal(I18n.es.keyboardHints, '← → ajustar / cambiar vista · ↑ ↓ moverse · Enter activar · Esc cerrar');
 });

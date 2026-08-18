@@ -390,6 +390,29 @@ Panel {
         root.navigateToRoute(Model.adjacentRoute(root.route, direction));
     }
 
+    // The cursor owns a slider section: Left/Right step the live value with
+    // the section keyboard step instead of switching routes. Returns false
+    // when the arrows must fall back to view switching.
+    function adjustSliderBy(direction) {
+        var names = Model.routeSections(root.route);
+        var section = names[root.cursor.section];
+        if (!Model.isSliderSection(section) || !root.stateReady)
+            return false;
+        var current = root.sliderCurrentValue(section);
+        var next = Model.stepSliderValue(section, direction, current);
+        if (next === null)
+            return false;
+        root.queueDragMutation(section, next);
+        return true;
+    }
+
+    function sliderCurrentValue(section) {
+        if (section === "brightness") return root.displayValue(section, root.state.brightness.percent);
+        if (section === "temperature") return root.displayValue(section, root.state.temperature);
+        if (section === "gamma") return root.displayValue(section, root.state.gamma);
+        return null;
+    }
+
     function reconcilePending() {
         if (root.route !== "home") {
             root.dragTarget = Model.dragTargetEmpty();
@@ -580,12 +603,14 @@ Panel {
                     return ;
                 }
                 if (event.key === Qt.Key_Left) {
-                    root.switchRouteBy(-1);
+                    if (!root.adjustSliderBy(-1))
+                        root.switchRouteBy(-1);
                     event.accepted = true;
                     return ;
                 }
                 if (event.key === Qt.Key_Right) {
-                    root.switchRouteBy(1);
+                    if (!root.adjustSliderBy(1))
+                        root.switchRouteBy(1);
                     event.accepted = true;
                     return ;
                 }

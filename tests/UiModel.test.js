@@ -34,6 +34,26 @@ test('adjacentRoute rings through the views for the Left/Right arrows', () => {
   assert.equal(Model.adjacentRoute('home', -1), 'settings');
 });
 
+test('isSliderSection owns exactly the three drag sections', () => {
+  for (const section of ['brightness', 'temperature', 'gamma'])
+    assert.equal(Model.isSliderSection(section), true, section);
+  for (const section of ['nightLight', 'monitor', 'scheduleToggle', 'schedule', 'snooze', 'locale', 'shortcut'])
+    assert.equal(Model.isSliderSection(section), false, section);
+});
+
+test('stepSliderValue moves within the section range by the keyboard step', () => {
+  assert.equal(Model.stepSliderValue('brightness', 1, 41), 42);
+  assert.equal(Model.stepSliderValue('brightness', -1, 1), 1);
+  assert.equal(Model.stepSliderValue('brightness', 1, 100), 100);
+  assert.equal(Model.stepSliderValue('temperature', 1, 3000), 3050);
+  assert.equal(Model.stepSliderValue('temperature', -1, 2500), 2500);
+  assert.equal(Model.stepSliderValue('temperature', 1, 6500), 6500);
+  assert.equal(Model.stepSliderValue('gamma', 1, 50), 51);
+  assert.equal(Model.stepSliderValue('gamma', -1, 0), 0);
+  assert.equal(Model.stepSliderValue('monitor', 1, 50), null);
+  assert.equal(Model.stepSliderValue('brightness', 1, null), 2);
+});
+
 test('normalizes unavailable helper data to a fail-closed state', () => {
   const state = Model.normalizeState({
     available: true,
@@ -441,4 +461,49 @@ test('mergeStatePatch ignores non-object patches and re-normalizes garbage value
     brightness: { available: true, percent: 400, monitor: 'eDP-2', error: null }
   });
   assert.equal(garbage.available, false);
+});
+
+test('provenance labels localize each automation origin', () => {
+  assert.equal(Model.provenanceLabel('automatic', 'es'), 'Automática');
+  assert.equal(Model.provenanceLabel('manual', 'en'), 'Manual');
+  // "preset" only survives in persisted history; it still renders sanely.
+  assert.equal(Model.provenanceLabel('preset', 'en'), 'Preset');
+  assert.equal(Model.provenanceLabel('anything', 'en'), I18n.en.provenanceUnknown);
+});
+
+test('schedule display values normalize per period and drop junk fields', () => {
+  assert.deepEqual(
+    Model.scheduleDisplayValues({
+      schedule_display: {
+        day: { brightness: 80, gamma: 100 },
+        night: { brightness: 55, gamma: 85 }
+      }
+    }),
+    { day: { brightness: 80, gamma: 100 }, night: { brightness: 55, gamma: 85 } }
+  );
+  assert.deepEqual(
+    Model.scheduleDisplayValues({ schedule_display: { day: { brightness: 70 } } }),
+    { day: { brightness: 70 } }
+  );
+  assert.deepEqual(Model.scheduleDisplayValues({}), {});
+  assert.deepEqual(Model.scheduleDisplayValues({ schedule_display: { dawn: { brightness: 5 } } }), {});
+  assert.deepEqual(
+    Model.scheduleDisplayValues({ schedule_display: { night: { brightness: 101, gamma: 85 } } }),
+    { night: { gamma: 85 } }
+  );
+});
+
+test('snoozeDurationSeconds composes number plus unit inside the helper window', () => {
+  assert.equal(Model.snoozeDurationSeconds(90, 'seconds'), 90);
+  assert.equal(Model.snoozeDurationSeconds(30, 'minutes'), 1800);
+  assert.equal(Model.snoozeDurationSeconds(2, 'hours'), 7200);
+  assert.equal(Model.snoozeDurationSeconds(24, 'hours'), 86400);
+  // Below the 10 s floor, above the 24 h ceiling, or plain invalid.
+  assert.equal(Model.snoozeDurationSeconds(5, 'seconds'), null);
+  assert.equal(Model.snoozeDurationSeconds(25, 'hours'), null);
+  assert.equal(Model.snoozeDurationSeconds(0, 'minutes'), null);
+  assert.equal(Model.snoozeDurationSeconds(-3, 'minutes'), null);
+  assert.equal(Model.snoozeDurationSeconds(10, 'days'), null);
+  assert.equal(Model.snoozeDurationSeconds('abc', 'minutes'), null);
+  assert.equal(Model.snoozeDurationSeconds(null, 'minutes'), null);
 });
