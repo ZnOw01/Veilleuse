@@ -1411,7 +1411,6 @@ class ManifestCompatibilityTests(unittest.TestCase):
     def test_referenced_release_files_exist(self):
         for relative in (
             "Panel.qml",
-            "Model.js",
             "UiModel.js",
             "scripts/veilleuse-control",
             "scripts/schedule_utils.py",
@@ -2034,8 +2033,8 @@ class ShortcutCliTests(HelperModuleTests):
         self.assertEqual([call for call, _timeout in self.reload.calls], [["hyprctl", "reload"]])
 
 
-class V2ReleaseTests(unittest.TestCase):
-    """Release archives and installed clones stay release-safe with v2 files."""
+class ReleaseArchiveTests(unittest.TestCase):
+    """Release archives and installed clones stay release-safe."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -2098,7 +2097,7 @@ class V2ReleaseTests(unittest.TestCase):
             env=environment,
         )
 
-    def test_archive_contains_the_v2_owned_files(self):
+    def test_archive_contains_the_release_owned_files(self):
         archive = self.build_archive()
         for relative in (
             "manifest.json",
