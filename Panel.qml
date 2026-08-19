@@ -1200,7 +1200,7 @@ Panel {
                                     id: dayGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    label: root.text("gamma") + " (%)"
+                                    label: root.text("gamma_short") + " (%)"
                                     value: Number(root.editDayGamma || 100)
                                     from: 0
                                     to: 100
@@ -1318,7 +1318,7 @@ Panel {
                                     id: nightGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    label: root.text("gamma") + " (%)"
+                                    label: root.text("gamma_short") + " (%)"
                                     value: Number(root.editNightGamma || 100)
                                     from: 0
                                     to: 100
@@ -1400,37 +1400,37 @@ Panel {
                                 elide: Text.ElideRight
                             }
 
+                            NumberField {
+                                id: snoozeEditor
+
+                                width: parent.width
+                                value: root.snoozeAmount
+                                from: 1
+                                to: 86400
+                                stepSize: 1
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                                Accessible.name: root.text("snooze")
+                                onModified: value => root.snoozeAmount = value
+                                field.Keys.priority: Keys.BeforeItem
+                                field.Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Escape) {
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        root.applySnooze();
+                                        keyCatcher.forceActiveFocus();
+                                        event.accepted = true;
+                                    }
+                                }
+                            }
+
                             Row {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
-                                NumberField {
-                                    id: snoozeEditor
-
-                                    width: Math.round(parent.width * 0.34)
-                                    value: root.snoozeAmount
-                                    from: 1
-                                    to: 86400
-                                    stepSize: 1
-                                    foreground: root.foreground
-                                    fontFamily: root.fontFamily
-                                    Accessible.name: root.text("snooze")
-                                    onModified: value => root.snoozeAmount = value
-                                    field.Keys.priority: Keys.BeforeItem
-                                    field.Keys.onPressed: function(event) {
-                                        if (event.key === Qt.Key_Escape) {
-                                            keyCatcher.forceActiveFocus();
-                                            event.accepted = true;
-                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                            root.applySnooze();
-                                            keyCatcher.forceActiveFocus();
-                                            event.accepted = true;
-                                        }
-                                    }
-                                }
-
                                 Button {
-                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
+                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_hours")
                                     selected: root.snoozeUnit === "hours"
                                     focusable: true
@@ -1444,7 +1444,7 @@ Panel {
                                 }
 
                                 Button {
-                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
+                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_minutes")
                                     selected: root.snoozeUnit === "minutes"
                                     focusable: true
@@ -1458,7 +1458,7 @@ Panel {
                                 }
 
                                 Button {
-                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
+                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_seconds")
                                     selected: root.snoozeUnit === "seconds"
                                     focusable: true

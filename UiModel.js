@@ -38,6 +38,7 @@ var DEFAULT_COPY = {
   brightness: 'Brightness',
   temperature: 'Temperature',
   gamma: 'Gamma (perceived brightness)',
+  gammaShort: 'Gamma',
   schedule: 'Schedule',
   save: 'Save changes',
   saved: 'Changes saved',
