@@ -26,7 +26,20 @@ BarWidget {
         var state = value || {};
         var automation = state.automation || {};
         var origin = automation.origin ? String(automation.origin) : "unknown";
-        return I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "en");
+        var provenance = I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "en");
+        if (automation.snoozed === true) {
+            var until = Number(automation.snooze_until);
+            var remaining = isFinite(until) && until > 0 ? Math.max(1, Math.ceil((until - Date.now() / 1000) / 60)) : 0;
+            var minText = I18n.t("minutes_short", panelLoader.item ? panelLoader.item.locale : "en");
+            var snoozeText = I18n.t("snooze_active", panelLoader.item ? panelLoader.item.locale : "en");
+            return snoozeText + (remaining > 0 ? " (" + remaining + " " + minText + ")" : "") + " · " + provenance;
+        }
+        var title = I18n.t("night_light", panelLoader.item ? panelLoader.item.locale : "en");
+        if (state.available !== true) return title;
+        if (state.enabled === true && state.temperature) {
+            return title + ": " + state.temperature + " K · " + provenance;
+        }
+        return title + " · " + provenance;
     }
 
     function injectPanel() {

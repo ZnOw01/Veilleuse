@@ -830,6 +830,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
+                                Accessible.name: root.text("brightness")
                                 onMoved: function(v) { root.queueDragMutation("brightness", v) }
                             }
                         }
@@ -893,6 +894,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
+                                Accessible.name: root.text("temperature")
                                 onMoved: function(v) { root.queueDragMutation("temperature", v) }
                             }
                         }
@@ -956,6 +958,7 @@ Panel {
                                 step: 1
                                 integer: true
                                 enabled: root.stateReady
+                                Accessible.name: root.text("gamma")
                                 onMoved: function(v) { root.queueDragMutation("gamma", v) }
                             }
                         }
@@ -1109,8 +1112,10 @@ Panel {
                                     font.family: root.fontFamily
                                     text: root.editStart
                                     inputMask: "99:99"
+                                    Accessible.name: root.text("day_period") + " " + root.text("start")
+                                    Accessible.role: Accessible.EditableText
                                     onTextChanged: root.editStart = text
-                                    onAccepted: endEditor.forceActiveFocus()
+                                    onAccepted: dayTemperatureEditor.field.forceActiveFocus()
                                     Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                 }
 
@@ -1128,6 +1133,7 @@ Panel {
                                 stepSize: 50
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("day_period") + " " + root.text("temperature")
                                 onModified: value => root.editDayTemperature = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1135,7 +1141,7 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        dayBrightnessEditor.field.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
@@ -1153,6 +1159,7 @@ Panel {
                                 stepSize: 5
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("day_period") + " " + root.text("brightness")
                                 onModified: value => root.editDayBrightness = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1160,7 +1167,7 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        dayGammaEditor.field.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
@@ -1178,6 +1185,7 @@ Panel {
                                 stepSize: 5
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("day_period") + " " + root.text("gamma")
                                 onModified: value => root.editDayGamma = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1185,7 +1193,7 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        endEditor.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
@@ -1216,8 +1224,10 @@ Panel {
                                     font.family: root.fontFamily
                                     text: root.editEnd
                                     inputMask: "99:99"
+                                    Accessible.name: root.text("night_period") + " " + root.text("end")
+                                    Accessible.role: Accessible.EditableText
                                     onTextChanged: root.editEnd = text
-                                    onAccepted: dayTemperatureEditor.field.forceActiveFocus()
+                                    onAccepted: nightTemperatureEditor.field.forceActiveFocus()
                                     Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                 }
 
@@ -1235,6 +1245,7 @@ Panel {
                                 stepSize: 50
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("night_period") + " " + root.text("temperature")
                                 onModified: value => root.editNightTemperature = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1242,7 +1253,7 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        nightBrightnessEditor.field.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
@@ -1260,6 +1271,7 @@ Panel {
                                 stepSize: 5
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("night_period") + " " + root.text("brightness")
                                 onModified: value => root.editNightBrightness = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1267,7 +1279,7 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        nightGammaEditor.field.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
@@ -1285,6 +1297,7 @@ Panel {
                                 stepSize: 5
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                Accessible.name: root.text("night_period") + " " + root.text("gamma")
                                 onModified: value => root.editNightGamma = String(value)
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -1292,19 +1305,23 @@ Panel {
                                         keyCatcher.forceActiveFocus();
                                         event.accepted = true;
                                     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        keyCatcher.forceActiveFocus();
+                                        saveScheduleButton.forceActiveFocus();
                                         event.accepted = true;
                                     }
                                 }
                             }
 
                             Button {
+                                id: saveScheduleButton
+
                                 text: root.text("save")
                                 width: parent.width
                                 leftAlign: false
                                 bordered: true
                                 focusable: true
                                 foreground: root.foreground
+                                Accessible.name: root.text("save")
+                                Accessible.role: Accessible.Button
                                 enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
                                 onClicked: {
                                     root.queueSchedule();
@@ -1368,6 +1385,7 @@ Panel {
                                     stepSize: 1
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    Accessible.name: root.text("snooze")
                                     onModified: value => root.snoozeAmount = value
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1531,6 +1549,8 @@ Panel {
                                 placeholderText: root.text("shortcut_keys")
                                 foreground: root.foreground
                                 font.family: root.fontFamily
+                                Accessible.name: root.text("shortcut_keys")
+                                Accessible.role: Accessible.EditableText
                                 onAccepted: {
                                     root.setInlineSetting("shortcutKeys", text);
                                     keyCatcher.forceActiveFocus();
