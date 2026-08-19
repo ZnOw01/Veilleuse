@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell.Io
 import "UiModel.js" as Model
 import "I18n.js" as I18n
+import "Icons.js" as Icons
 import qs.Commons
 import qs.Ui
 
@@ -161,12 +162,7 @@ Panel {
     }
 
     function glyphForState(value) {
-        var input = value || {};
-        var automation = input.automation || {};
-        if (automation.snoozed === true) return "󰒲";
-        if (input.available !== true) return "󰌙";
-        if (input.enabled === true) return automation.origin === "preset" ? "󰏘" : "󰖙";
-        return automation.schedule_enabled === false ? "󰅙" : "󰖔";
+        return Icons.glyphForState(value);
     }
 
     function persistInline(values) {

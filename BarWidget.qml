@@ -1,5 +1,6 @@
 import QtQuick
 import "I18n.js" as I18n
+import "Icons.js" as Icons
 import qs.Commons
 import qs.Ui
 
@@ -14,12 +15,7 @@ BarWidget {
     readonly property string barTooltip: root.tooltipForState(root.liveState)
 
     function glyphForState(value) {
-        var state = value || {};
-        var automation = state.automation || {};
-        if (automation.snoozed === true) return "󰒲";
-        if (state.available !== true) return "󰌙";
-        if (state.enabled === true) return automation.origin === "preset" ? "󰏘" : "󰖙";
-        return automation.schedule_enabled === false ? "󰅙" : "󰖔";
+        return Icons.glyphForState(value);
     }
 
     function tooltipForState(value) {
