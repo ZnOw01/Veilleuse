@@ -8,6 +8,7 @@ import datetime
 import fcntl
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -381,31 +382,44 @@ def exclusive_lock(path):
     """Serialize related GUI and command-line operations on Linux."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    new = not path.exists()
-    with path.open("a+", encoding="utf-8") as stream:
-        if new:
-            path.chmod(0o600)
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = None
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        mode = os.fstat(descriptor).st_mode
+        if not stat.S_ISREG(mode):
+            raise ValueError(f"El archivo de bloqueo no es regular: {path}")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
 
 def atomic_write_text(path, text, mode=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
+    descriptor = None
     try:
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
+        os.fchmod(descriptor, mode if mode is not None else 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        if mode is not None:
-            os.chmod(temporary, mode)
+        try:
+            dest_stat = os.lstat(path)
+            if stat.S_ISLNK(dest_stat.st_mode):
+                raise ValueError(f"El destino es un enlace simbólico no seguro: {path}")
+        except FileNotFoundError:
+            pass
         os.replace(temporary, path)
         temporary = None
         try:
@@ -417,5 +431,8 @@ def atomic_write_text(path, text, mode=None):
         except OSError:
             pass
     finally:
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
         if temporary:
             Path(temporary).unlink(missing_ok=True)

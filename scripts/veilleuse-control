@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -102,12 +103,14 @@ def _schedule_module():
     if path.is_file():
         cached = _SCHEDULE_MODULE_CACHE.get(path)
         if cached is not None:
+            cached.HYPRSUNSET_CONFIG = config_path()
             return cached
         try:
             module = types.ModuleType("schedule_utils")
             module.__file__ = str(path)
             code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
             exec(code, module.__dict__)
+            module.HYPRSUNSET_CONFIG = config_path()
             _SCHEDULE_MODULE_CACHE[path] = module
             return module
         except Exception as caught:
@@ -337,15 +340,15 @@ def read_brightness(monitor):
     return percent, None
 
 
-def _monitor_write_error(monitor, target="focused"):
-    state = read_monitor_state()
-    matches = [entry for entry in state["monitors"] if entry["name"] == monitor]
-    if not matches or not matches[0]["enabled"]:
+def _monitor_write_error(monitor, target="focused", state=None):
+    current_state = read_monitor_state() if state is None else state
+    matches = [entry for entry in current_state.get("monitors", []) if entry.get("name") == monitor]
+    if not matches or not matches[0].get("enabled"):
         return "El monitor seleccionado no está habilitado"
     if target == "focused":
-        if state["monitor"] != monitor:
+        if current_state.get("monitor") != monitor:
             return "El monitor enfocado no es coherente con el estado actual"
-        if not matches[0]["focused"]:
+        if not matches[0].get("focused"):
             return "El monitor enfocado no es coherente con la lista de monitores"
     return None
 
@@ -354,7 +357,7 @@ def _resolve_monitor_target(target, state=None):
     state = read_monitor_state() if state is None else state
     if target == "focused":
         monitor = state.get("monitor")
-        error = _monitor_write_error(monitor, "focused") if monitor else "No se pudo resolver un monitor enfocado"
+        error = _monitor_write_error(monitor, "focused", state=state) if monitor else "No se pudo resolver un monitor enfocado"
         return monitor, error
     if not isinstance(target, str) or not target:
         return None, "El monitor seleccionado no está habilitado"
@@ -364,7 +367,7 @@ def _resolve_monitor_target(target, state=None):
     return target, None
 
 
-def apply_brightness(monitor, target):
+def apply_brightness(monitor, target, state=None):
     """Apply an absolute brightness percentage and confirm the readback.
 
     The requested slider value is written as one absolute ``N%`` token — the
@@ -381,8 +384,10 @@ def apply_brightness(monitor, target):
             "monitor": None,
             "error": "No se pudo resolver un monitor enfocado",
         }
+    current_state = read_monitor_state() if state is None else state
     monitor_error = _monitor_write_error(
-        monitor, "focused" if monitor == read_monitor_state().get("monitor") else "explicit"
+        monitor, "focused" if monitor == current_state.get("monitor") else "explicit",
+        state=current_state,
     )
     if monitor_error is not None:
         return {
@@ -573,6 +578,7 @@ def _apply_gamma(percent):
 
 def _nightlight_failure(message):
     state = read_nightlight()
+    state["available"] = False
     if state["error"]:
         state["error"] = f"{message}: {state['error']}"
     else:
@@ -609,6 +615,12 @@ _PROFILE_IDENTITY_RE = re.compile(
     r"(?mi)^([ \t]*)identity(?:[ \t]*=[ \t]*(?:true|false))?"
     r"([ \t]*(?:#.*)?)(\r?)$"
 )
+_PROFILE_TEMP_LINE_RE = re.compile(
+    r"(?m)^([ \t]*)temperature\s*=\s*[^ \t\r\n{}#]+([ \t]*(?:#.*)?)(?:\r?\n|$)"
+)
+_PROFILE_IDENTITY_LINE_RE = re.compile(
+    r"(?m)^([ \t]*)identity(?:[ \t]*=[ \t]*(?:true|false))?([ \t]*(?:#.*)?)(?:\r?\n|$)"
+)
 
 
 def _replace_time(profile, time_value):
@@ -630,12 +642,15 @@ def _replace_temperature(profile, temperature):
 
 
 def _remove_temperature(profile):
-    return _PROFILE_TEMP_RE.sub(
-        lambda match: match.group(1) + match.group(2) + match.group(3)
-        if "#" in match.group(2)
-        else match.group(3),
-        profile,
-    )
+    def _repl(match):
+        indent = match.group(1)
+        comment = match.group(2)
+        if "#" in comment:
+            eol = "\r\n" if "\r\n" in match.group(0) else ("\n" if "\n" in match.group(0) else "")
+            return f"{indent}{comment.strip()}{eol}"
+        return ""
+
+    return _PROFILE_TEMP_LINE_RE.sub(_repl, profile)
 
 
 def _set_identity(profile):
@@ -655,25 +670,28 @@ def _set_identity(profile):
 
 
 def _remove_identity(profile):
-    return _PROFILE_IDENTITY_RE.sub(
-        lambda match: match.group(1) + match.group(2) + match.group(3)
-        if "#" in match.group(2)
-        else match.group(3),
-        profile,
-    )
+    def _repl(match):
+        indent = match.group(1)
+        comment = match.group(2)
+        if "#" in comment:
+            eol = "\r\n" if "\r\n" in match.group(0) else ("\n" if "\n" in match.group(0) else "")
+            return f"{indent}{comment.strip()}{eol}"
+        return ""
+
+    return _PROFILE_IDENTITY_LINE_RE.sub(_repl, profile)
 
 
 def _update_profile(profile, time_value, temperature, identity_day):
     """Update one profile block without disturbing formatting or comments."""
     schedule_module = _schedule_module()
     info = schedule_module.profile_info(profile) if schedule_module else {}
+    line_ending = "\r\n" if "\r\n" in profile else "\n"
     updated = _replace_time(profile, time_value)
     if identity_day:
         updated = _remove_temperature(updated)
         if info.get("identity") is not None:
             updated = _set_identity(updated)
         else:
-            line_ending = "\r\n" if "\r\n" in updated else "\n"
             updated = re.sub(
                 r"\}\s*$",
                 f"    identity = true{line_ending}}}",
@@ -685,7 +703,6 @@ def _update_profile(profile, time_value, temperature, identity_day):
         updated = _remove_identity(updated)
     elif info.get("identity") is not None:
         updated = _remove_identity(updated)
-        line_ending = "\r\n" if "\r\n" in updated else "\n"
         updated = re.sub(
             r"\}\s*$",
             f"    temperature = {temperature}{line_ending}}}",
@@ -693,7 +710,6 @@ def _update_profile(profile, time_value, temperature, identity_day):
             count=1,
         )
     else:
-        line_ending = "\r\n" if "\r\n" in updated else "\n"
         updated = re.sub(
             r"\}\s*$",
             f"    temperature = {temperature}{line_ending}}}",
@@ -708,8 +724,8 @@ _OWNERSHIP_MARKER_RE = re.compile(
 )
 
 
-def _marker_comment(kind):
-    return f"# Veilleuse {kind}\n"
+def _marker_comment(kind, eol="\n"):
+    return f"# Veilleuse {kind}{eol}"
 
 
 def _block_has_marker(existing, start, kind):
@@ -721,7 +737,7 @@ def _block_has_marker(existing, start, kind):
     )
 
 
-def _render_schedule(schedule, natural_day):
+def _render_schedule(schedule, natural_day, eol="\n"):
     """Render a managed hyprsunset.conf when none exists yet.
 
     Each managed block carries an explicit ``# Veilleuse day/night`` marker
@@ -729,19 +745,19 @@ def _render_schedule(schedule, natural_day):
     (ownership is only implicit while the file holds exactly two).
     """
     day_profile = (
-        f"profile {{\n    time = {schedule['day_time']}\n    identity = true\n}}"
+        f"profile {{{eol}    time = {schedule['day_time']}{eol}    identity = true{eol}}}"
         if natural_day
-        else f"profile {{\n    time = {schedule['day_time']}\n"
-        f"    temperature = {schedule['day_temp']}\n}}"
+        else f"profile {{{eol}    time = {schedule['day_time']}{eol}"
+        f"    temperature = {schedule['day_temp']}{eol}}}"
     )
     return (
-        f"# Generated by Veilleuse\n"
-        f"# Times use the system timezone.\n"
-        f"{_marker_comment('day')}"
-        f"{day_profile}\n\n"
-        f"{_marker_comment('night')}"
-        f"profile {{\n    time = {schedule['night_time']}\n"
-        f"    temperature = {schedule['night_temp']}\n}}\n"
+        f"# Generated by Veilleuse{eol}"
+        f"# Times use the system timezone.{eol}"
+        f"{_marker_comment('day', eol)}"
+        f"{day_profile}{eol}{eol}"
+        f"{_marker_comment('night', eol)}"
+        f"profile {{{eol}    time = {schedule['night_time']}{eol}"
+        f"    temperature = {schedule['night_temp']}{eol}}}{eol}"
     )
 
 
@@ -753,6 +769,7 @@ def _update_schedule_text(existing, schedule, natural_day):
     :func:`_render_schedule`.
     """
     schedule_module = _schedule_module()
+    eol = "\r\n" if "\r\n" in existing else "\n"
     replacements = []
     found_day = False
     found_night = False
@@ -764,13 +781,13 @@ def _update_schedule_text(existing, schedule, natural_day):
         if kind == "day" and not found_day:
             updated_profile = _update_profile(profile, schedule["day_time"], schedule["day_temp"], natural_day)
             if not _block_has_marker(existing, start, "day"):
-                updated_profile = _marker_comment("day") + updated_profile
+                updated_profile = _marker_comment("day", eol) + updated_profile
             replacements.append((start, end, updated_profile))
             found_day = True
         elif kind == "night" and not found_night:
             updated_profile = _update_profile(profile, schedule["night_time"], schedule["night_temp"], False)
             if not _block_has_marker(existing, start, "night"):
-                updated_profile = _marker_comment("night") + updated_profile
+                updated_profile = _marker_comment("night", eol) + updated_profile
             replacements.append((start, end, updated_profile))
             found_night = True
 
@@ -781,25 +798,26 @@ def _update_schedule_text(existing, schedule, natural_day):
     missing = []
     if not found_day:
         day_block = (
-            f"profile {{\n    time = {schedule['day_time']}\n    identity = true\n}}"
+            f"profile {{{eol}    time = {schedule['day_time']}{eol}    identity = true{eol}}}"
             if natural_day
-            else f"profile {{\n    time = {schedule['day_time']}\n"
-            f"    temperature = {schedule['day_temp']}\n}}"
+            else f"profile {{{eol}    time = {schedule['day_time']}{eol}"
+            f"    temperature = {schedule['day_temp']}{eol}}}"
         )
-        missing.append(_marker_comment("day") + day_block)
+        missing.append(_marker_comment("day", eol) + day_block)
     if not found_night:
         missing.append(
-            _marker_comment("night")
-            + f"profile {{\n    time = {schedule['night_time']}\n"
-            f"    temperature = {schedule['night_temp']}\n}}"
+            _marker_comment("night", eol)
+            + f"profile {{{eol}    time = {schedule['night_time']}{eol}"
+            f"    temperature = {schedule['night_temp']}{eol}}}"
         )
     if missing:
+        double_eol = f"{eol}{eol}"
         separator = (
             ""
-            if not updated or updated.endswith("\n\n")
-            else ("\n" if updated.endswith("\n") else "\n\n")
+            if not updated or updated.endswith(double_eol)
+            else (eol if updated.endswith(eol) else double_eol)
         )
-        updated += separator + "\n\n".join(missing) + "\n"
+        updated += separator + double_eol.join(missing) + eol
     return updated
 
 
@@ -897,10 +915,19 @@ def schedule_set(values):
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         with schedule_module.exclusive_lock(path.parent / schedule_module.SCHEDULE_LOCK_NAME):
-            original_mode = path.stat().st_mode & 0o7777 if path.exists() else None
             if path.exists():
+                try:
+                    mode_stat = os.lstat(path).st_mode
+                    if stat.S_ISLNK(mode_stat):
+                        return _schedule_result(
+                            None, values.get("natural_day", True), f"Ruta insegura (enlace simbólico): {path}"
+                        )
+                except OSError as caught:
+                    return _schedule_result(None, values.get("natural_day", True), str(caught))
+                original_mode = path.stat().st_mode & 0o7777
                 existing = path.read_text(encoding="utf-8")
             else:
+                original_mode = None
                 existing = ""
             if existing:
                 updated = _update_schedule_text(existing, schedule, values.get("natural_day", True))
@@ -1331,7 +1358,7 @@ def cmd_brightness(args):
         _emit(_operation_failure("invalid_argument", "El brillo debe ser un número entero"))
         return 1
     target = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, raw))
-    state = apply_brightness(monitor, target)
+    state = apply_brightness(monitor, target, state=monitor_state)
     ok = state["available"] and state["error"] is None
     if ok:
         _emit(read_status(monitor_name=monitor))
@@ -1483,7 +1510,11 @@ def cmd_schedule(args):
                     toggle.HYPRSUNSET_CONFIG = config_path()
                     toggle_state = toggle.schedule_status(config_path())
                 else:
-                    toggle_state = _state_module().read_state()
+                    state_mod = _state_module()
+                    if state_mod is None:
+                        _emit(_operation_failure("helper_unavailable", "El gestor de estado no está disponible"))
+                        return 1
+                    toggle_state = state_mod.read_state()
                 payload = read_status()
                 payload["ok"] = True
                 payload["result"] = {"operation": "schedule_status", **toggle_state}

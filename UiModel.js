@@ -520,6 +520,7 @@ var ERROR_CODE_KEYS = {
   historyUnreadable: 'errHistoryUnreadable',
   settingsWrite: 'errSettingsWrite',
   shortcutWrite: 'errShortcutWrite',
+  nativeFailure: 'errNativeFailure',
   // snake_case codes actually emitted by the Python helper, mapped to the
   // same localized dictionaries so no emitted code degrades to errUnknown.
   helper_unavailable: 'errHelperMissing',

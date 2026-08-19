@@ -63,7 +63,7 @@ Panel {
         var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
         if (!isFinite(until) || until <= 0)
             return 0;
-        return Math.max(0, Math.round((until - Date.now() / 1000) / 60));
+        return Math.max(0, Math.ceil((until - Date.now() / 1000) / 60));
     }
     readonly property var snoozeSeconds: Model.snoozeDurationSeconds(root.snoozeAmount, root.snoozeUnit)
     readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma, root.locale).error
@@ -116,7 +116,10 @@ Panel {
     function mergeCombined(base, raw) {
         var next = normalizeCombined(base);
         var input = raw && typeof raw === "object" ? raw : {};
-        if (input.automation && typeof input.automation === "object") next.automation = input.automation;
+        if (input.automation && typeof input.automation === "object") {
+            if (!next.automation || typeof next.automation !== "object") next.automation = {};
+            for (var key in input.automation) next.automation[key] = input.automation[key];
+        }
         if (Array.isArray(input.monitors)) next.monitors = input.monitors;
         if (input.origin) root.operationOrigin = String(input.origin);
         return next;
