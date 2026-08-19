@@ -590,7 +590,7 @@ Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keyCatcher
-        contentWidth: keyboardPanel.fittedContentWidth(Style.space(380))
+        contentWidth: keyboardPanel.fittedContentWidth(Style.space(330))
         contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, Style.space(560))
 
         // Arrows-only keyboard: Left/Right switch views, Up/Down move the
@@ -773,7 +773,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: brightnessColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: brightnessColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -793,6 +793,13 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
+                                NerdIcon {
+                                    glyph: Icons.glyph("brightness")
+                                    iconSize: Style.font.body
+                                    iconColor: root.foreground
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
                                 Text {
                                     id: brightnessLabel
 
@@ -801,7 +808,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - brightnessValue.implicitWidth - Style.spacing.controlGap
+                                    width: parent.width - brightnessValue.implicitWidth - Style.space(26)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -837,7 +844,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
-                        implicitHeight: temperatureColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: temperatureColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(2)
@@ -857,6 +864,13 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
+                                NerdIcon {
+                                    glyph: Icons.glyph("temperature")
+                                    iconSize: Style.font.body
+                                    iconColor: root.foreground
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
                                 Text {
                                     id: temperatureLabel
 
@@ -865,7 +879,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - temperatureValue.implicitWidth - Style.spacing.controlGap
+                                    width: parent.width - temperatureValue.implicitWidth - Style.space(26)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -901,7 +915,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 3
                         foreground: root.foreground
-                        implicitHeight: gammaColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: gammaColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(3)
@@ -921,6 +935,13 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
+                                NerdIcon {
+                                    glyph: Icons.glyph("gamma")
+                                    iconSize: Style.font.body
+                                    iconColor: root.foreground
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+
                                 Text {
                                     id: gammaLabel
 
@@ -929,7 +950,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - gammaValue.implicitWidth - Style.spacing.controlGap
+                                    width: parent.width - gammaValue.implicitWidth - Style.space(26)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -1005,7 +1026,7 @@ Panel {
 
                     BorderSurface {
                         width: parent.width
-                        implicitHeight: automationHeader.implicitHeight + Style.spacing.rowPaddingX * 2
+                        implicitHeight: automationHeader.implicitHeight + Style.space(8)
                         color: Style.normalFill
                         borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
                         radius: Style.cornerRadius
@@ -1067,7 +1088,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: scheduleEditorColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: scheduleEditorColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -1089,108 +1110,114 @@ Panel {
                                 fontFamily: root.fontFamily
                             }
 
-                            Column {
+                            Row {
                                 width: parent.width
-                                spacing: Style.spacing.labelGap
+                                spacing: Style.spacing.controlGap
 
-                                Text {
-                                    text: root.text("start")
-                                    color: Qt.darker(root.foreground, 1.35)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
+                                Column {
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    spacing: Style.space(2)
+
+                                    Text {
+                                        text: root.text("start")
+                                        color: Qt.darker(root.foreground, 1.35)
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                    }
+
+                                    TextField {
+                                        id: startEditor
+
+                                        width: parent.width
+                                        foreground: root.foreground
+                                        font.family: root.fontFamily
+                                        text: root.editStart
+                                        inputMask: "99:99"
+                                        Accessible.name: root.text("day_period") + " " + root.text("start")
+                                        Accessible.role: Accessible.EditableText
+                                        onTextChanged: root.editStart = text
+                                        onAccepted: dayTemperatureEditor.field.forceActiveFocus()
+                                        Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                                    }
                                 }
 
-                                TextField {
-                                    id: startEditor
+                                NumberField {
+                                    id: dayTemperatureEditor
 
-                                    width: parent.width
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("temperature") + " (K)"
+                                    value: Number(root.editDayTemperature || 6000)
+                                    from: 5900
+                                    to: 6500
+                                    stepSize: 50
                                     foreground: root.foreground
-                                    font.family: root.fontFamily
-                                    text: root.editStart
-                                    inputMask: "99:99"
-                                    Accessible.name: root.text("day_period") + " " + root.text("start")
-                                    Accessible.role: Accessible.EditableText
-                                    onTextChanged: root.editStart = text
-                                    onAccepted: dayTemperatureEditor.field.forceActiveFocus()
-                                    Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-                                }
-
-                            }
-
-                            NumberField {
-                                id: dayTemperatureEditor
-
-                                width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("temperature") + " (K)"
-                                value: Number(root.editDayTemperature || 6000)
-                                from: 5900
-                                to: 6500
-                                stepSize: 50
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("day_period") + " " + root.text("temperature")
-                                onModified: value => root.editDayTemperature = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        dayBrightnessEditor.field.forceActiveFocus();
-                                        event.accepted = true;
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("day_period") + " " + root.text("temperature")
+                                    onModified: value => root.editDayTemperature = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            dayBrightnessEditor.field.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
                             }
 
-                            NumberField {
-                                id: dayBrightnessEditor
-
+                            Row {
                                 width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("brightness") + " (%)"
-                                value: Number(root.editDayBrightness || 100)
-                                from: 1
-                                to: 100
-                                stepSize: 5
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("day_period") + " " + root.text("brightness")
-                                onModified: value => root.editDayBrightness = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        dayGammaEditor.field.forceActiveFocus();
-                                        event.accepted = true;
+                                spacing: Style.spacing.controlGap
+
+                                NumberField {
+                                    id: dayBrightnessEditor
+
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("brightness") + " (%)"
+                                    value: Number(root.editDayBrightness || 100)
+                                    from: 1
+                                    to: 100
+                                    stepSize: 5
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("day_period") + " " + root.text("brightness")
+                                    onModified: value => root.editDayBrightness = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            dayGammaEditor.field.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
-                            }
 
-                            NumberField {
-                                id: dayGammaEditor
+                                NumberField {
+                                    id: dayGammaEditor
 
-                                width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("gamma") + " (%)"
-                                value: Number(root.editDayGamma || 100)
-                                from: 0
-                                to: 100
-                                stepSize: 5
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("day_period") + " " + root.text("gamma")
-                                onModified: value => root.editDayGamma = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        endEditor.forceActiveFocus();
-                                        event.accepted = true;
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("gamma") + " (%)"
+                                    value: Number(root.editDayGamma || 100)
+                                    from: 0
+                                    to: 100
+                                    stepSize: 5
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("day_period") + " " + root.text("gamma")
+                                    onModified: value => root.editDayGamma = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            endEditor.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
                             }
@@ -1201,108 +1228,114 @@ Panel {
                                 fontFamily: root.fontFamily
                             }
 
-                            Column {
+                            Row {
                                 width: parent.width
-                                spacing: Style.spacing.labelGap
+                                spacing: Style.spacing.controlGap
 
-                                Text {
-                                    text: root.text("end")
-                                    color: Qt.darker(root.foreground, 1.35)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
+                                Column {
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    spacing: Style.space(2)
+
+                                    Text {
+                                        text: root.text("end")
+                                        color: Qt.darker(root.foreground, 1.35)
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                    }
+
+                                    TextField {
+                                        id: endEditor
+
+                                        width: parent.width
+                                        foreground: root.foreground
+                                        font.family: root.fontFamily
+                                        text: root.editEnd
+                                        inputMask: "99:99"
+                                        Accessible.name: root.text("night_period") + " " + root.text("end")
+                                        Accessible.role: Accessible.EditableText
+                                        onTextChanged: root.editEnd = text
+                                        onAccepted: nightTemperatureEditor.field.forceActiveFocus()
+                                        Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                                    }
                                 }
 
-                                TextField {
-                                    id: endEditor
+                                NumberField {
+                                    id: nightTemperatureEditor
 
-                                    width: parent.width
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("temperature") + " (K)"
+                                    value: Number(root.editNightTemperature || 3500)
+                                    from: 2500
+                                    to: 5000
+                                    stepSize: 50
                                     foreground: root.foreground
-                                    font.family: root.fontFamily
-                                    text: root.editEnd
-                                    inputMask: "99:99"
-                                    Accessible.name: root.text("night_period") + " " + root.text("end")
-                                    Accessible.role: Accessible.EditableText
-                                    onTextChanged: root.editEnd = text
-                                    onAccepted: nightTemperatureEditor.field.forceActiveFocus()
-                                    Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-                                }
-
-                            }
-
-                            NumberField {
-                                id: nightTemperatureEditor
-
-                                width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("temperature") + " (K)"
-                                value: Number(root.editNightTemperature || 3500)
-                                from: 2500
-                                to: 5000
-                                stepSize: 50
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("night_period") + " " + root.text("temperature")
-                                onModified: value => root.editNightTemperature = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        nightBrightnessEditor.field.forceActiveFocus();
-                                        event.accepted = true;
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("night_period") + " " + root.text("temperature")
+                                    onModified: value => root.editNightTemperature = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            nightBrightnessEditor.field.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
                             }
 
-                            NumberField {
-                                id: nightBrightnessEditor
-
+                            Row {
                                 width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("brightness") + " (%)"
-                                value: Number(root.editNightBrightness || 100)
-                                from: 1
-                                to: 100
-                                stepSize: 5
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("night_period") + " " + root.text("brightness")
-                                onModified: value => root.editNightBrightness = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        nightGammaEditor.field.forceActiveFocus();
-                                        event.accepted = true;
+                                spacing: Style.spacing.controlGap
+
+                                NumberField {
+                                    id: nightBrightnessEditor
+
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("brightness") + " (%)"
+                                    value: Number(root.editNightBrightness || 100)
+                                    from: 1
+                                    to: 100
+                                    stepSize: 5
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("night_period") + " " + root.text("brightness")
+                                    onModified: value => root.editNightBrightness = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            nightGammaEditor.field.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
-                            }
 
-                            NumberField {
-                                id: nightGammaEditor
+                                NumberField {
+                                    id: nightGammaEditor
 
-                                width: parent.width
-                                fieldWidth: parent.width
-                                label: root.text("gamma") + " (%)"
-                                value: Number(root.editNightGamma || 100)
-                                from: 0
-                                to: 100
-                                stepSize: 5
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("night_period") + " " + root.text("gamma")
-                                onModified: value => root.editNightGamma = String(value)
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        saveScheduleButton.forceActiveFocus();
-                                        event.accepted = true;
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    label: root.text("gamma") + " (%)"
+                                    value: Number(root.editNightGamma || 100)
+                                    from: 0
+                                    to: 100
+                                    stepSize: 5
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("night_period") + " " + root.text("gamma")
+                                    onModified: value => root.editNightGamma = String(value)
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            saveScheduleButton.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
                                     }
                                 }
                             }
@@ -1324,7 +1357,6 @@ Panel {
                                     root.refocusKeyCatcher();
                                 }
                             }
-
                         }
 
                     }
@@ -1334,7 +1366,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
-                        implicitHeight: snoozeColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: snoozeColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(2)
@@ -1375,6 +1407,7 @@ Panel {
                                 NumberField {
                                     id: snoozeEditor
 
+                                    width: Math.round(parent.width * 0.34)
                                     value: root.snoozeAmount
                                     from: 1
                                     to: 86400
@@ -1397,10 +1430,12 @@ Panel {
                                 }
 
                                 Button {
+                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
                                     text: root.text("unit_hours")
                                     selected: root.snoozeUnit === "hours"
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     onClicked: {
                                         root.snoozeUnit = "hours";
@@ -1409,10 +1444,12 @@ Panel {
                                 }
 
                                 Button {
+                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
                                     text: root.text("unit_minutes")
                                     selected: root.snoozeUnit === "minutes"
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     onClicked: {
                                         root.snoozeUnit = "minutes";
@@ -1421,10 +1458,12 @@ Panel {
                                 }
 
                                 Button {
+                                    width: Math.round((parent.width - snoozeEditor.width - Style.spacing.controlGap * 3) / 3)
                                     text: root.text("unit_seconds")
                                     selected: root.snoozeUnit === "seconds"
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     onClicked: {
                                         root.snoozeUnit = "seconds";
@@ -1438,9 +1477,11 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 Button {
+                                    width: root.snoozeActive ? (parent.width - Style.spacing.controlGap) / 2 : parent.width
                                     text: root.text("snooze_set")
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     enabled: root.snoozeSeconds !== null && !root.actionPending
                                     onClicked: {
@@ -1451,9 +1492,11 @@ Panel {
 
                                 Button {
                                     visible: root.snoozeActive
+                                    width: (parent.width - Style.spacing.controlGap) / 2
                                     text: root.text("clear_snooze")
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.snoozeActive ? Color.urgent : root.foreground
                                     enabled: !root.actionPending
                                     onClicked: {
@@ -1484,7 +1527,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
-                        implicitHeight: localeSelector.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: localeSelector.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(0)
@@ -1521,7 +1564,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: shortcutColumn.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: shortcutColumn.implicitHeight + Style.space(6)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -1564,8 +1607,10 @@ Panel {
 
                                 Button {
                                     text: root.text("install_shortcut")
+                                    width: (parent.width - Style.spacing.controlGap) / 2
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     hasCursor: root.cursor.section === 2
                                     enabled: !root.actionPending && shortcutField.text.trim() !== ""
@@ -1578,8 +1623,10 @@ Panel {
 
                                 Button {
                                     text: root.text("remove_shortcut")
+                                    width: (parent.width - Style.spacing.controlGap) / 2
                                     focusable: true
                                     bordered: true
+                                    leftAlign: false
                                     foreground: root.foreground
                                     enabled: !root.actionPending
                                     onClicked: {
@@ -1644,7 +1691,7 @@ Panel {
                     color: Qt.darker(root.foreground, 1.6)
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    elide: Text.ElideRight
+                    wrapMode: Text.WordWrap
                 }
 
             }
