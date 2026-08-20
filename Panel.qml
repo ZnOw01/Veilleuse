@@ -660,14 +660,18 @@ Panel {
 
                 // View switching: just the arrows, plus the name of the view
                 // you are on.
-                Row {
+                Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.leftMargin: Style.spacing.rowPaddingX
                     anchors.rightMargin: Style.spacing.rowPaddingX
-                    spacing: Style.spacing.controlGap
+                    implicitHeight: Math.max(prevRouteButton.implicitHeight, routeTitleText.implicitHeight, nextRouteButton.implicitHeight)
 
                     PanelActionButton {
+                        id: prevRouteButton
+
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
                         iconText: "󰅁"
                         tooltipText: root.text(root.previousRoute)
                         foreground: root.foreground
@@ -681,18 +685,28 @@ Panel {
                     }
 
                     Text {
-                        width: parent.width - 2 * (Style.space(30) + Style.spacing.controlGap)
+                        id: routeTitleText
+
+                        anchors.left: prevRouteButton.right
+                        anchors.right: nextRouteButton.left
+                        anchors.leftMargin: Style.spacing.controlGap
+                        anchors.rightMargin: Style.spacing.controlGap
+                        anchors.verticalCenter: parent.verticalCenter
                         text: root.routeTitle
                         color: root.foreground
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.title
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
-                        anchors.verticalCenter: parent.verticalCenter
                     }
 
                     PanelActionButton {
+                        id: nextRouteButton
+
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
                         iconText: "󰅂"
                         tooltipText: root.text(root.nextRoute)
                         foreground: root.foreground
@@ -794,6 +808,8 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 NerdIcon {
+                                    id: brightnessIcon
+
                                     glyph: Icons.glyph("brightness")
                                     iconSize: Style.font.body
                                     iconColor: root.foreground
@@ -808,7 +824,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - brightnessValue.implicitWidth - Style.space(26)
+                                    width: Math.max(0, parent.width - brightnessValue.implicitWidth - brightnessIcon.implicitWidth - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -865,6 +881,8 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 NerdIcon {
+                                    id: temperatureIcon
+
                                     glyph: Icons.glyph("temperature")
                                     iconSize: Style.font.body
                                     iconColor: root.foreground
@@ -879,7 +897,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - temperatureValue.implicitWidth - Style.space(26)
+                                    width: Math.max(0, parent.width - temperatureValue.implicitWidth - temperatureIcon.implicitWidth - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -936,6 +954,8 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 NerdIcon {
+                                    id: gammaIcon
+
                                     glyph: Icons.glyph("gamma")
                                     iconSize: Style.font.body
                                     iconColor: root.foreground
@@ -950,7 +970,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: parent.width - gammaValue.implicitWidth - Style.space(26)
+                                    width: Math.max(0, parent.width - gammaValue.implicitWidth - gammaIcon.implicitWidth - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -1024,36 +1044,43 @@ Panel {
                     width: parent.width
                     spacing: Style.spacing.panelGap
 
-                    BorderSurface {
+                    CursorSurface {
                         width: parent.width
-                        implicitHeight: automationHeader.implicitHeight + Style.space(8)
-                        color: Style.normalFill
-                        borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
-                        radius: Style.cornerRadius
+                        hasCursor: root.cursor.section === 0
+                        foreground: root.foreground
+                        implicitHeight: automationHeader.implicitHeight + Style.spacing.rowPaddingX
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(0)
                         }
 
-                        Row {
+                        Item {
                             id: automationHeader
+
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.controlGap
+                            implicitHeight: Math.max(scheduleLabelsColumn.implicitHeight, scheduleToggle.implicitHeight)
 
                             Column {
-                                width: parent.width - scheduleToggle.width - Style.spacing.controlGap
-                                spacing: Style.spacing.labelGap
+                                id: scheduleLabelsColumn
+
+                                anchors.left: parent.left
+                                anchors.right: scheduleToggle.left
+                                anchors.rightMargin: Style.spacing.controlGap
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Style.space(2)
 
                                 Text {
+                                    width: parent.width
                                     text: root.text("schedule")
                                     color: root.foreground
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.title
                                     font.bold: true
+                                    elide: Text.ElideRight
                                 }
 
                                 // The switch already says whether the schedule
@@ -1061,20 +1088,23 @@ Panel {
                                 // only while it is enabled.
                                 Text {
                                     visible: root.scheduleEnabled && root.stateReady
+                                    width: parent.width
                                     text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
                                     color: Qt.darker(root.foreground, 1.35)
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.bodySmall
+                                    elide: Text.ElideRight
                                 }
                             }
 
                             ToggleSwitch {
                                 id: scheduleToggle
 
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
                                 checked: root.scheduleEnabled
                                 busy: !root.automationReady || root.actionPending
                                 foreground: root.foreground
-                                hasCursor: root.cursor.section === 0
                                 Accessible.name: root.text("schedule")
                                 onToggled: root.toggleSchedule(!root.scheduleEnabled)
                             }
@@ -1105,9 +1135,11 @@ Panel {
                             spacing: Style.spacing.rowGap
 
                             PanelSectionHeader {
+                                width: parent.width
                                 text: root.text("day_period")
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                elide: Text.ElideRight
                             }
 
                             Row {
@@ -1116,13 +1148,15 @@ Panel {
 
                                 Column {
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    spacing: Style.space(2)
+                                    spacing: Style.spacing.md
 
                                     Text {
+                                        width: parent.width
                                         text: root.text("start")
-                                        color: Qt.darker(root.foreground, 1.35)
+                                        color: Qt.darker(root.foreground, 1.4)
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
+                                        elide: Text.ElideRight
                                     }
 
                                     TextField {
@@ -1145,6 +1179,7 @@ Panel {
                                     id: dayTemperatureEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("temperature") + " (K)"
                                     value: Number(root.editDayTemperature || 6000)
                                     from: 5900
@@ -1175,6 +1210,7 @@ Panel {
                                     id: dayBrightnessEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("brightness") + " (%)"
                                     value: Number(root.editDayBrightness || 100)
                                     from: 1
@@ -1200,6 +1236,7 @@ Panel {
                                     id: dayGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("gamma_short") + " (%)"
                                     value: Number(root.editDayGamma || 100)
                                     from: 0
@@ -1223,9 +1260,11 @@ Panel {
                             }
 
                             PanelSectionHeader {
+                                width: parent.width
                                 text: root.text("night_period")
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                elide: Text.ElideRight
                             }
 
                             Row {
@@ -1234,13 +1273,15 @@ Panel {
 
                                 Column {
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    spacing: Style.space(2)
+                                    spacing: Style.spacing.md
 
                                     Text {
+                                        width: parent.width
                                         text: root.text("end")
-                                        color: Qt.darker(root.foreground, 1.35)
+                                        color: Qt.darker(root.foreground, 1.4)
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
+                                        elide: Text.ElideRight
                                     }
 
                                     TextField {
@@ -1263,6 +1304,7 @@ Panel {
                                     id: nightTemperatureEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("temperature") + " (K)"
                                     value: Number(root.editNightTemperature || 3500)
                                     from: 2500
@@ -1293,6 +1335,7 @@ Panel {
                                     id: nightBrightnessEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("brightness") + " (%)"
                                     value: Number(root.editNightBrightness || 100)
                                     from: 1
@@ -1318,6 +1361,7 @@ Panel {
                                     id: nightGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
+                                    fieldWidth: width
                                     label: root.text("gamma_short") + " (%)"
                                     value: Number(root.editNightGamma || 100)
                                     from: 0
@@ -1383,9 +1427,11 @@ Panel {
                             spacing: Style.spacing.controlGap
 
                             PanelSectionHeader {
+                                width: parent.width
                                 text: root.text("snooze")
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
+                                elide: Text.ElideRight
                             }
 
                             // The active snooze is a fact the user set and must
@@ -1404,6 +1450,7 @@ Panel {
                                 id: snoozeEditor
 
                                 width: parent.width
+                                fieldWidth: width
                                 value: root.snoozeAmount
                                 from: 1
                                 to: 86400
@@ -1518,9 +1565,11 @@ Panel {
                     spacing: Style.spacing.panelGap
 
                     PanelSectionHeader {
+                        width: parent.width
                         text: root.text("settings")
                         foreground: root.foreground
                         fontFamily: root.fontFamily
+                        elide: Text.ElideRight
                     }
 
                     CursorSurface {
@@ -1555,9 +1604,11 @@ Panel {
                     }
 
                     PanelSectionHeader {
+                        width: parent.width
                         text: root.text("shortcut")
                         foreground: root.foreground
                         fontFamily: root.fontFamily
+                        elide: Text.ElideRight
                     }
 
                     CursorSurface {

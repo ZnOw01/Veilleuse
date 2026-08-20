@@ -85,6 +85,9 @@ test('view switching is the two chevrons plus the current view name', () => {
   const nav = qml.slice(qml.indexOf('// View switching'), qml.indexOf('id: heroSurface'));
   assert.equal((nav.match(/PanelActionButton\s*\{/g) || []).length, 2);
   assert.match(nav, /text:\s*root\.routeTitle/);
+  assert.match(nav, /horizontalAlignment:\s*Text\.AlignHCenter/);
+  assert.match(nav, /verticalAlignment:\s*Text\.AlignVCenter/);
+  assert.match(nav, /elide:\s*Text\.ElideRight/);
   assert.match(qml, /function switchRouteBy\(direction\)\s*\{\s*root\.navigateToRoute\(Model\.adjacentRoute\(root\.route,\s*direction\)\);\s*\}/);
 });
 
@@ -116,6 +119,8 @@ test('automation header carries the window only while the schedule runs', () => 
   const header = qml.slice(qml.indexOf('id: automationHeader'), qml.indexOf('// The schedule itself'));
   assert.match(header, /text:\s*root\.text\("schedule"\)/);
   assert.match(header, /visible:\s*root\.scheduleEnabled\s*&&\s*root\.stateReady/);
+  assert.match(header, /elide:\s*Text\.ElideRight/);
+  assert.match(header, /id:\s*scheduleLabelsColumn/);
   // The off switch already says paused: no redundant "paused" caption.
   assert.doesNotMatch(header, /schedule_disabled|schedule_paused/);
   assert.match(qml, /\["schedule",\s*enabled \? "enable" : "disable"\]/);
@@ -127,8 +132,8 @@ test('the schedule editor is always visible and configures both periods', () => 
   assert.equal((editor.match(/\bNumberField\s*\{/g) || []).length, 6);
   assert.match(editor, /text:\s*root\.text\("day_period"\)/);
   assert.match(editor, /text:\s*root\.text\("night_period"\)/);
-  assert.match(editor, /id:\s*dayTemperatureEditor[\s\S]*?from:\s*5900[\s\S]*?to:\s*6500/);
-  assert.match(editor, /id:\s*nightTemperatureEditor[\s\S]*?from:\s*2500[\s\S]*?to:\s*5000/);
+  assert.match(editor, /id:\s*dayTemperatureEditor[\s\S]*?fieldWidth:\s*width[\s\S]*?from:\s*5900[\s\S]*?to:\s*6500/);
+  assert.match(editor, /id:\s*nightTemperatureEditor[\s\S]*?fieldWidth:\s*width[\s\S]*?from:\s*2500[\s\S]*?to:\s*5000/);
   // No collapse state: the editor lives on the automation route for good.
   assert.doesNotMatch(qml, /scheduleExpanded|scheduleEditorOpen/);
 });
