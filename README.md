@@ -1,98 +1,178 @@
+<div align="center">
+
 # Veilleuse
 
-An **Omarchy Quattro** bar plugin for brightness, night light, and day/night scheduling.
+**Native brightness, night light temperature, and day/night automation for Omarchy Quattro.**<br/>
+Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
-![Veilleuse](preview.png)
+[![CI](https://img.shields.io/github/actions/workflow/status/ZnOw01/Veilleuse/checks.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/ZnOw01/Veilleuse/actions/workflows/checks.yml)
+[![Version](https://img.shields.io/badge/version-3.2.0-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
+[![Platform](https://img.shields.io/badge/Platform-Omarchy_Quattro_4.0%2B-008080?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/ZnOw01/Veilleuse)
+[![Hyprland](https://img.shields.io/badge/Hyprland-hyprsunset-00AAFF?style=for-the-badge&logo=wayland&logoColor=white)](https://hyprland.org/)
+[![Python](https://img.shields.io/badge/Python-3.12%2B_stdlib-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
-## Panel
+[Features](#features) ·
+[Quick Start](#quick-start) ·
+[Panel & Navigation](#panel--navigation) ·
+[CLI Reference](#cli-reference) ·
+[Architecture & Storage](#architecture--storage) ·
+[Troubleshooting](#troubleshooting) ·
+[Development](#development) ·
+[License](#license)
 
-The panel opens from the bar icon (or the bound keyboard shortcut). It has three views:
+</div>
 
-* **Home** — night light toggle, brightness, temperature, gamma, and monitor selection.
-* **Automation** — day/night schedule, display values for each period, and snooze controls.
-* **Settings** — language and optional keyboard shortcut.
+---
 
-Switch views with the `‹ ›` chevrons or the `← →` keys. Scheduled brightness, temperature, and gamma are applied when the active period changes or after saving.
+<div align="center">
 
-## Keyboard
+![Veilleuse UI Preview](preview.png)
 
-| Key     | Action                                                                  |
-| ------- | ----------------------------------------------------------------------- |
-| `← →`   | Adjust the focused slider (`brightness` +1, `temperature` +50 K, `gamma` +1); switch view elsewhere |
-| `↑ ↓`   | Move between controls                                                   |
-| `Enter` | Activate                                                                |
-| `Esc`   | Close                                                                   |
+</div>
 
-Mouse hover moves the focus to the row under the pointer, so `← →` adjust the slider you are hovering and `Enter` activates the row beneath it. Dragging a slider with the mouse works as usual.
+---
 
-## Install
+## Features
 
-> Omarchy Shell plugins run unsandboxed. Review the code before enabling them.
+| Feature | What you get |
+| :--- | :--- |
+| **Display Brightness** | Smooth 1–100% brightness control for focused and specific monitors |
+| **Night Light & Gamma** | Temperature adjustment (`2500–6500 K`) and gamma correction (`0–100%`) via `hyprsunset` |
+| **Day/Night Automation** | Scheduled transitions with per-period brightness, temperature, and gamma values |
+| **Timed Snooze** | Temporarily suspend night light (1m–24h) with automatic expiration and state reconciliation |
+| **Hybrid Navigation** | Arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking |
+| **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` |
+| **Zero External Deps** | 100% Python standard library backend; no background daemons or pip dependencies |
+| **Dual Localization** | Full English (`en`) and Spanish (`es`) localization dictionaries with strict key parity |
+| **Atomic Persistence** | Mode `0600` XDG configuration and state storage protected by lockfiles and `.bak` backups |
+
+---
+
+## Quick Start
+
+### Requirements
+
+- **Omarchy Quattro** (Omarchy 4.0+)
+- **Hyprland** with `hyprsunset` installed
+- **Python 3.12+** (`/usr/bin/python3`, standard library only)
+
+### Installation
 
 ```bash
-omarchy plugin add https://github.com/ZnOw01/veilleuse.git --enable --yes
+omarchy plugin add https://github.com/ZnOw01/Veilleuse.git --enable --yes
 ```
 
-## Update
+> [!NOTE]
+> Omarchy Shell plugins run in-process and unsandboxed. Veilleuse operates fail-closed, performs atomic writes, and never spawns persistent background daemons.
+
+### Updating
 
 ```bash
 omarchy plugin update io.github.znow01.veilleuse --yes
-omarchy-shell shell rescanPlugins
-```
-
-`omarchy plugin update` only fetches and fast-forwards the checkout and validates the manifest — it does **not** notify the running shell, so the widget keeps executing the previously loaded QML. `rescanPlugins` unloads and recreates the plugin components from disk (the same behavior `plugin add`, `enable`, and `disable` use). If the widget still looks stale after `rescanPlugins`, restart the shell:
-
-```bash
 omarchy restart shell
 ```
 
-A full shell restart always applies the new code with no further action.
+> [!TIP]
+> Running `omarchy restart shell` after an update unloads the previous QML bytecode from memory and guarantees that newly compiled UI components take effect immediately.
 
-## Usage
-
-### CLI
-
-`scripts/veilleuse-control` exposes the same controls:
+### Removal
 
 ```bash
+omarchy plugin remove io.github.znow01.veilleuse --yes
+```
+
+Removing the plugin preserves your existing `hyprsunset.conf` schedule and backup files.
+
+---
+
+## Panel & Navigation
+
+The popout panel is launched from the Omarchy bar widget or via your assigned keyboard shortcut. It provides three views:
+
+1. **Home (`home`)** — Master night-light toggle, live brightness slider, temperature slider, gamma slider, and monitor selector.
+2. **Automation (`automation`)** — Schedule toggle, start/end transition editors with per-period display presets, and timed snooze controls.
+3. **Settings (`settings`)** — Active language selector (`English` / `Español`) and optional Hyprland global shortcut binding.
+
+### Keyboard & Mouse Controls
+
+| Input | Scope | Action |
+| :--- | :--- | :--- |
+| `↑` / `↓` | Everywhere | Move focus cursor vertically between rows |
+| `←` / `→` | On Sliders | Step value (`brightness` ±1%, `temperature` ±50 K, `gamma` ±1%) |
+| `←` / `→` | On Navigation / Rows | Switch between routes (`Home` ↔ `Automation` ↔ `Settings`) |
+| `Enter` | On Controls | Activate button, toggle switch, or open dropdown picker |
+| `Esc` | Everywhere | Unfocus editor / close dropdown, or dismiss the panel |
+| **Mouse Hover** | Any row | Moves keyboard cursor to the hovered row for instant `←` / `→` adjustment |
+
+---
+
+## CLI Reference
+
+The backend helper `scripts/veilleuse-control` provides direct CLI and script access:
+
+### Status & Display Brightness
+```bash
+# Read unified system and plugin state JSON
 ./scripts/veilleuse-control status
-./scripts/veilleuse-control brightness 70
 
+# Set brightness (1–100%) on focused or named monitor
+./scripts/veilleuse-control brightness 75
+./scripts/veilleuse-control brightness 75 --monitor focused
+./scripts/veilleuse-control brightness 75 --monitor DP-1
+```
+
+### Night Light & Gamma
+```bash
+# Toggle night light on/off
 ./scripts/veilleuse-control nightlight toggle
+
+# Restore daylight natural color (identity)
+./scripts/veilleuse-control nightlight natural
+
+# Set custom temperature and gamma
 ./scripts/veilleuse-control nightlight temperature 3500
-./scripts/veilleuse-control nightlight gamma 80
-
-./scripts/veilleuse-control snooze set --minutes 30
-./scripts/veilleuse-control snooze clear
-
-./scripts/veilleuse-control schedule get
-./scripts/veilleuse-control schedule set \
-  --day-time 06:00 --night-time 15:30 \
-  --day-temp 6000 --night-temp 3500 \
-  --day-brightness 80 --day-gamma 100 \
-  --night-brightness 55 --night-gamma 85
-./scripts/veilleuse-control schedule enable
-./scripts/veilleuse-control schedule disable
-
-./scripts/veilleuse-control reconcile
+./scripts/veilleuse-control nightlight gamma 85
 ```
 
 Temperature range: `2500–6500 K`
 Gamma range: `0–100%`
 
-Schedule configuration is stored in `~/.config/hypr/hyprsunset.conf`. Updates are atomic and keep a `.bak` backup.
+### Automation & Snooze
+```bash
+# Snooze night light for a set duration
+./scripts/veilleuse-control snooze set --minutes 30
+./scripts/veilleuse-control snooze set --seconds 1800
+./scripts/veilleuse-control snooze clear
+./scripts/veilleuse-control snooze status
 
-### Keyboard shortcut
+# Read or modify schedule
+./scripts/veilleuse-control schedule get
+./scripts/veilleuse-control schedule status
+./scripts/veilleuse-control schedule enable
+./scripts/veilleuse-control schedule disable
+./scripts/veilleuse-control schedule set \
+  --day-time 06:00 --night-time 18:30 \
+  --day-temp 6000 --night-temp 3500 \
+  --day-brightness 80 --day-gamma 100 \
+  --night-brightness 50 --night-gamma 80
+
+# Reconcile snooze expiration and schedule boundaries
+./scripts/veilleuse-control reconcile
+```
+
+### Global Shortcut Management
 
 Veilleuse does not install a shortcut automatically.
 
 ```bash
-./scripts/veilleuse-control shortcut install --keys "SUPER, V"
+# Install, inspect, or remove Hyprland shortcut binding
 ./scripts/veilleuse-control shortcut status
+./scripts/veilleuse-control shortcut install --keys "SUPER, V"
 ./scripts/veilleuse-control shortcut remove
 ```
 
-Installation validates the key combination, checks for binding conflicts, and manages only the Veilleuse block in `~/.config/hypr/bindings.lua`:
+Installation validates the key combination, checks for binding conflicts, and manages only the Veilleuse marker block in `~/.config/hypr/bindings.lua`:
 
 ```lua
 -- >>> Veilleuse shortcut >>>
@@ -100,106 +180,108 @@ o.bind("SUPER + V", "Veilleuse", "omarchy-shell -q io.github.znow01.veilleuse to
 -- <<< Veilleuse shortcut <<<
 ```
 
-The command itself is fixed. A `bindings.lua.bak` backup is created before modification.
+A `bindings.lua.bak` backup is created before modification.
+
+### Shell IPC
+```bash
+# Toggle night light directly through Omarchy Shell IPC
+omarchy shell io.github.znow01.veilleuse toggleNightlight
+
+# Toggle the popout panel UI
+omarchy shell io.github.znow01.veilleuse toggle
+```
+
+---
+
+## Architecture & Storage
+
+Veilleuse follows strict XDG Directory specifications, atomic file updates, and fail-closed error handling.
+
+| File Path | Purpose | Permissions | Safety Mechanism |
+| :--- | :--- | :--- | :--- |
+| `~/.config/hypr/hyprsunset.conf` | Night light temperature & schedule | `0644` | Atomic temp write, `.lock` protection, `.bak` backup |
+| `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | `0644` | Bound marker blocks (`-- >>> Veilleuse shortcut >>>`), `.bak` backup |
+| `~/.config/veilleuse/config.json` | Plugin settings & language preference | `0600` | Atomic replace, versioned schema, stripped legacy keys |
+| `~/.local/state/veilleuse/state.json` | Runtime state, snooze tokens, display values | `0600` | Mode `0600`, atomic write, bounded validation |
+| `~/.local/state/veilleuse/history.jsonl` | Audit history of operations | `0600` | Ring buffer strictly capped at the last 50 entries |
+
+### Core Architectural Invariants
+
+1. **Non-destructive Hyprsunset Parsing**: Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` are preserved during schedule updates.
+2. **Latest-Wins Request Bus**: Rapid slider drags and UI adjustments use monotonic request IDs so stale responses never overwrite pending user intent.
+3. **Fail-Closed Normalization**: Backend command failures or timeouts gracefully fall back to an explicit safe state with translated error messages.
+4. **Zero Daemon Policy**: Periodic reconciliation and snooze checks run synchronously on state changes and shell lifecycle events without spawning daemons.
+
+---
 
 ## Troubleshooting
 
-### ←/→ change views instead of adjusting the slider
+### Arrow keys switch views instead of moving the slider
 
-The arrows adjust the slider that has the panel focus. Position the focus first:
+The `←` / `→` keys adjust the slider that currently holds cursor focus:
+- **Using Mouse**: Hover the pointer over the slider row — the focus follows immediately.
+- **Using Keyboard**: Press `↑` / `↓` until the slider row is highlighted, then press `←` / `→`.
 
-* **Mouse**: hover the slider — the cursor follows the pointer.
-* **Keyboard**: press `↑` / `↓` until the row is highlighted.
+### Updates do not appear after running `omarchy plugin update`
 
-If hover does not move the cursor or the arrows still switch views after an update, the shell is running the old QML — see "Updates do not appear" below.
-
-### Updates do not appear (widget still shows the old version)
-
-`omarchy plugin update` touches only the checkout on disk. The running shell keeps the previously loaded code until told otherwise:
+`omarchy plugin update` updates the Git working tree on disk, but the running shell keeps cached QML components in memory. Reload the shell components:
 
 ```bash
-omarchy-shell shell rescanPlugins    # unload and reload plugin components
-omarchy restart shell                # if the widget still looks stale, full restart
+omarchy restart shell
 ```
 
-Verify the version actually on disk when in doubt:
+### Panel values display `—` or helper unavailable
 
-```bash
-grep '"version"' ~/.config/omarchy/plugins/io.github.znow01.veilleuse/manifest.json
-```
-
-It must be `3.1.1` (or newer) for the hover/arrow behavior described above.
-
-### The panel shows `—` for every value
-
-The helper could not read the state. Check it directly:
+This indicates that `veilleuse-control` cannot query `hyprsunset` or monitor state. Check backend diagnostics:
 
 ```bash
 ./scripts/veilleuse-control status
 ```
 
-The usual causes are a missing `hyprsunset` (see [Requirements](#requirements)) or a monitor selection you can fix in the **Home** view under *Monitor*.
+Verify that `hyprsunset` is running and your focused display is detected in **Home → Monitor**.
 
-### The keyboard shortcut does nothing
+### Global shortcut does not trigger
 
-Check whether the shortcut is installed and what it is bound to:
+Inspect the shortcut status and check for conflicting key bindings in `~/.config/hypr/bindings.lua`:
 
 ```bash
 ./scripts/veilleuse-control shortcut status
 ```
 
-If it is installed but Hyprland does not fire it, look for conflicting bindings in `~/.config/hypr/bindings.lua` and remove the shortcut first:
-
+To re-bind cleanly:
 ```bash
 ./scripts/veilleuse-control shortcut remove
+./scripts/veilleuse-control shortcut install --keys "SUPER, V"
 ```
 
-### The bar icon shows an unavailable state (dimmed glyph)
-
-The glyph dims when the helper state is unavailable. Start with `./scripts/veilleuse-control status` and check the requirements below. If the panel opens but no write changes anything, run the same command from a terminal to see the exact error.
-
-## Requirements
-
-* `hyprsunset`
-* `/usr/bin/python3`
-
-## Manage the plugin
-
-Disable:
-
-```bash
-omarchy plugin disable io.github.znow01.veilleuse
-```
-
-Remove:
-
-```bash
-omarchy plugin remove io.github.znow01.veilleuse --yes
-```
-
-Removing Veilleuse preserves the `hyprsunset` configuration and backup.
-
-## Files
-
-| Path                                     | Purpose                                |
-| ---------------------------------------- | -------------------------------------- |
-| `~/.config/hypr/hyprsunset.conf`         | Schedule and night-light configuration |
-| `~/.config/veilleuse/config.json`        | Plugin configuration                   |
-| `~/.local/state/veilleuse/state.json`    | Snooze and display state               |
-| `~/.local/state/veilleuse/history.jsonl` | Last 50 operations                     |
-
-Writes are atomic and use mode `0600`.
+---
 
 ## Development
 
-```bash
-git clone https://github.com/ZnOw01/veilleuse.git
-cd veilleuse
+Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners.
 
-omarchy plugin validate .
+### Run Verification Suite
+
+```bash
+# Execute complete verification pipeline (Python tests, Node tests, linters, hygiene)
 ./scripts/check.sh
+
+# Run package hygiene check (manifest validation, bytecode & symlink blockers)
+./scripts/check_hygiene.sh
 ```
+
+### Individual Test Runners
+
+```bash
+# Python backend unit tests
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
+
+# Node.js UI model, layout, and localization tests
+node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs
+```
+
+---
 
 ## License
 
-MIT © 2026 ZnOw01
+MIT © 2026 [ZnOw01](https://github.com/ZnOw01). Released under the [MIT License](LICENSE).
