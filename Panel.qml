@@ -811,7 +811,9 @@ Panel {
                                     id: brightnessIcon
 
                                     glyph: Icons.glyph("brightness")
-                                    iconSize: Style.font.body
+                                    iconSize: Style.font.icon
+                                    width: Style.space(20)
+                                    height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -824,7 +826,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - brightnessValue.implicitWidth - brightnessIcon.implicitWidth - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - brightnessValue.implicitWidth - brightnessIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -884,7 +886,9 @@ Panel {
                                     id: temperatureIcon
 
                                     glyph: Icons.glyph("temperature")
-                                    iconSize: Style.font.body
+                                    iconSize: Style.font.icon
+                                    width: Style.space(20)
+                                    height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -897,7 +901,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - temperatureValue.implicitWidth - temperatureIcon.implicitWidth - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - temperatureValue.implicitWidth - temperatureIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -957,7 +961,9 @@ Panel {
                                     id: gammaIcon
 
                                     glyph: Icons.glyph("gamma")
-                                    iconSize: Style.font.body
+                                    iconSize: Style.font.icon
+                                    width: Style.space(20)
+                                    height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -970,7 +976,7 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - gammaValue.implicitWidth - gammaIcon.implicitWidth - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - gammaValue.implicitWidth - gammaIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
@@ -1072,13 +1078,15 @@ Panel {
                                 anchors.right: scheduleToggle.left
                                 anchors.rightMargin: Style.spacing.controlGap
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: Style.space(10)
+                                spacing: Style.space(12)
 
                                 NerdIcon {
                                     id: scheduleIcon
 
                                     glyph: Icons.glyph("schedule")
-                                    iconSize: Style.font.title
+                                    iconSize: Style.font.display
+                                    width: Style.font.display
+                                    height: Style.font.display
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
@@ -1086,7 +1094,7 @@ Panel {
                                 Column {
                                     id: scheduleLabelsColumn
 
-                                    width: parent.width - scheduleIcon.implicitWidth - parent.spacing
+                                    width: parent.width - scheduleIcon.width - parent.spacing
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: Style.space(2)
 

@@ -16,6 +16,9 @@ Text {
 
     color: iconColor
 
+    width: Math.max(implicitWidth, iconSize)
+    height: Math.max(implicitHeight, iconSize)
+
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
     renderType: Text.NativeRendering
