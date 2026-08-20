@@ -1,29 +1,57 @@
-# Internal planning/spec material — never shipped.
-docs/
+# AI assistants, agents, and LLM context files
+AGENTS.md
+CLAUDE.md
+*AGENT*.md
+.agents/
+.claude/
 .agent-review-input/
 .superpowers/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*
+.cline/
+.gemini/
+scratch/
+brain/
 
-# Python bytecode and tool caches.
+# Internal planning/spec material — never shipped
+docs/
+
+# Python bytecode and tool caches
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+htmlcov/
 
-# Virtualenvs and build output.
+# Virtual environments and build outputs
 .venv/
 venv/
+ENV/
 dist/
 build/
+*.egg-info/
 
-# Editors, OS and logs.
-*.log
+# Node / JS tooling
+node_modules/
+.npm/
+
+# Editors, IDEs, and OS metadata
+.vscode/
+.idea/
 *.swp
+*.swo
 *~
 .DS_Store
-.idea/
-.vscode/
+Thumbs.db
+*.log
 
-# Local screenshots and editor backups of user config files.
+# Backups, scratch files, and local screenshots
+*.bak
+*.tmp
 *.png.bak
 screenshots/
