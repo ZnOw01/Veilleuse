@@ -1048,7 +1048,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
-                        implicitHeight: automationHeader.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: automationHeader.implicitHeight + Style.space(16)
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(0)
@@ -1062,38 +1062,56 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
-                            implicitHeight: Math.max(scheduleLabelsColumn.implicitHeight, scheduleToggle.implicitHeight)
+                            height: Math.max(scheduleLabelsRow.implicitHeight, scheduleToggle.implicitHeight)
+                            implicitHeight: height
 
-                            Column {
-                                id: scheduleLabelsColumn
+                            Row {
+                                id: scheduleLabelsRow
 
                                 anchors.left: parent.left
                                 anchors.right: scheduleToggle.left
                                 anchors.rightMargin: Style.spacing.controlGap
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: Style.space(2)
+                                spacing: Style.space(10)
 
-                                Text {
-                                    width: parent.width
-                                    text: root.text("schedule")
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.title
-                                    font.bold: true
-                                    elide: Text.ElideRight
+                                NerdIcon {
+                                    id: scheduleIcon
+
+                                    glyph: Icons.glyph("schedule")
+                                    iconSize: Style.font.title
+                                    iconColor: root.foreground
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                // The switch already says whether the schedule
-                                // runs: the text carries the programmed window
-                                // only while it is enabled.
-                                Text {
-                                    visible: root.scheduleEnabled && root.stateReady
-                                    width: parent.width
-                                    text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
-                                    color: Qt.darker(root.foreground, 1.35)
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.bodySmall
-                                    elide: Text.ElideRight
+                                Column {
+                                    id: scheduleLabelsColumn
+
+                                    width: parent.width - scheduleIcon.implicitWidth - parent.spacing
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: Style.space(2)
+
+                                    Text {
+                                        width: parent.width
+                                        text: root.text("schedule")
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.title
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                    }
+
+                                    // The switch already says whether the schedule
+                                    // runs: the text carries the programmed window
+                                    // only while it is enabled.
+                                    Text {
+                                        visible: root.scheduleEnabled && root.stateReady
+                                        width: parent.width
+                                        text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
+                                        color: Qt.darker(root.foreground, 1.35)
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        elide: Text.ElideRight
+                                    }
                                 }
                             }
 
