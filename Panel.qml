@@ -21,6 +21,9 @@ Panel {
     property string lastError: ""
     property string feedbackText: ""
     property bool actionPending: false
+    // Touched by snoozeTickTimer so the countdown binding re-evaluates
+    // between helper refreshes.
+    property int snoozeTick: 0
     property int latestRequestId: 0
     property int queuedRequestId: 0
     property int processRequestId: 0
@@ -44,6 +47,15 @@ Panel {
     property string editNightGamma: ""
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+    // Named geometry: icon slot in slider rows and the panel's fixed outer
+    // dimensions, kept as properties so the magic numbers live in one place.
+    readonly property int controlIconSlot: Style.space(20)
+    readonly property int panelWidth: Style.space(330)
+    readonly property int panelMaxHeight: Style.space(560)
+    // Uniform vertical breathing room: every cursor row pads with sectionPad,
+    // the taller automation header with headerPad.
+    readonly property int sectionPad: Style.space(6)
+    readonly property int headerPad: Style.space(16)
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool stateReady: state.available === true
     readonly property string errorText: root.lastError !== "" ? root.lastError : root.localizeErrorString(root.state.error || "")
@@ -61,6 +73,9 @@ Panel {
     // Minutes left on the active snooze, recomputed whenever the helper
     // refreshes the combined status (open, actions, reconcile).
     readonly property int snoozeRemainingMinutes: {
+        // snoozeTick is read only so this binding re-evaluates every 30 s
+        // while a snooze is active; its value never changes the math.
+        var tick = root.snoozeTick;
         var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
         if (!isFinite(until) || until <= 0)
             return 0;
@@ -539,6 +554,16 @@ Panel {
         onTriggered: root.feedbackText = ""
     }
 
+    // Keeps the visible snooze countdown ticking between helper refreshes.
+    Timer {
+        id: snoozeTickTimer
+
+        interval: 30000
+        repeat: true
+        running: root.opened && root.snoozeActive
+        onTriggered: root.snoozeTick += 1
+    }
+
     Timer {
         id: initialReconcileTimer
 
@@ -590,8 +615,8 @@ Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keyCatcher
-        contentWidth: keyboardPanel.fittedContentWidth(Style.space(330))
-        contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, Style.space(560))
+        contentWidth: keyboardPanel.fittedContentWidth(root.panelWidth)
+        contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, root.panelMaxHeight)
 
         // Arrows-only keyboard: Left/Right switch views, Up/Down move the
         // cursor, Enter/Space activate, Esc closes. Editors and popup lists
@@ -720,6 +745,21 @@ Panel {
                     }
                 }
 
+                // Global helper errors sit directly under the view header,
+                // near the top of the content, instead of at the very end of
+                // the scrollable column where they could fall off-screen.
+                Text {
+                    visible: root.errorText !== ""
+                    width: parent.width
+                    leftPadding: Style.spacing.rowPaddingX
+                    rightPadding: Style.spacing.rowPaddingX
+                    text: root.errorText
+                    color: Color.urgent
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    wrapMode: Text.WordWrap
+                }
+
                 CursorSurface {
                     id: heroSurface
 
@@ -750,6 +790,9 @@ Panel {
                             Text {
                                 text: root.heroGlyph
                                 color: root.foreground
+                                // Off is a state, not a fault: the moon glyph
+                                // dims instead of reading as an error.
+                                opacity: root.stateReady && root.state.enabled === false ? 0.4 : 1
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.display
                                 horizontalAlignment: Text.AlignHCenter
@@ -763,6 +806,7 @@ Panel {
                             ToggleSwitch {
                                 checked: root.stateReady && root.state.enabled
                                 busy: !root.stateReady || root.actionPending
+                                trackHeight: Math.max(22, Style.space(24))
                                 foreground: root.foreground
                                 Accessible.name: root.text("night_light")
                                 onToggled: root.request(["nightlight", "toggle"], "toggle")
@@ -787,7 +831,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: brightnessColumn.implicitHeight + Style.space(6)
+                        implicitHeight: brightnessColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -812,7 +856,7 @@ Panel {
 
                                     glyph: Icons.glyph("brightness")
                                     iconSize: Style.font.icon
-                                    width: Style.space(20)
+                                    width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
@@ -845,6 +889,7 @@ Panel {
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
+                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
                                 minimum: 1
                                 maximum: 100
@@ -862,7 +907,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
-                        implicitHeight: temperatureColumn.implicitHeight + Style.space(6)
+                        implicitHeight: temperatureColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(2)
@@ -887,7 +932,7 @@ Panel {
 
                                     glyph: Icons.glyph("temperature")
                                     iconSize: Style.font.icon
-                                    width: Style.space(20)
+                                    width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
@@ -920,6 +965,7 @@ Panel {
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
+                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
                                 minimum: 2500
                                 maximum: 6500
@@ -937,7 +983,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 3
                         foreground: root.foreground
-                        implicitHeight: gammaColumn.implicitHeight + Style.space(6)
+                        implicitHeight: gammaColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(3)
@@ -962,7 +1008,7 @@ Panel {
 
                                     glyph: Icons.glyph("gamma")
                                     iconSize: Style.font.icon
-                                    width: Style.space(20)
+                                    width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
@@ -971,7 +1017,7 @@ Panel {
                                 Text {
                                     id: gammaLabel
 
-                                    text: root.text("gamma")
+                                    text: root.text("gamma_short")
                                     color: root.foreground
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
@@ -995,6 +1041,7 @@ Panel {
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
+                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
                                 minimum: 0
                                 maximum: 100
@@ -1016,7 +1063,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 4
                         foreground: root.foreground
-                        implicitHeight: monitorSelector.implicitHeight + Style.spacing.rowPaddingX
+                        implicitHeight: monitorSelector.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(4)
@@ -1054,7 +1101,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
-                        implicitHeight: automationHeader.implicitHeight + Style.space(16)
+                        implicitHeight: automationHeader.implicitHeight + root.headerPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(0)
@@ -1078,7 +1125,7 @@ Panel {
                                 anchors.right: scheduleToggle.left
                                 anchors.rightMargin: Style.spacing.controlGap
                                 anchors.verticalCenter: parent.verticalCenter
-                                spacing: Style.space(12)
+                                spacing: Style.spacing.xxl
 
                                 NerdIcon {
                                     id: scheduleIcon
@@ -1096,7 +1143,7 @@ Panel {
 
                                     width: parent.width - scheduleIcon.width - parent.spacing
                                     anchors.verticalCenter: parent.verticalCenter
-                                    spacing: Style.space(2)
+                                    spacing: Style.spacing.xxs
 
                                     Text {
                                         width: parent.width
@@ -1144,7 +1191,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: scheduleEditorColumn.implicitHeight + Style.space(6)
+                        implicitHeight: scheduleEditorColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -1207,6 +1254,10 @@ Panel {
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("temperature") + " (K)"
+                                    // Matches the helper's DAY_TEMP_MIN/DAY_TEMP_MAX
+                                    // (5900–6500): the day period is the high-light
+                                    // window, so its temperature range is narrower
+                                    // than the Home slider's.
                                     value: Number(root.editDayTemperature || 6000)
                                     from: 5900
                                     to: 6500
@@ -1410,6 +1461,18 @@ Panel {
                                 }
                             }
 
+                            // Field errors live right above the action that
+                            // fails, so an inactive Save is never unexplained.
+                            Text {
+                                visible: root.scheduleValidationError !== ""
+                                width: parent.width
+                                text: root.scheduleValidationError
+                                color: Color.urgent
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                wrapMode: Text.WordWrap
+                            }
+
                             Button {
                                 id: saveScheduleButton
 
@@ -1421,11 +1484,21 @@ Panel {
                                 foreground: root.foreground
                                 Accessible.name: root.text("save")
                                 Accessible.role: Accessible.Button
-                                enabled: root.stateReady && !root.actionPending && root.scheduleFieldsValid()
+                                enabled: root.stateReady && !root.actionPending
                                 onClicked: {
                                     root.queueSchedule();
                                     root.refocusKeyCatcher();
                                 }
+                            }
+
+                            Text {
+                                visible: root.feedbackText !== ""
+                                width: parent.width
+                                text: root.feedbackText
+                                color: root.foreground
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.bodySmall
+                                wrapMode: Text.WordWrap
                             }
                         }
 
@@ -1436,7 +1509,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
-                        implicitHeight: snoozeColumn.implicitHeight + Style.space(6)
+                        implicitHeight: snoozeColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(2)
@@ -1602,7 +1675,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
-                        implicitHeight: localeSelector.implicitHeight + Style.space(6)
+                        implicitHeight: localeSelector.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(0)
@@ -1641,7 +1714,7 @@ Panel {
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
-                        implicitHeight: shortcutColumn.implicitHeight + Style.space(6)
+                        implicitHeight: shortcutColumn.implicitHeight + root.sectionPad
 
                         HoverHandler {
                             onHoveredChanged: if (hovered) root.cursorToSection(1)
@@ -1705,6 +1778,7 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2
                                     enabled: !root.actionPending
                                     onClicked: {
                                         root.settingsCommand("shortcut", ["remove"]);
@@ -1717,45 +1791,6 @@ Panel {
                     }
                 }
 
-                Text {
-                    visible: root.errorText !== ""
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Style.spacing.rowPaddingX
-                    anchors.rightMargin: Style.spacing.rowPaddingX
-                    text: root.errorText
-                    color: Color.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.WordWrap
-                }
-
-                Text {
-                    visible: root.feedbackText !== ""
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Style.spacing.rowPaddingX
-                    anchors.rightMargin: Style.spacing.rowPaddingX
-                    text: root.feedbackText
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.WordWrap
-                }
-
-                Text {
-                    visible: root.route === "automation" && root.scheduleValidationError !== ""
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Style.spacing.rowPaddingX
-                    anchors.rightMargin: Style.spacing.rowPaddingX
-                    text: root.scheduleValidationError
-                    color: Color.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.WordWrap
-                }
-
                 // One quiet line keeps the arrow model discoverable without a
                 // tutorial.
                 Text {
@@ -1765,7 +1800,7 @@ Panel {
                     anchors.rightMargin: Style.spacing.rowPaddingX
                     horizontalAlignment: Text.AlignHCenter
                     text: root.text("keyboard_hints")
-                    color: Qt.darker(root.foreground, 1.6)
+                    color: Qt.darker(root.foreground, 1.4)
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     wrapMode: Text.WordWrap

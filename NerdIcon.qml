@@ -7,7 +7,7 @@ Text {
     property string glyph: ""
     property color iconColor: Color.foreground
     property real iconSize: Style.font.icon
-    property string fontFamily: "monospace"
+    property string fontFamily: Style.font.family
 
     text: glyph
 

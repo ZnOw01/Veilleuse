@@ -34,7 +34,9 @@ test('glyphForState returns the correct glyph per system state', () => {
   assert.equal(glyphForState({ available: false }), ICONS.unavailable);
   assert.equal(glyphForState({ available: true, enabled: true, automation: { origin: 'preset' } }), ICONS.palette);
   assert.equal(glyphForState({ available: true, enabled: true, automation: { origin: 'schedule' } }), ICONS.weatherSunny);
-  assert.equal(glyphForState({ available: true, enabled: false, automation: { schedule_enabled: false } }), ICONS.disabled);
+  // Off reads as a dimmable night glyph, never as the close-circle error
+  // icon: an off light is a state, not a fault.
+  assert.equal(glyphForState({ available: true, enabled: false, automation: { schedule_enabled: false } }), ICONS.weatherNight);
   assert.equal(glyphForState({ available: true, enabled: false, automation: { schedule_enabled: true } }), ICONS.weatherNight);
 });
 

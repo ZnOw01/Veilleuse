@@ -121,7 +121,7 @@ var DEFAULT_COPY = {
   focusedMonitor: 'Focused monitor',
   working: 'Applying…',
   minutesShort: 'min',
-  keyboardHints: '← → adjust / switch view · ↑ ↓ move · Enter activate · Esc close'
+  keyboardHints: '← →\u00A0adjust / switch\u00A0view · ↑ ↓\u00A0move · Enter\u00A0activate · Esc\u00A0close'
 };
 
 var copy = (I18n && I18n.en) ? I18n.en : DEFAULT_COPY;

@@ -32,13 +32,14 @@ test('slider handlers declare signal parameters explicitly and step one by one',
 
 test('each slider renders a label row with its live value above the track', () => {
   const home = qml.slice(qml.indexOf('id: homeRoute'), qml.indexOf('id: automationRoute'));
-  for (const [labelId, valueId, key] of [
-    ['brightnessLabel', 'brightnessValue', 'brightness'],
-    ['temperatureLabel', 'temperatureValue', 'temperature'],
-    ['gammaLabel', 'gammaValue', 'gamma']
+  for (const [labelId, valueId, textKey, valueKey] of [
+    ['brightnessLabel', 'brightnessValue', 'brightness', 'brightness'],
+    ['temperatureLabel', 'temperatureValue', 'temperature', 'temperature'],
+    // Gamma shows the short label so the live value never collides with it.
+    ['gammaLabel', 'gammaValue', 'gamma_short', 'gamma']
   ]) {
-    assert.match(home, new RegExp(`id:\\s*${labelId}[\\s\\S]*?text:\\s*root\\.text\\("${key}"\\)`));
-    assert.match(home, new RegExp(`id:\\s*${valueId}[\\s\\S]*?root\\.displayValue\\("${key}"`));
+    assert.match(home, new RegExp(`id:\\s*${labelId}[\\s\\S]*?text:\\s*root\\.text\\("${textKey}"\\)`));
+    assert.match(home, new RegExp(`id:\\s*${valueId}[\\s\\S]*?root\\.displayValue\\("${valueKey}"`));
   }
 });
 
@@ -62,9 +63,14 @@ test('mouse hover moves the panel cursor onto the hovered row', () => {
   assert.ok(sections.length >= 9, `expected all routes to be hover-navigable, got ${sections.length}`);
   for (const index of [...new Set(sections)]) {
     const cursorTargets = qml.match(new RegExp(`root\\.cursorToSection\\(${index}\\)`, 'g')) || [];
-    const hasCursorCount = sections.filter(s => s === index).length;
-    assert.ok(cursorTargets.length >= hasCursorCount,
-      `section ${index} must hover-set the cursor it claims (${cursorTargets.length} hover(s) for ${hasCursorCount} hasCursor binding(s))`);
+    // Action buttons that share one row (shortcut install/remove) bind
+    // hasCursor individually but share the row's single HoverHandler.
+    const buttonBindings = [...qml.matchAll(
+      new RegExp(`Button\\s*\\{[^{}]*?hasCursor:\\s*root\\.cursor\\.section === ${index}`, 'g')
+    )].length;
+    const surfaceCount = sections.filter(s => s === index).length - buttonBindings;
+    assert.ok(cursorTargets.length >= surfaceCount,
+      `section ${index} must hover-set the cursor it claims (${cursorTargets.length} hover(s) for ${surfaceCount} hasCursor binding(s))`);
   }
 });
 
@@ -81,7 +87,9 @@ test('the keyboard is arrows-only and owned by an inline key catcher', () => {
   assert.match(qml, /Qt\.Key_Escape[\s\S]*?root\.handleCloseRequested\(\)/);
   // The vim-era letter keys are gone from the model and the panel.
   assert.doesNotMatch(qml, /'j'|'k'|'h'|'l'/);
-  assert.match(i18n, /keyboardHints:\s*'← → adjust \/ switch view · ↑ ↓ move · Enter activate · Esc close'/);
+  // Key/action pairs use non-breaking spaces so a wrapped line never splits
+  // a pair across lines (matched against the literal \u00A0 escapes).
+  assert.match(i18n, /keyboardHints:\s*'← →\\u00A0adjust \/ switch\\u00A0view · ↑ ↓\\u00A0move · Enter\\u00A0activate · Esc\\u00A0close'/);
 });
 
 test('view switching is the two chevrons plus the current view name', () => {
@@ -175,7 +183,7 @@ test('snooze composes a number, a unit and one apply action', () => {
 });
 
 test('settings route is language and the shortcut only', () => {
-  const settings = qml.slice(qml.indexOf('id: settingsRoute'), qml.indexOf('visible: root.errorText'));
+  const settings = qml.slice(qml.indexOf('id: settingsRoute'), qml.indexOf('root.text("keyboard_hints")'));
   assert.match(settings, /id:\s*localeSelector/);
   assert.match(settings, /\{\s*value:\s*"en",\s*label:\s*root\.text\("english"\)\s*\}/);
   assert.match(settings, /\{\s*value:\s*"es",\s*label:\s*root\.text\("spanish"\)\s*\}/);
@@ -186,19 +194,30 @@ test('settings route is language and the shortcut only', () => {
 });
 
 test('errors, feedback and schedule validation stay visible with equal padding', () => {
-  assert.match(qml, /visible:\s*root\.errorText !== ""/);
-  assert.match(qml, /visible:\s*root\.feedbackText !== ""/);
-  assert.match(qml, /visible:\s*root\.route === "automation"\s*&&\s*root\.scheduleValidationError !== ""/);
-  for (const block of [
-    'root.errorText !== ""',
-    'root.feedbackText !== ""',
-    'root.route === "automation" && root.scheduleValidationError !== ""'
-  ]) {
-    const start = qml.indexOf(`visible: ${block}`);
-    const slice = qml.slice(start, qml.indexOf('}', start));
-    assert.match(slice, /anchors\.leftMargin:\s*Style\.spacing\.rowPaddingX/);
-    assert.match(slice, /anchors\.rightMargin:\s*Style\.spacing\.rowPaddingX/);
-  }
+  // The global error sits under the view header so it stays on screen no
+  // matter how far the panel content scrolls.
+  const errorStart = qml.indexOf('visible: root.errorText !== ""');
+  const heroStart = qml.indexOf('id: heroSurface');
+  assert.ok(errorStart > -1 && errorStart < heroStart, 'global error must precede the hero surface');
+
+  // Field validation sits right above Save and the saved confirmation right
+  // below it, both inside the schedule editor column.
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze: enter a duration'));
+  const validateAt = editor.indexOf('visible: root.scheduleValidationError !== ""');
+  const saveAt = editor.indexOf('id: saveScheduleButton');
+  const feedbackAt = editor.indexOf('visible: root.feedbackText !== ""');
+  assert.ok(validateAt > -1 && validateAt < saveAt, 'validation message must precede the save button');
+  assert.ok(feedbackAt > saveAt, 'save feedback must follow the save button');
+
+  // Every message keeps the shared horizontal padding: the global one
+  // carries it directly, the editor messages inherit it from the editor
+  // column margins.
+  const errorAt = qml.indexOf('visible: root.errorText !== ""');
+  const errorSlice = qml.slice(errorAt, qml.indexOf('}', errorAt));
+  assert.match(errorSlice, /leftPadding:\s*Style\.spacing\.rowPaddingX/);
+  assert.match(errorSlice, /rightPadding:\s*Style\.spacing\.rowPaddingX/);
+  assert.match(editor, /anchors\.leftMargin:\s*Style\.spacing\.rowPaddingX/);
+  assert.match(editor, /anchors\.rightMargin:\s*Style\.spacing\.rowPaddingX/);
 });
 
 test('successful schedule saves render short-lived feedback and refresh the drafts', () => {
