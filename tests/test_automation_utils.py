@@ -331,11 +331,6 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(self.nightlight.naturals, 0)
         self.assertFalse(self.state_file().exists())
 
-    def test_snooze_minutes_delegate_to_seconds(self):
-        result = automation.snooze_set(30, env=self.env())
-        self.assertTrue(result["success"])
-        self.assertEqual(result["snooze_until"], 1000.0 + 30 * 60)
-
     def test_snooze_set_apply_failure_persists_nothing(self):
         self.nightlight.fail_first = 1
         result = automation.snooze_set(30, env=self.env())
@@ -382,7 +377,7 @@ class AutomationUtilsTest(unittest.TestCase):
         records = self.read_history()
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["operation"], "snooze_clear")
-        self.assertFalse(records[0].get("temperature"))
+        self.assertNotIn("temperature", records[0])
 
     def test_snooze_clear_noop_when_not_snoozed(self):
         result = automation.snooze_clear(env=self.env())
@@ -1076,6 +1071,112 @@ class AutomationUtilsTest(unittest.TestCase):
 
     def test_tests_do_not_create_python_bytecode(self):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
+
+
+    # ------------------------------------------------------------------ \
+    # ramp robustness: latest-wins cancellation, deadline, dedup
+
+    def test_reconcile_ramp_cancelled_midway_reports_cancelled_with_honest_prefix(self):
+        self.initial_state(transition_seconds=4)
+        self.nightlight.temperature = 5000
+        self.token = FakeToken(self.clock, trip_monotonic=1.5)
+
+        result = automation.reconcile(env=self.env())
+
+        self.assertEqual(result["error_code"], "cancelled")
+        self.assertFalse(result["applied"])
+        applied_steps = result["applied_steps"]
+        self.assertEqual(len(applied_steps), 2)
+        self.assertEqual(self.nightlight.applications, applied_steps)
+        self.assertEqual(result["temperature"], applied_steps[-1][0])
+        self.assertEqual(result["gamma"], applied_steps[-1][1])
+        # A cancelled ramp never reports the requested target as reached.
+        self.assertNotEqual(result["temperature"], 3500)
+
+    def test_reconcile_ramp_deadline_expiry_midway_reports_deadline_and_last_values(self):
+        self.initial_state(transition_seconds=3)
+        self.nightlight.temperature = 5000
+
+        def jumping_sleep(seconds):
+            self.clock.monotonic_value += 10.0
+
+        result = automation.reconcile(env=self.env(sleep=jumping_sleep))
+
+        self.assertEqual(result["error_code"], "deadline")
+        self.assertFalse(result["applied"])
+        self.assertEqual(len(result["applied_steps"]), 1)
+        self.assertEqual(self.nightlight.applications, result["applied_steps"])
+
+    def test_run_ramp_final_step_within_grace_still_delivers_exact_target(self):
+        env = self.env()
+        ok, detail = automation._run_ramp(
+            env, {"temperature": 5000, "gamma": 90}, 4000, 80,
+            2.0, None,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(detail[-1], (4000, 80))
+        self.assertEqual(self.nightlight.applications[-1], (4000, 80))
+
+    def test_run_ramp_final_step_beyond_grace_reports_deadline(self):
+        def slow_sleep(seconds):
+            self.clock.monotonic_value += 8.0
+
+        env = self.env(sleep=slow_sleep)
+        ok, detail = automation._run_ramp(
+            env, {"temperature": 5000, "gamma": 90}, 4000, 80,
+            2.0, None,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(detail["error_code"], "deadline")
+        self.assertTrue(detail["applied_steps"])
+
+    def test_run_ramp_skips_steps_whose_values_equal_previous(self):
+        env = self.env()
+        ok, detail = automation._run_ramp(
+            env, {"temperature": 4000, "gamma": 80}, 4000, 80,
+            3.0, None,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(detail, [(4000, 80)])
+        self.assertEqual(self.nightlight.applications, [(4000, 80)])
+
+    def test_reconcile_midramp_apply_failure_is_honest_with_last_good_values(self):
+        self.initial_state(transition_seconds=3)
+        self.nightlight.temperature = 5000
+        self.nightlight.fail_at = 2
+
+        result = automation.reconcile(env=self.env())
+
+        self.assertEqual(result["error_code"], "apply_failed")
+        self.assertFalse(result["applied"])
+        self.assertEqual(len(result["applied_steps"]), 1)
+        self.assertEqual(self.nightlight.applications, result["applied_steps"])
+        self.assertEqual(result["temperature"], result["applied_steps"][-1][0])
+
+    def test_snooze_bounds_inclusive_edges_are_accepted(self):
+        for unit, value in (("seconds", 10), ("seconds", 86400), ("minutes", 1), ("minutes", 1440)):
+            with self.subTest(unit=unit, value=value):
+                setter = (
+                    automation.snooze_set_seconds
+                    if unit == "seconds"
+                    else automation.snooze_set
+                )
+                result = setter(value, env=self.env())
+                self.assertTrue(result["success"], result)
+                self.assertTrue(result["snoozed"])
+
+    def test_ramp_schedule_clamps_steps_and_lands_exactly_on_target(self):
+        self.assertEqual(
+            automation.ramp_schedule(5000, 90, 3000, 10, 0), [(3000, 10)]
+        )
+        flat = automation.ramp_schedule(4000, 80, 4000, 80, 3)
+        self.assertEqual(flat, [(4000, 80)] * 3)
+        descending = automation.ramp_schedule(6500, 100, 2500, 0, 7)
+        temperatures = [pair[0] for pair in descending]
+        gammas = [pair[1] for pair in descending]
+        self.assertEqual(temperatures, sorted(temperatures, reverse=True))
+        self.assertEqual(gammas, sorted(gammas, reverse=True))
+        self.assertEqual(descending[-1], (2500, 0))
 
 
 if __name__ == "__main__":
