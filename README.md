@@ -6,7 +6,7 @@
 Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ZnOw01/Veilleuse/checks.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/ZnOw01/Veilleuse/actions/workflows/checks.yml)
-[![Version](https://img.shields.io/badge/version-3.2.0-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
+[![Version](https://img.shields.io/badge/version-3.2.1-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
 [![Platform](https://img.shields.io/badge/Platform-Omarchy_Quattro_4.0%2B-008080?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/ZnOw01/Veilleuse)
 [![Hyprland](https://img.shields.io/badge/Hyprland-hyprsunset-00AAFF?style=for-the-badge&logo=wayland&logoColor=white)](https://hyprland.org/)
 [![Python](https://img.shields.io/badge/Python-3.12%2B_stdlib-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -14,6 +14,7 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 [Features](#features) ·
 [Quick Start](#quick-start) ·
+[Screenshots](#screenshots) ·
 [Panel & Navigation](#panel--navigation) ·
 [CLI Reference](#cli-reference) ·
 [Architecture & Storage](#architecture--storage) ·
@@ -25,9 +26,14 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 ---
 
+## Screenshots
+
 <div align="center">
 
-![Veilleuse UI Preview](preview.png)
+| Home | Automation | Settings |
+| :---: | :---: | :---: |
+| ![Home view](preview.png) | ![Automation view](assets/automation.png) | ![Settings view](assets/settings.png) |
+| Night-light toggle, live brightness, temperature and gamma sliders, monitor picker | Day/night schedule editor with per-period display values and timed snooze | Language selector and conflict-checked global shortcut binding |
 
 </div>
 
@@ -258,7 +264,7 @@ To re-bind cleanly:
 
 ## Development
 
-Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners.
+Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners. The verification suite covers **450+ tests**: backend CLI contract, automation orchestration (ramps, latest-wins cancellation, deadlines), persistence safety (atomicity, locking, corruption fail-closed), reversible shortcut management, UI model logic, QML layout contracts, i18n parity, and error-code stability.
 
 ### Run Verification Suite
 
