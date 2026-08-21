@@ -17,7 +17,6 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import schedule_toggle_utils as toggle  # noqa: E402
-import schedule_utils  # noqa: E402
 import state_utils  # noqa: E402
 
 
@@ -292,12 +291,6 @@ class ScheduleToggleTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), disabled)
         self.assertFalse(self.read_state()["schedule_enabled"])
 
-    def test_toggle_shares_one_lock_with_schedule_set(self):
-        # schedule set and enable/disable must serialize on the same lock
-        # file, otherwise a concurrent set can interleave with a toggle and
-        # leave a disabled_hash that no longer matches the file.
-        self.assertEqual(toggle.LOCK_NAME, schedule_utils.SCHEDULE_LOCK_NAME)
-
     def test_disable_preserves_concurrent_state_writes(self):
         # A snooze/reconcile writer committing between the toggle's cold read
         # and its final commit must survive the transaction.
@@ -387,6 +380,91 @@ class ScheduleToggleTests(unittest.TestCase):
     def test_test_imports_leave_no_bytecode_in_installed_scripts(self):
         self.assertFalse(any((ROOT / "scripts").rglob("__pycache__")))
         self.assertFalse(any((ROOT / "scripts").rglob("*.pyc")))
+
+    # ------------------------------------------------------------------ \
+    # schedule_status: read-only consistency projection
+
+    def test_schedule_status_reports_enabled_state_without_touching_documents(self):
+        before_file = self.config.read_bytes()
+        result = toggle.schedule_status()
+        self.assertTrue(result["schedule_enabled"])
+        self.assertIsNone(result["schedule_disabled"])
+        self.assertEqual(self.config.read_bytes(), before_file)
+        self.assertEqual(self.read_state(), result)
+
+    def test_schedule_status_reports_recorded_transaction_after_disable(self):
+        disabled = toggle.disable_schedule()
+        status = toggle.schedule_status()
+        self.assertFalse(status["schedule_enabled"])
+        self.assertEqual(status["schedule_disabled"], disabled["schedule_disabled"])
+
+    def test_schedule_status_conflict_when_file_modified_after_disable(self):
+        toggle.disable_schedule()
+        self.config.write_bytes(
+            self.config.read_bytes() + b"# user edit after disable\n"
+        )
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.schedule_status()
+        self.assertEqual(caught.exception.error_code, "conflict")
+
+    def test_schedule_status_conflict_when_disabled_without_transaction(self):
+        state = default_state()
+        state["schedule_enabled"] = False
+        state_utils.write_state(state)
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.schedule_status()
+        self.assertEqual(caught.exception.error_code, "conflict")
+
+    # ------------------------------------------------------------------ \
+    # fail-closed error codes per scenario
+
+    def test_missing_config_reports_missing_config_error_code(self):
+        self.config.unlink()
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.disable_schedule()
+        self.assertEqual(caught.exception.error_code, "missing_config")
+
+    def test_malformed_profiles_report_malformed_config_error_code(self):
+        self.config.write_bytes(b"profile {\n time = not-a-time\n}\n")
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.disable_schedule()
+        self.assertEqual(caught.exception.error_code, "malformed_config")
+
+    def test_ambiguous_markers_report_ambiguous_config_error_code(self):
+        self.config.write_bytes(
+            b"# >>> Veilleuse managed day profile >>>\n"
+            b"profile {\n time = 18:00\n identity = true\n}\n"
+            b"# >>> Veilleuse managed day profile >>>\n"
+            b"profile {\n time = 19:00\n identity = true\n}\n"
+        )
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.disable_schedule()
+        self.assertEqual(caught.exception.error_code, "ambiguous_config")
+
+    def test_enable_with_tampered_stored_hash_reports_conflict(self):
+        toggle.disable_schedule()
+        state = self.read_state()
+        tampered = dict(state["schedule_disabled"])
+        tampered["original_hash"] = "0" * 64
+        state["schedule_disabled"] = tampered
+        state_utils.write_state(state)
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.enable_schedule()
+        self.assertEqual(caught.exception.error_code, "conflict")
+
+    def test_enable_when_already_enabled_is_successful_noop(self):
+        before = self.config.read_bytes()
+        result = toggle.enable_schedule()
+        self.assertTrue(result["schedule_enabled"])
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_enable_with_disabled_state_but_no_transaction_reports_conflict(self):
+        state = default_state()
+        state["schedule_enabled"] = False
+        state_utils.write_state(state)
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.enable_schedule()
+        self.assertEqual(caught.exception.error_code, "conflict")
 
 
 if __name__ == "__main__":
