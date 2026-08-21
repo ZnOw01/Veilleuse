@@ -594,5 +594,76 @@ class StateUtilsTest(unittest.TestCase):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
 
 
+    # ------------------------------------------------------------------ \
+    # contract gaps: star-import safety, update_config, history corruption
+
+    def test_star_import_exports_only_existing_symbols(self):
+        namespace = {}
+        exec("from scripts.state_utils import *", namespace)  # noqa: S102
+        exported = {name for name in namespace if not name.startswith("__")}
+        self.assertTrue(exported)
+        for name in state_utils.__all__:
+            with self.subTest(name=name):
+                self.assertTrue(hasattr(state_utils, name))
+
+    def test_update_config_persists_mutator_result_and_returns_copy(self):
+        state_utils.write_config(dict(state_utils.DEFAULT_CONFIG))
+        updated = state_utils.update_config(lambda config: dict(config))
+        self.assertEqual(updated, {"schema": state_utils.SCHEMA_VERSION})
+        self.assertEqual(state_utils.read_config(), updated)
+
+    def test_update_config_mutator_exception_raises_invalid_config_keeping_file(self):
+        original = b'{"schema": 1}\n'
+        path = self.config_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(original)
+        path.chmod(0o600)
+
+        def exploding_mutator(config):
+            raise RuntimeError("boom")
+
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.update_config(exploding_mutator)
+        self.assertEqual(caught.exception.error_code, "invalid_config")
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_history_blank_line_fails_closed_without_rewrite(self):
+        record = {"time": "t1", "operation": "set", "success": True}
+        state_utils.append_history(record)
+        path = self.history_file()
+        corrupted = path.read_bytes() + b"\n"
+        path.write_bytes(corrupted)
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.list_history()
+        self.assertEqual(caught.exception.error_code, "invalid_history")
+        with self.assertRaises(state_utils.StateError):
+            state_utils.append_history({"time": "t2", "operation": "set"})
+        self.assertEqual(path.read_bytes(), corrupted)
+
+    def test_history_invalid_json_line_reports_invalid_json(self):
+        path = self.history_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"time": "t1", "operation": "set"\n')
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.list_history()
+        self.assertEqual(caught.exception.error_code, "invalid_json")
+
+    def test_history_bad_record_shape_reports_invalid_history(self):
+        path = self.history_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'{"operation": "set"}\n')
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.list_history()
+        self.assertEqual(caught.exception.error_code, "invalid_history")
+
+    def test_created_state_directories_are_private_0700(self):
+        state_utils.write_config(dict(state_utils.DEFAULT_CONFIG))
+        state_utils.write_state(dict(state_utils.DEFAULT_STATE))
+        for directory in (self.config_home / "veilleuse", self.state_home / "veilleuse"):
+            with self.subTest(directory=str(directory)):
+                mode = stat.S_IMODE(directory.stat().st_mode)
+                self.assertEqual(mode, 0o700)
+
+
 if __name__ == "__main__":
     unittest.main()

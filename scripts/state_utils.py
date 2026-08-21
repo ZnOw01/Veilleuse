@@ -750,7 +750,7 @@ save_state = write_state
 
 
 __all__ = [
-    "BUILTIN_PRESETS", "DEFAULT_CONFIG", "DEFAULT_STATE", "MAX_HISTORY",
+    "DEFAULT_CONFIG", "DEFAULT_STATE", "MAX_HISTORY",
     "StateError", "append_history", "clear_history", "config_path",
     "history_path", "list_history", "read_config", "read_state", "save_config",
     "save_state", "state_path", "update_config", "update_state",
