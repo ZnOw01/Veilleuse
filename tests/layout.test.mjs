@@ -7,6 +7,7 @@ const barQml = fs.readFileSync(new URL('../BarWidget.qml', import.meta.url), 'ut
 const i18n = fs.readFileSync(new URL('../I18n.js', import.meta.url), 'utf8');
 const helper = fs.readFileSync(new URL('../scripts/veilleuse-control', import.meta.url), 'utf8');
 const workflow = fs.readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
+const hygiene = fs.readFileSync(new URL('../scripts/check_hygiene.sh', import.meta.url), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
 
 test('community plugin id is lowercase and consistent across entry points', () => {
@@ -15,7 +16,9 @@ test('community plugin id is lowercase and consistent across entry points', () =
   assert.ok(qml.includes(`ipcTarget: "${manifest.id}"`));
   assert.ok(barQml.includes(`moduleName: "${manifest.id}"`));
   assert.ok(helper.includes(`PLUGIN_ID = "${manifest.id}"`));
-  assert.ok(workflow.includes(`manifest["id"] == "${manifest.id}"`));
+  // CI delegates to the local gate, and the hygiene gate is what pins the id.
+  assert.ok(workflow.includes('./scripts/check.sh'));
+  assert.ok(hygiene.includes(`manifest.get("id") == "${manifest.id}"`));
 });
 
 test('slider handlers declare signal parameters explicitly and step one by one', () => {

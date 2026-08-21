@@ -26,48 +26,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Validate manifest
+      - name: Run quality gates
         run: |
-          python -m json.tool manifest.json >/dev/null
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          manifest = json.loads(Path("manifest.json").read_text())
-          assert manifest["schemaVersion"] == 1
-          assert manifest["id"] == "io.github.znow01.veilleuse"
-          assert manifest["kinds"] == ["bar-widget"]
-          assert manifest["entryPoints"]["barWidget"] == "BarWidget.qml"
-          assert Path("BarWidget.qml").is_file()
-          assert Path("Panel.qml").is_file()
-          assert Path("scripts/veilleuse-control").is_file()
-          PY
-      - name: Run model and helper tests
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          python -m unittest discover -s tests -p 'test_veilleuse_control.py'
-          python -m unittest discover -s tests -p test_automation_utils.py
-          python -m unittest discover -s tests -p test_state_utils.py
-          python -m unittest discover -s tests -p test_schedule_toggle_utils.py
-          node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js
-      - name: Validate plugin package when omarchy-plugin-validate is available
-        run: |
-          if command -v omarchy-plugin-validate >/dev/null 2>&1; then
-            PACKAGE_TMP="$(mktemp -d)"
-            trap 'rm -rf "$PACKAGE_TMP"' EXIT
-            git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$PACKAGE_TMP"
-            omarchy-plugin-validate "$PACKAGE_TMP"
-          else
-            echo "omarchy-plugin-validate not installed; skipping."
-          fi
-      - name: Lint QML when qmllint and shell imports are available
-        run: |
-          if command -v qmllint >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell ]]; then
-            qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml
-          else
-            echo "qmllint not installed; skipping."
-          fi
-      - name: Check package hygiene
-        run: |
-          bash scripts/check_hygiene.sh
-          git show --check --oneline --format= HEAD
+          chmod +x scripts/check.sh scripts/check_hygiene.sh scripts/veilleuse-control
+          ./scripts/check.sh
