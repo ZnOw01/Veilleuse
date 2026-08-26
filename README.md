@@ -2,8 +2,7 @@
 
 # Veilleuse
 
-**Native brightness, night light temperature, and day/night automation for Omarchy Quattro.**<br/>
-Circadian lighting and display controls powered by Hyprsunset and Quickshell.
+**Native brightness, night light temperature, and day/night automation for Omarchy Quattro.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ZnOw01/Veilleuse/checks.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/ZnOw01/Veilleuse/actions/workflows/checks.yml)
 [![Version](https://img.shields.io/badge/version-3.3.0-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
@@ -45,21 +44,19 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 | Feature | Description |
 | :--- | :--- |
-| **Display Brightness** | Smooth 1–100% brightness control for focused and named external monitors via `omarchy-brightness-display`. |
-| **Night Light & Gamma** | Hardware-accelerated temperature adjustment (`2500–6500 K`) and gamma correction (`0–100%`) via `hyprsunset`. |
-| **Day/Night Automation** | Automated circadian transitions with custom per-period brightness, temperature, and gamma schedules. |
-| **Timed Snooze** | Temporarily suspend night light (1m–24h) with countdown indicator and automatic state reconciliation. |
-| **Hybrid Navigation** | Responsive arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking and focus locking. |
-| **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` with automatic `.bak` backups. |
-| **Zero External Deps** | 100% Python standard library backend (Python 3.12+); zero pip packages and zero persistent daemons. |
-| **Dual Localization** | Complete English (`en`) and Spanish (`es`) dictionaries with 100% key parity across all 37 backend error codes. |
-| **Atomic Persistence** | Mode `0600` XDG configuration and state storage protected by `fcntl` file locks and atomic file replacement. |
+| **Display Brightness** | 1–100% brightness control for focused and named external monitors via `omarchy-brightness-display`. |
+| **Night Light & Gamma** | Temperature adjustment (`2500–6500 K`) and gamma correction (`0–100%`) via `hyprsunset`. |
+| **Day/Night Automation** | Circadian transitions with per-period brightness, temperature, and gamma profiles. |
+| **Timed Snooze** | Temporary night light suspension (1m–24h) with automatic state reconciliation. |
+| **Hybrid Navigation** | Arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking. |
+| **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` with `.bak` backups. |
+| **Zero External Deps** | Python 3.12+ standard library only; zero pip dependencies and zero persistent daemons. |
+| **Dual Localization** | English (`en`) and Spanish (`es`) dictionaries with 100% key parity across all 37 backend error codes. |
+| **Atomic Persistence** | Mode `0600` XDG storage protected by `fcntl` file locks and atomic file replacement. |
 
 ---
 
 ## Architecture & System Design
-
-Veilleuse is architected as an in-process Quickshell frontend communicating with a modular, standard-library-only Python backend.
 
 ```mermaid
 graph TD
@@ -113,42 +110,28 @@ graph TD
 - **Hyprland** with `hyprsunset` installed
 - **Python 3.12+** (`python3`, standard library only)
 
-### Installation
+### Installation & Lifecycle
 
 ```bash
+# Install and enable plugin
 omarchy plugin add https://github.com/ZnOw01/Veilleuse.git --enable --yes
-```
 
-> [!NOTE]
-> Omarchy Shell plugins run in-process and unsandboxed. Veilleuse operates fail-closed, performs atomic writes, and never spawns persistent background daemons.
-
-### Updating
-
-```bash
+# Update plugin and reload shell UI components
 omarchy plugin update io.github.znow01.veilleuse --yes
 omarchy restart shell
-```
 
-> [!TIP]
-> Running `omarchy restart shell` after an update unloads the previous QML bytecode from memory and guarantees that newly compiled UI components take effect immediately.
-
-### Removal
-
-```bash
+# Remove plugin (preserves hyprsunset.conf schedule and backups)
 omarchy plugin remove io.github.znow01.veilleuse --yes
 ```
-
-Removing the plugin preserves your existing `hyprsunset.conf` schedule and backup files.
 
 ---
 
 ## Panel & Navigation
 
-The popout panel is launched from the Omarchy bar widget or via your assigned keyboard shortcut. It provides three views:
-
-1. **Home (`home`)** — Master night-light toggle, live brightness slider, temperature slider, gamma slider, and monitor selector.
-2. **Automation (`automation`)** — Schedule toggle, start/end transition editors with per-period display presets, and timed snooze controls.
-3. **Settings (`settings`)** — Active language selector (`English` / `Español`) and optional Hyprland global shortcut binding.
+The popout panel provides three views:
+- **Home (`home`)** — Master night-light toggle, live brightness, temperature and gamma sliders, and monitor selector.
+- **Automation (`automation`)** — Schedule toggle, start/end transition editors with per-period display presets, and timed snooze.
+- **Settings (`settings`)** — Active language selector (`English` / `Español`) and optional Hyprland global shortcut binding.
 
 ### Keyboard & Mouse Controls
 
@@ -165,7 +148,7 @@ The popout panel is launched from the Omarchy bar widget or via your assigned ke
 
 ## CLI Reference
 
-The backend helper `scripts/veilleuse-control` provides direct CLI and script access:
+The helper `scripts/veilleuse-control` provides direct CLI and script access:
 
 ### Status & Display Brightness
 ```bash
@@ -193,6 +176,7 @@ The backend helper `scripts/veilleuse-control` provides direct CLI and script ac
 
 Temperature range: `2500–6500 K`
 Gamma range: `0–100%`
+
 ### Automation & Snooze
 ```bash
 # Snooze night light for a set duration
@@ -227,7 +211,7 @@ Veilleuse does not install a shortcut automatically.
 ./scripts/veilleuse-control shortcut remove
 ```
 
-Installation validates the key combination, checks for binding conflicts, and manages only the Veilleuse marker block in `~/.config/hypr/bindings.lua`:
+Installation validates keys against an allowlist, checks for collisions, and manages only the Veilleuse marker block in `~/.config/hypr/bindings.lua`:
 
 ```lua
 -- >>> Veilleuse shortcut >>>
@@ -250,8 +234,6 @@ omarchy shell io.github.znow01.veilleuse toggle
 
 ## Storage & Security Invariants
 
-Veilleuse follows strict XDG Directory specifications, atomic file updates, and fail-closed error handling.
-
 | File Path | Purpose | Permissions | Safety Mechanism |
 | :--- | :--- | :--- | :--- |
 | `~/.config/hypr/hyprsunset.conf` | Night light temperature & schedule | `0644` | Atomic temp write, `.lock` protection, `.bak` backup |
@@ -262,8 +244,8 @@ Veilleuse follows strict XDG Directory specifications, atomic file updates, and 
 
 ### Core Architectural Invariants
 
-1. **Non-destructive Hyprsunset Parsing**: Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` are preserved during schedule updates.
-2. **Latest-Wins Request Bus**: Rapid slider drags and UI adjustments use monotonic request IDs so stale responses never overwrite pending user intent.
+1. **Non-destructive Parsing**: Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` are preserved during schedule updates.
+2. **Latest-Wins Request Bus**: Rapid slider drags use monotonic request IDs so stale responses never overwrite pending user intent.
 3. **Fail-Closed Normalization**: Backend command failures or timeouts gracefully fall back to an explicit safe state with translated error messages.
 4. **Zero Daemon Policy**: Periodic reconciliation and snooze checks run synchronously on state changes and shell lifecycle events without spawning daemons.
 
@@ -271,7 +253,7 @@ Veilleuse follows strict XDG Directory specifications, atomic file updates, and 
 
 ## Dual Localization (en / es)
 
-Veilleuse ships with full English (`en`) and Spanish (`es`) language support. Localization is decoupled from the UI framework in pure JavaScript (`I18n.js`):
+Localization is decoupled from the UI framework in pure JavaScript (`I18n.js`):
 
 - **Strict Key Parity**: 100% key parity between English and Spanish dictionaries enforced by continuous automated tests.
 - **37 Mapped Error Codes**: Every backend error code (`invalid_json`, `helper_unavailable`, `timeout`, `conflict`, etc.) maps to a distinct localized string in both languages.
@@ -284,12 +266,11 @@ Veilleuse ships with full English (`en`) and Spanish (`es`) language support. Lo
 ### Arrow keys switch views instead of moving the slider
 
 The `←` / `→` keys adjust the slider that currently holds cursor focus:
-- **Using Mouse**: Hover the pointer over the slider row — focus updates immediately.
-- **Using Keyboard**: Press `↑` / `↓` until the slider row is highlighted, then press `←` / `→`.
+- Hover the mouse pointer over the slider row to focus it immediately, or press `↑` / `↓` until the row is highlighted.
 
 ### Updates do not appear after running `omarchy plugin update`
 
-`omarchy plugin update` updates the Git working tree on disk, but the running shell keeps cached QML components in memory. Reload the shell components:
+Reload the shell to unload cached QML components from memory:
 
 ```bash
 omarchy restart shell
@@ -297,33 +278,25 @@ omarchy restart shell
 
 ### Panel values display `—` or helper unavailable
 
-This indicates that `veilleuse-control` cannot query `hyprsunset` or monitor state. Check backend diagnostics:
+Verify that `hyprsunset` is running and your focused display is detected:
 
 ```bash
 ./scripts/veilleuse-control status
 ```
 
-Verify that `hyprsunset` is running and your focused display is detected in **Home → Monitor**.
-
 ### Global shortcut does not trigger
 
-Inspect the shortcut status and check for conflicting key bindings in `~/.config/hypr/bindings.lua`:
+Inspect the shortcut status and check for conflicting key bindings:
 
 ```bash
 ./scripts/veilleuse-control shortcut status
-```
-
-To re-bind cleanly:
-```bash
-./scripts/veilleuse-control shortcut remove
-./scripts/veilleuse-control shortcut install --keys "SUPER, V"
 ```
 
 ---
 
 ## Development
 
-Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners. The verification suite covers **450+ tests**: backend CLI contract, automation orchestration (ramps, latest-wins cancellation, deadlines), persistence safety (atomicity, locking, corruption fail-closed), reversible shortcut management, UI model logic, QML layout contracts, i18n parity, and error-code stability.
+Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners (450+ tests).
 
 ### Run Verification Suite
 
