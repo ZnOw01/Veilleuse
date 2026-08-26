@@ -522,10 +522,11 @@ def _locked(document: Path):
     except OSError as error:
         raise StateError("io_error", "Unable to lock document") from error
     finally:
-        with contextlib.suppress(OSError):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
-
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
 
 def read_config() -> dict:
     return _read_document(config_path(), "config", _validate_config, DEFAULT_CONFIG)

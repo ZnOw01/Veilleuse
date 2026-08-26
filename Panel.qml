@@ -137,12 +137,8 @@ Panel {
             for (var key in input.automation) next.automation[key] = input.automation[key];
         }
         if (Array.isArray(input.monitors)) next.monitors = input.monitors;
-        if (input.origin) root.operationOrigin = String(input.origin);
         return next;
     }
-
-    property string operationOrigin: "unknown"
-
     function navigateToRoute(nextRoute) {
         if (root.routeOptions.indexOf(nextRoute) === -1) return;
         if (nextRoute !== root.route) {
@@ -300,7 +296,7 @@ Panel {
     }
 
     function scheduleFieldsValid() {
-        return Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma).valid;
+        return Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma, root.locale).valid;
     }
 
     function launchLatest() {
@@ -697,7 +693,7 @@ Panel {
 
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        iconText: "󰅁"
+                        iconText: Icons.glyph("chevronLeft")
                         tooltipText: root.text(root.previousRoute)
                         foreground: root.foreground
                         focusable: true
@@ -732,7 +728,7 @@ Panel {
 
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        iconText: "󰅂"
+                        iconText: Icons.glyph("chevronRight")
                         tooltipText: root.text(root.nextRoute)
                         foreground: root.foreground
                         focusable: true

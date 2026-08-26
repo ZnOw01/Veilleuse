@@ -1470,15 +1470,22 @@ class ManifestCompatibilityTests(unittest.TestCase):
 
     def test_referenced_release_files_exist(self):
         for relative in (
+            "BarWidget.qml",
             "Panel.qml",
+            "NerdIcon.qml",
             "UiModel.js",
+            "I18n.js",
+            "Icons.js",
             "scripts/veilleuse-control",
+            "scripts/state_utils.py",
             "scripts/schedule_utils.py",
+            "scripts/schedule_toggle_utils.py",
             "scripts/shortcut_utils.py",
+            "scripts/automation_utils.py",
             "scripts/check.sh",
+            "scripts/check_hygiene.sh",
         ):
             self.assertTrue((ROOT / relative).is_file(), f"missing {relative}")
-
     def test_version_is_semver(self):
         self.assertRegex(self.manifest["version"], r"^\d+\.\d+\.\d+$")
 

@@ -664,6 +664,29 @@ class StateUtilsTest(unittest.TestCase):
                 mode = stat.S_IMODE(directory.stat().st_mode)
                 self.assertEqual(mode, 0o700)
 
+    def test_validate_history_record_rejects_extra_fields_and_invalid_types(self):
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.validate_history_record({"time": "t1", "operation": "set", "extra_bad_field": 123})
+        self.assertEqual(caught.exception.error_code, "invalid_history")
 
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.validate_history_record({"time": "t1", "operation": ""})
+        self.assertEqual(caught.exception.error_code, "invalid_history")
+
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.validate_history_record({"time": "t1", "operation": "set", "temperature": "not_an_int"})
+        self.assertEqual(caught.exception.error_code, "invalid_history")
+
+    def test_update_state_aborts_cleanly_on_exception(self):
+        initial = state_utils.write_state(dict(state_utils.DEFAULT_STATE))
+
+        def failing_mutator(draft):
+            draft["schedule_enabled"] = False
+            raise RuntimeError("simulated update failure")
+
+        with self.assertRaises(state_utils.StateError) as caught:
+            state_utils.update_state(failing_mutator)
+        self.assertEqual(caught.exception.error_code, "invalid_state")
+        self.assertEqual(state_utils.read_state(), initial)
 if __name__ == "__main__":
     unittest.main()

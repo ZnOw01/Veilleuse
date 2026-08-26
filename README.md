@@ -6,7 +6,7 @@
 Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ZnOw01/Veilleuse/checks.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/ZnOw01/Veilleuse/actions/workflows/checks.yml)
-[![Version](https://img.shields.io/badge/version-3.2.1-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
+[![Version](https://img.shields.io/badge/version-3.3.0-7C3AED?style=for-the-badge&logo=semver&logoColor=white)](https://github.com/ZnOw01/Veilleuse/releases)
 [![Platform](https://img.shields.io/badge/Platform-Omarchy_Quattro_4.0%2B-008080?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/ZnOw01/Veilleuse)
 [![Hyprland](https://img.shields.io/badge/Hyprland-hyprsunset-00AAFF?style=for-the-badge&logo=wayland&logoColor=white)](https://hyprland.org/)
 [![Python](https://img.shields.io/badge/Python-3.12%2B_stdlib-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)

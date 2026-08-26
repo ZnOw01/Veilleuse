@@ -507,3 +507,22 @@ test('snoozeDurationSeconds composes number plus unit inside the helper window',
   assert.equal(Model.snoozeDurationSeconds('abc', 'minutes'), null);
   assert.equal(Model.snoozeDurationSeconds(null, 'minutes'), null);
 });
+
+test('validateScheduleFields returns localized error messages when requested', () => {
+  const enResult = Model.validateScheduleFields('25:00', '18:00', '6000', '', '', '3500', '', '', 'en');
+  assert.equal(enResult.valid, false);
+  assert.equal(enResult.error, 'Day time must use the HH:MM format');
+
+  const esResult = Model.validateScheduleFields('25:00', '18:00', '6000', '', '', '3500', '', '', 'es');
+  assert.equal(esResult.valid, false);
+  assert.equal(esResult.error, 'La hora diurna debe usar el formato HH:MM');
+});
+test('commitResponse rejects mismatched request IDs and handles error responses fail-closed', () => {
+  const base = Model.normalizeState({ available: true, enabled: true });
+  const rejected = Model.commitResponse(base, { requestId: 1, latestRequestId: 2, ok: true, state: { available: true } });
+  assert.equal(rejected.accepted, false);
+
+  const errCommit = Model.commitResponse(base, { requestId: 2, latestRequestId: 2, ok: false, error_code: 'service_unavailable' });
+  assert.equal(errCommit.accepted, false);
+  assert.deepEqual(errCommit.state, base);
+});
