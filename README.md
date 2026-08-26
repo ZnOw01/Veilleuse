@@ -13,11 +13,13 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 [![License: MIT](https://img.shields.io/badge/License-MIT-3DA639?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
 [Features](#features) ·
+[Architecture](#architecture--system-design) ·
 [Quick Start](#quick-start) ·
 [Screenshots](#screenshots) ·
 [Panel & Navigation](#panel--navigation) ·
 [CLI Reference](#cli-reference) ·
-[Architecture & Storage](#architecture--storage) ·
+[Storage & Security](#storage--security-invariants) ·
+[Dual Localization](#dual-localization-en--es) ·
 [Troubleshooting](#troubleshooting) ·
 [Development](#development) ·
 [License](#license)
@@ -41,17 +43,65 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 ## Features
 
-| Feature | What you get |
+| Feature | Description |
 | :--- | :--- |
-| **Display Brightness** | Smooth 1–100% brightness control for focused and specific monitors |
-| **Night Light & Gamma** | Temperature adjustment (`2500–6500 K`) and gamma correction (`0–100%`) via `hyprsunset` |
-| **Day/Night Automation** | Scheduled transitions with per-period brightness, temperature, and gamma values |
-| **Timed Snooze** | Temporarily suspend night light (1m–24h) with automatic expiration and state reconciliation |
-| **Hybrid Navigation** | Arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking |
-| **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` |
-| **Zero External Deps** | 100% Python standard library backend; no background daemons or pip dependencies |
-| **Dual Localization** | Full English (`en`) and Spanish (`es`) localization dictionaries with strict key parity |
-| **Atomic Persistence** | Mode `0600` XDG configuration and state storage protected by lockfiles and `.bak` backups |
+| **Display Brightness** | Smooth 1–100% brightness control for focused and named external monitors via `omarchy-brightness-display`. |
+| **Night Light & Gamma** | Hardware-accelerated temperature adjustment (`2500–6500 K`) and gamma correction (`0–100%`) via `hyprsunset`. |
+| **Day/Night Automation** | Automated circadian transitions with custom per-period brightness, temperature, and gamma schedules. |
+| **Timed Snooze** | Temporarily suspend night light (1m–24h) with countdown indicator and automatic state reconciliation. |
+| **Hybrid Navigation** | Responsive arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking and focus locking. |
+| **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` with automatic `.bak` backups. |
+| **Zero External Deps** | 100% Python standard library backend (Python 3.12+); zero pip packages and zero persistent daemons. |
+| **Dual Localization** | Complete English (`en`) and Spanish (`es`) dictionaries with 100% key parity across all 37 backend error codes. |
+| **Atomic Persistence** | Mode `0600` XDG configuration and state storage protected by `fcntl` file locks and atomic file replacement. |
+
+---
+
+## Architecture & System Design
+
+Veilleuse is architected as an in-process Quickshell frontend communicating with a modular, standard-library-only Python backend.
+
+```mermaid
+graph TD
+    subgraph UI ["Frontend (QML / QtQuick 6)"]
+        BW["BarWidget.qml<br/>(Omarchy Bar Entry)"] --> P["Panel.qml<br/>(Popup & Navigation)"]
+        P --> UM["UiModel.js<br/>(State & Drag Chase)"]
+        P --> I18N["I18n.js<br/>(en / es Dictionaries)"]
+        P --> IC["Icons.js<br/>(Nerd Fonts Mappings)"]
+    end
+
+    subgraph IPC ["Monotonic Request Bus"]
+        P -->|"Latest-Wins CLI Execution"| VC["scripts/veilleuse-control"]
+    end
+
+    subgraph Backend ["Backend Python Subsystem (Python 3.12+ stdlib)"]
+        VC --> SU["schedule_utils.py<br/>(hyprsunset.conf Parser)"]
+        VC --> STU["schedule_toggle_utils.py<br/>(Transactional Toggle)"]
+        VC --> SCU["shortcut_utils.py<br/>(Lua AST Bindings)"]
+        VC --> AU["automation_utils.py<br/>(Snooze & Reconcile Engine)"]
+        VC --> ST["state_utils.py<br/>(Atomic XDG Storage 0600)"]
+    end
+
+    subgraph System ["System Surfaces"]
+        VC --> HS["hyprctl hyprsunset"]
+        VC --> MS["omarchy-monitor-state"]
+        VC --> BD["omarchy-brightness-display"]
+        ST --> XDG["~/.config/veilleuse/<br/>~/.local/state/veilleuse/"]
+        SU --> HCONF["~/.config/hypr/hyprsunset.conf"]
+        SCU --> LUA["~/.config/hypr/bindings.lua"]
+    end
+```
+
+### Backend Modules Overview
+
+| Module | Responsibility |
+| :--- | :--- |
+| `scripts/veilleuse-control` | Main CLI entry point, preflight diagnostics, subprocess bounds, and latest-wins IPC gateway. |
+| `scripts/schedule_utils.py` | Comment-preserving parser for `hyprsunset.conf` with circular modulo-1440 time math. |
+| `scripts/schedule_toggle_utils.py` | Transactional profile stripper and restorer for schedule enable/disable with SHA-256 state locking. |
+| `scripts/shortcut_utils.py` | AST/lexical-safe Lua manipulator for `bindings.lua` with collision analysis and marker block isolation. |
+| `scripts/automation_utils.py` | Dependency-injected orchestration engine for snooze countdowns, transition ramps, and drift reconciliation. |
+| `scripts/state_utils.py` | Atomic XDG JSON persistence layer for `config.json`, `state.json`, and `history.jsonl` (mode `0600`, `fcntl` locks). |
 
 ---
 
@@ -61,7 +111,7 @@ Circadian lighting and display controls powered by Hyprsunset and Quickshell.
 
 - **Omarchy Quattro** (Omarchy 4.0+)
 - **Hyprland** with `hyprsunset` installed
-- **Python 3.12+** (`/usr/bin/python3`, standard library only)
+- **Python 3.12+** (`python3`, standard library only)
 
 ### Installation
 
@@ -107,7 +157,7 @@ The popout panel is launched from the Omarchy bar widget or via your assigned ke
 | `↑` / `↓` | Everywhere | Move focus cursor vertically between rows |
 | `←` / `→` | On Sliders | Step value (`brightness` ±1%, `temperature` ±50 K, `gamma` ±1%) |
 | `←` / `→` | On Navigation / Rows | Switch between routes (`Home` ↔ `Automation` ↔ `Settings`) |
-| `Enter` | On Controls | Activate button, toggle switch, or open dropdown picker |
+| `Enter` / `Space` | On Controls | Activate button, toggle switch, or open dropdown picker |
 | `Esc` | Everywhere | Unfocus editor / close dropdown, or dismiss the panel |
 | **Mouse Hover** | Any row | Moves keyboard cursor to the hovered row for instant `←` / `→` adjustment |
 
@@ -143,7 +193,6 @@ The backend helper `scripts/veilleuse-control` provides direct CLI and script ac
 
 Temperature range: `2500–6500 K`
 Gamma range: `0–100%`
-
 ### Automation & Snooze
 ```bash
 # Snooze night light for a set duration
@@ -199,7 +248,7 @@ omarchy shell io.github.znow01.veilleuse toggle
 
 ---
 
-## Architecture & Storage
+## Storage & Security Invariants
 
 Veilleuse follows strict XDG Directory specifications, atomic file updates, and fail-closed error handling.
 
@@ -220,12 +269,22 @@ Veilleuse follows strict XDG Directory specifications, atomic file updates, and 
 
 ---
 
+## Dual Localization (en / es)
+
+Veilleuse ships with full English (`en`) and Spanish (`es`) language support. Localization is decoupled from the UI framework in pure JavaScript (`I18n.js`):
+
+- **Strict Key Parity**: 100% key parity between English and Spanish dictionaries enforced by continuous automated tests.
+- **37 Mapped Error Codes**: Every backend error code (`invalid_json`, `helper_unavailable`, `timeout`, `conflict`, etc.) maps to a distinct localized string in both languages.
+- **Fail-Safe Fallbacks**: Unknown locales fall back to English (`en`), missing keys fall back to Spanish (`es`), and unrecognized diagnostics pass through untouched.
+
+---
+
 ## Troubleshooting
 
 ### Arrow keys switch views instead of moving the slider
 
 The `←` / `→` keys adjust the slider that currently holds cursor focus:
-- **Using Mouse**: Hover the pointer over the slider row — the focus follows immediately.
+- **Using Mouse**: Hover the pointer over the slider row — focus updates immediately.
 - **Using Keyboard**: Press `↑` / `↓` until the slider row is highlighted, then press `←` / `→`.
 
 ### Updates do not appear after running `omarchy plugin update`
