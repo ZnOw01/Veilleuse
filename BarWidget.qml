@@ -10,7 +10,7 @@ BarWidget {
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
     readonly property bool lightActive: panelLoader.item ? panelLoader.item.stateReady === true && panelLoader.item.state.enabled === true : false
     readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
-    readonly property var liveState: panelLoader.item ? panelLoader.item.state : ({})
+    readonly property var liveState: panelLoader.item ? panelLoader.item.state : null
     readonly property string barGlyph: root.glyphForState(root.liveState)
     readonly property string barTooltip: root.tooltipForState(root.liveState)
 
