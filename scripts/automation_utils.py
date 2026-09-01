@@ -23,9 +23,12 @@ Design rules
 from __future__ import annotations
 
 import datetime
+import sys
 import threading
 import time
 from collections.abc import Mapping
+
+sys.dont_write_bytecode = True
 
 # ---------------------------------------------------------------------------
 # Bounds and tolerances (mirrors state_utils / veilleuse-control contracts).

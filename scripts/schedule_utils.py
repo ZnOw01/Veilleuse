@@ -9,9 +9,12 @@ import fcntl
 import os
 import re
 import stat
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 DEFAULT_TEMP = 3500
 DAY_TEMP = 6000

@@ -13,8 +13,11 @@ import hashlib
 import os
 import re
 import stat
+import sys
 import tempfile
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 import schedule_utils
 import state_utils

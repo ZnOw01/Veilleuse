@@ -26,6 +26,8 @@ import types
 import shutil
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 COMMAND_TIMEOUT = 1.0
 WRITE_TIMEOUT = 2.0
 READBACK_TOLERANCE_TEMP = 50

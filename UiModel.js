@@ -476,6 +476,8 @@ function mergeStatePatch(previous, patch) {
   return normalizeState(next);
 }
 
+var STATE_KEYS = ['available', 'enabled', 'brightness', 'brightnessPercent', 'temperature', 'gamma', 'nightlight', 'schedule', 'error'];
+
 function commitResponse(previousState, response) {
   var current = normalizeState(previousState);
   var requestId = response && response.requestId;
@@ -484,11 +486,10 @@ function commitResponse(previousState, response) {
   var validLatestRequestId = typeof latestRequestId === 'number' && isFinite(latestRequestId) && Math.floor(latestRequestId) === latestRequestId && latestRequestId >= 0;
   var patch = response && response.state;
   var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch);
-  var stateKeys = ['available', 'enabled', 'brightness', 'brightnessPercent', 'temperature', 'gamma', 'nightlight', 'schedule', 'error'];
   var hasStateField = false;
   if (validPatch) {
-    for (var stateKeyIndex = 0; stateKeyIndex < stateKeys.length; stateKeyIndex++) {
-      if (Object.prototype.hasOwnProperty.call(patch, stateKeys[stateKeyIndex])) {
+    for (var stateKeyIndex = 0; stateKeyIndex < STATE_KEYS.length; stateKeyIndex++) {
+      if (Object.prototype.hasOwnProperty.call(patch, STATE_KEYS[stateKeyIndex])) {
         hasStateField = true;
         break;
       }

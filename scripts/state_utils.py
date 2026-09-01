@@ -16,9 +16,12 @@ import math
 import os
 import re
 import stat
+import sys
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 
 SCHEMA_VERSION = 1
