@@ -115,3 +115,50 @@ test('keyboard hints describe the arrows-only model in both locales', () => {
   assert.equal(I18n.en.keyboardHints, '← →\u00A0adjust / switch\u00A0view · ↑ ↓\u00A0move · Enter\u00A0activate · Esc\u00A0close');
   assert.equal(I18n.es.keyboardHints, '← →\u00A0ajustar / cambiar\u00A0vista · ↑ ↓\u00A0moverse · Enter\u00A0activar · Esc\u00A0cerrar');
 });
+
+// ============================================================================
+// TIER 1 & TIER 2: I18N CONTRACTS & BOUNDARIES
+// ============================================================================
+
+test('Tier 1 - F10 i18n: All route names resolve cleanly in both English and Spanish', () => {
+  assert.equal(I18n.t('routeHome', 'en'), 'Home');
+  assert.equal(I18n.t('routeHome', 'es'), 'Inicio');
+  assert.equal(I18n.t('routeAutomation', 'en'), 'Automation');
+  assert.equal(I18n.t('routeAutomation', 'es'), 'Automatización');
+  assert.equal(I18n.t('routeSettings', 'en'), 'Settings');
+  assert.equal(I18n.t('routeSettings', 'es'), 'Ajustes');
+});
+
+test('Tier 1 - F10 i18n: All provenance strings resolve cleanly in both locales', () => {
+  const provenances = ['provenanceAutomatic', 'provenancePreset', 'provenanceSnooze', 'provenanceUnknown'];
+  for (const p of provenances) {
+    const en = I18n.t(p, 'en');
+    const es = I18n.t(p, 'es');
+    assert.ok(en.length > 0);
+    assert.ok(es.length > 0);
+    assert.notEqual(en, es);
+  }
+  // provenanceManual is "Manual" in both Spanish and English
+  assert.equal(I18n.t('provenanceManual', 'en'), 'Manual');
+  assert.equal(I18n.t('provenanceManual', 'es'), 'Manual');
+});
+
+test('Tier 2 - F10 i18n Boundaries: resolveKey converts defined semantic aliases correctly', () => {
+  assert.equal(I18n.resolveKey('night_light'), 'heroTitle');
+  assert.equal(I18n.resolveKey('home'), 'routeHome');
+  assert.equal(I18n.resolveKey('automation'), 'routeAutomation');
+  assert.equal(I18n.resolveKey('settings'), 'routeSettings');
+  assert.equal(I18n.resolveKey('snooze_set'), 'snoozeSet');
+  assert.equal(I18n.resolveKey('clear_snooze'), 'snoozeClear');
+  assert.equal(I18n.resolveKey('day_period'), 'dayPeriod');
+  assert.equal(I18n.resolveKey('night_period'), 'nightPeriod');
+  assert.equal(I18n.resolveKey('heroTitle'), 'heroTitle');
+});
+
+test('Tier 2 - F10 i18n Boundaries: Handling null, undefined, empty, and non-existent keys safely', () => {
+  assert.equal(I18n.t('', 'en'), '');
+  assert.equal(I18n.t(null, 'en'), null);
+  assert.equal(I18n.t(undefined, 'en'), undefined);
+  assert.equal(I18n.t('nonExistentKey123', 'en'), 'nonExistentKey123');
+  assert.equal(I18n.t('nonExistentKey123', 'es'), 'nonExistentKey123');
+});

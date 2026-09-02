@@ -214,3 +214,32 @@ test('Panel localizes structured errors through the error-code mapping', () => {
   assert.match(panel, /errorCodeMessage/);
   assert.match(panel, /validateScheduleFields\([^)]*root\.locale/);
 });
+
+// ============================================================================
+// TIER 1 & TIER 2: ERROR CODE MAPPING & BOUNDARY RESILIENCE
+// ============================================================================
+
+test('Tier 1 - F10 Error Codes: All camelCase and snake_case aliases resolve to consistent messages', () => {
+  const pairs = [
+    ['helperMissing', 'helper_unavailable'],
+    ['monitorUnavailable', 'monitor_unavailable'],
+    ['shortcutWrite', 'shortcut_failed']
+  ];
+  for (const [camel, snake] of pairs) {
+    const camelMsg = Model.errorCodeMessage(camel, 'en');
+    const snakeMsg = Model.errorCodeMessage(snake, 'en');
+    assert.ok(typeof camelMsg === 'string' && camelMsg.length > 0);
+    assert.ok(typeof snakeMsg === 'string' && snakeMsg.length > 0);
+    assert.equal(camelMsg, snakeMsg);
+  }
+});
+
+
+
+test('Tier 2 - F10 Error Boundaries: Unmapped, empty, and numeric error codes default safely', () => {
+  assert.equal(Model.errorCodeMessage('totally_unknown_custom_code_99', 'en'), I18n.en.errUnknown);
+  assert.equal(Model.errorCodeMessage('totally_unknown_custom_code_99', 'es'), I18n.es.errUnknown);
+  assert.equal(Model.errorCodeMessage('', 'en'), I18n.en.errUnknown);
+  assert.equal(Model.errorCodeMessage(null, 'en'), I18n.en.errUnknown);
+  assert.equal(Model.errorCodeMessage(undefined, 'en'), I18n.en.errUnknown);
+});

@@ -424,3 +424,149 @@ test('bar glyph and tooltip are dynamic and expose live provenance', () => {
   assert.match(barQml, /text:\s*root\.barGlyph/);
   assert.match(barQml, /tooltipText:\s*root\.barTooltip/);
 });
+
+// ============================================================================
+// TIER 1: FEATURE COVERAGE (Design Tokens, Components, and UI Layout Contracts)
+// ============================================================================
+
+test('Tier 1 - F1 Design Tokens: Panel.qml and BarWidget.qml import qs.Commons and qs.Ui', () => {
+  assert.match(qml, /import qs\.Commons/);
+  assert.match(qml, /import qs\.Ui/);
+  assert.match(barQml, /import qs\.Commons/);
+  assert.match(barQml, /import qs\.Ui/);
+});
+
+test('Tier 1 - F1 Design Tokens: Named panel geometry and spacing use Style.space tokens', () => {
+  assert.match(qml, /readonly property int panelWidth:\s*Style\.space\(330\)/);
+  assert.match(qml, /readonly property int panelMaxHeight:\s*Style\.space\(560\)/);
+  assert.match(qml, /readonly property int controlIconSlot:\s*Style\.space\(20\)/);
+  assert.match(qml, /readonly property int sectionPad:\s*Style\.space\(6\)/);
+  assert.match(qml, /readonly property int headerPad:\s*Style\.space\(16\)/);
+});
+
+test('Tier 1 - F2 Bar Widget: Mouse button handlers support Right click, Middle click, and Toggle', () => {
+  assert.match(barQml, /if\s*\(buttonCode\s*===\s*Qt\.RightButton\)[\s\S]*?requestStatus\(\)/);
+  assert.match(barQml, /if\s*\(buttonCode\s*===\s*Qt\.MiddleButton\)[\s\S]*?close\(\)/);
+  assert.match(barQml, /root\.toggle\(\)/);
+});
+
+test('Tier 1 - F3 Panel Hero: Hero surface embeds toggle switch with busy and accessible name bindings', () => {
+  assert.match(qml, /id:\s*heroSurface/);
+  assert.match(qml, /trailingControl:\s*Component\s*\{[\s\S]*?ToggleSwitch/);
+  assert.match(qml, /title:\s*root\.text\("night_light"\)/);
+});
+
+test('Tier 1 - F5 Quick Snooze: Snooze row binds number field, unit picker, and apply action', () => {
+  assert.match(qml, /id:\s*snoozeColumn/);
+  assert.match(qml, /id:\s*snoozeEditor/);
+  assert.match(qml, /root\.applySnooze\(\)/);
+  assert.match(qml, /root\.snoozeActive/);
+});
+
+test('Tier 1 - F8 Settings Route: Shortcut visual field and action buttons are properly configured', () => {
+  assert.match(qml, /id:\s*shortcutField/);
+  assert.match(qml, /root\.settingsCommand\("shortcut",\s*\["install",\s*"--keys",\s*shortcutField\.text\]\)/);
+  assert.match(qml, /root\.settingsCommand\("shortcut",\s*\["remove"\]\)/);
+  assert.match(qml, /id:\s*localeSelector/);
+});
+
+test('Tier 1 - F9 Hybrid Navigation: keyCatcher intercepts arrow keys, return, and escape', () => {
+  assert.match(qml, /id:\s*keyCatcher/);
+  assert.match(qml, /Keys\.onPressed:\s*function\(event\)/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Left/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Right/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Up/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Down/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Return/);
+  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Escape/);
+});
+
+
+// ============================================================================
+// TIER 2: BOUNDARY & CORNER CASES (Focus isolation, signals, and popups)
+// ============================================================================
+
+test('Tier 2 - F9 Focus Isolation: keyCatcherBlocked isolates all 12 input and popup surfaces', () => {
+  const blockedProps = [
+    'startEditor.activeFocus',
+    'endEditor.activeFocus',
+    'dayTemperatureEditor.field.activeFocus',
+    'dayBrightnessEditor.field.activeFocus',
+    'dayGammaEditor.field.activeFocus',
+    'nightTemperatureEditor.field.activeFocus',
+    'nightBrightnessEditor.field.activeFocus',
+    'nightGammaEditor.field.activeFocus',
+    'snoozeEditor.field.activeFocus',
+    'shortcutField.activeFocus',
+    'monitorSelector.popupOpen',
+    'localeSelector.popupOpen'
+  ];
+  for (const prop of blockedProps) {
+    assert.ok(qml.includes(prop), `keyCatcherBlocked must guard: ${prop}`);
+  }
+});
+
+test('Tier 2 - F8 Dropdown Popups: Escape key and popup close restore keyCatcher focus safely', () => {
+  assert.match(qml, /if\s*\(!monitorSelector\.popupOpen\)\s*Qt\.callLater/);
+  assert.match(qml, /if\s*\(!localeSelector\.popupOpen\)\s*Qt\.callLater/);
+  assert.match(qml, /shortcutField[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
+  assert.match(qml, /startEditor[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
+});
+
+test('Tier 2 - F11 Monotonic Bus: Process cancellation and burst debouncing prevent race conditions', () => {
+  assert.match(qml, /function launchLatest\(\)/);
+  assert.match(qml, /if\s*\(helperProcess\.running\)\s*\{[\s\S]*?stoppingForLatest\s*=\s*true;[\s\S]*?helperProcess\.running\s*=\s*false;/);
+  assert.match(qml, /id:\s*debounce[\s\S]*?interval:\s*90/);
+});
+
+test('Tier 1 - F6 Route Transitions: Panel.qml defines animated cross-fade, directional slide, and container height morphing', () => {
+  assert.match(qml, /property int transitionDirection:\s*1/);
+  assert.match(qml, /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180[\s\S]*?easing\.type:\s*Easing\.OutCubic/);
+  assert.match(qml, /if\s*\(panelFlick\)\s*panelFlick\.contentY\s*=\s*0;/);
+
+  for (const containerId of ['heroSurface', 'homeRoute', 'automationRoute', 'settingsRoute']) {
+    const block = qml.slice(qml.indexOf(`id: ${containerId}`), qml.indexOf(`id: ${containerId}`) + 1200);
+    assert.match(block, /opacity:\s*root\.route\s*===\s*"\w+"\s*\?\s*1\.0\s*:\s*0\.0/);
+    assert.match(block, /Behavior on opacity\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180/);
+    assert.match(block, /transform:\s*Translate\s*\{[\s\S]*?Behavior on x\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180/);
+  }
+});
+
+test('Tier 1 - F7 Schedule Grid: Aligned inputs, duration badges, and resetScheduleButton satisfy contracts', () => {
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
+  assert.match(editor, /id:\s*startEditor[\s\S]*?horizontalAlignment:\s*Qt\.AlignHCenter/);
+  assert.match(editor, /id:\s*endEditor[\s\S]*?horizontalAlignment:\s*Qt\.AlignHCenter/);
+  assert.match(editor, /id:\s*dayDurationBadge/);
+  assert.match(editor, /id:\s*nightDurationBadge/);
+  assert.match(editor, /id:\s*resetScheduleButton/);
+  assert.match(editor, /id:\s*saveScheduleButton/);
+  assert.match(editor, /root\.populateScheduleEditor\(\)/);
+  assert.match(editor, /root\.queueSchedule\(\)/);
+  assert.match(editor, /id:\s*feedbackBanner[\s\S]*?Behavior on opacity/);
+});
+
+test('Tier 1 - F8 Settings Visuals: Shortcut badge chips row and enriched monitor descriptions render properly', () => {
+  const settings = qml.slice(qml.indexOf('id: settingsRoute'), qml.indexOf('root.text("keyboard_hints")'));
+  assert.match(settings, /id:\s*shortcutBadgeRow/);
+  assert.match(settings, /id:\s*shortcutChipsRepeater/);
+  assert.match(settings, /Model\.parseShortcutTokens\(shortcutField\.text\)/);
+
+  assert.match(qml, /function monitorChoices\(\)/);
+  assert.match(qml, /focusedName\s*\?\s*\("\("\s*\+\s*focusedName\s*\+\s*"\)"\)\s*:\s*""/);
+});
+
+test('Tier 1 - F10 Error and Feedback Banners: Styled BorderSurface containers with icons and animations', () => {
+  // Global error banner
+  assert.match(qml, /id:\s*globalErrorBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("alert"\)/);
+
+  // Schedule validation banner
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
+  assert.match(editor, /id:\s*scheduleValidationBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("alert"\)/);
+
+  // Settings feedback banner
+  const settings = qml.slice(qml.indexOf('id: settingsRoute'), qml.indexOf('root.text("keyboard_hints")'));
+  assert.match(settings, /id:\s*settingsFeedbackBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("check"\)/);
+
+  // Shortcut positive feedback trigger
+  assert.match(qml, /queuedOperation === "shortcut"[\s\S]*?feedbackText = root\.text\("saved"\)[\s\S]*?feedbackTimer\.restart\(\)/);
+});

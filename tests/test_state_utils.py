@@ -688,5 +688,43 @@ class StateUtilsTest(unittest.TestCase):
             state_utils.update_state(failing_mutator)
         self.assertEqual(caught.exception.error_code, "invalid_state")
         self.assertEqual(state_utils.read_state(), initial)
+
+    def test_tier1_pure_stdlib_only_invariants(self):
+        """Tier 1 - F12: Verify scripts import only standard library modules and internal project modules."""
+        import ast
+        scripts_dir = ROOT / "scripts"
+        local_modules = {p.stem for p in scripts_dir.glob("*.py")} | {"scripts", "veilleuse_control"}
+        stdlib_names = sys.stdlib_module_names
+        for py_file in scripts_dir.glob("*.py"):
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        top = alias.name.split(".")[0]
+                        if top not in local_modules and not top.startswith("test"):
+                            self.assertIn(
+                                top, stdlib_names,
+                                f"{py_file.name} imports non-stdlib module: {top}"
+                            )
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level == 0 and node.module:
+                        top = node.module.split(".")[0]
+                        if top not in local_modules and not top.startswith("test"):
+                            self.assertIn(
+                                top, stdlib_names,
+                                f"{py_file.name} imports from non-stdlib module: {top}"
+                            )
+
+
+    def test_tier1_state_and_config_files_created_mode_0600(self):
+        """Tier 1 - F12: Verify config and state files are written with mode 0600."""
+        state_utils.write_config({"schema": 1})
+        state_utils.write_state(dict(state_utils.DEFAULT_STATE))
+        config_mode = stat.S_IMODE(self.config_file().stat().st_mode)
+        state_mode = stat.S_IMODE(self.state_file().stat().st_mode)
+        self.assertEqual(config_mode, 0o600)
+        self.assertEqual(state_mode, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()

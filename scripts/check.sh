@@ -23,7 +23,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_automa
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_state_utils.py
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_schedule_toggle_utils.py'
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_shortcut_utils.py'
-node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs
+node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs
 "$PYTHON" -m json.tool manifest.json >/dev/null
 
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then

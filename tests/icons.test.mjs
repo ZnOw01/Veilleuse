@@ -47,3 +47,28 @@ test('NerdIcon.qml conforms to Omarchy Quattro tokenized icon contract', () => {
   assert.match(nerdIconQml, /font\.family:\s*fontFamily/);
   assert.match(nerdIconQml, /font\.pixelSize:\s*iconSize/);
 });
+
+// ============================================================================
+// TIER 1 & TIER 2: ICONS & GLYPH STATE CONTRACTS
+// ============================================================================
+
+test('Tier 1 - F2 & F3 Icons: Navigation chevrons and slider control icons exist', () => {
+  assert.equal(glyph('chevronLeft'), ICONS.chevronLeft);
+  assert.equal(glyph('chevronRight'), ICONS.chevronRight);
+  assert.equal(glyph('brightness'), ICONS.brightness);
+  assert.equal(glyph('temperature'), ICONS.temperature);
+  assert.equal(glyph('gamma'), ICONS.gamma);
+  assert.equal(glyph('monitor'), ICONS.monitor);
+  assert.equal(glyph('language'), ICONS.language);
+});
+
+test('Tier 2 - F2 & F3 Icons Boundaries: glyphForState handles null, empty, or partial inputs safely', () => {
+  // Empty or null input has available: false, so it safely returns unavailable glyph
+  assert.equal(glyphForState(null), ICONS.unavailable);
+  assert.equal(glyphForState({}), ICONS.unavailable);
+  assert.equal(glyphForState(undefined), ICONS.unavailable);
+  // Available but disabled returns weatherNight (idle night light state)
+  assert.equal(glyphForState({ available: true, enabled: false }), ICONS.weatherNight);
+  // Snooze takes priority over enabled or unavailable
+  assert.equal(glyphForState({ available: false, automation: { snoozed: true } }), ICONS.snooze);
+});
