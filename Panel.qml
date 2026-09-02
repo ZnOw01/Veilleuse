@@ -21,6 +21,13 @@ Panel {
     property string snoozeUnit: "minutes"
     property string lastError: ""
     onLastErrorChanged: if (lastError !== "") errorTimer.restart()
+    onSettingsChanged: {
+        var s = root.settings;
+        if (!s || typeof s !== "object") return;
+        if (s.locale && typeof s.locale === "string") root.locale = s.locale;
+        if (s.monitor && typeof s.monitor === "string") root.selectedMonitor = s.monitor;
+        if (s.shortcutKeys && typeof s.shortcutKeys === "string") root.shortcutKeys = s.shortcutKeys;
+    }
     property string feedbackText: ""
     property bool actionPending: false
     // Touched by snoozeTickTimer so the countdown binding re-evaluates
