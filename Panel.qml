@@ -20,6 +20,7 @@ Panel {
     property int snoozeAmount: 30
     property string snoozeUnit: "minutes"
     property string lastError: ""
+    onLastErrorChanged: if (lastError !== "") errorTimer.restart()
     property string feedbackText: ""
     property bool actionPending: false
     // Touched by snoozeTickTimer so the countdown binding re-evaluates
@@ -164,6 +165,8 @@ Panel {
             }
             root.dragTarget = Model.dragTargetEmpty();
             root.cursor = Model.cursorStart();
+            root.lastError = "";
+            root.feedbackText = "";
         }
         root.route = nextRoute;
         // Returning home re-reads the physical baseline the sliders show.
@@ -613,6 +616,14 @@ Panel {
         interval: 2200
         repeat: false
         onTriggered: root.feedbackText = ""
+    }
+
+    Timer {
+        id: errorTimer
+
+        interval: 4500
+        repeat: false
+        onTriggered: root.lastError = ""
     }
 
     // Keeps the visible snooze countdown ticking between helper refreshes.
