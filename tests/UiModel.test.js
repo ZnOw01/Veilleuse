@@ -113,6 +113,21 @@ test('promotes the initial fail-closed state with a real full status payload', (
   assert.equal(result.state.error, '');
 });
 
+test('schedule parsing errors stay scoped to schedule without leaking into global state error', () => {
+  const state = Model.normalizeState({
+    available: true,
+    enabled: true,
+    brightness: { available: true, percent: 80, monitor: 'eDP-2', error: null },
+    nightlight: { available: true, enabled: true, temperature: 4000, gamma: 100, error: null },
+    schedule: { available: false, error: 'La configuración no contiene perfiles' }
+  });
+  assert.equal(state.available, true);
+  assert.equal(state.enabled, true);
+  assert.equal(state.error, '');
+  assert.equal(state.schedule.available, false);
+  assert.equal(state.schedule.error, 'La configuración no contiene perfiles');
+});
+
 test('rejects helper responses without a request identity', () => {
   const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
   const result = Model.commitResponse(state, { ok: true, state: { enabled: true } });

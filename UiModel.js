@@ -355,7 +355,7 @@ function normalizeState(raw) {
     gamma: available ? nightlight.gamma : null,
     nightlight: nightlight,
     schedule: schedule,
-    error: String(source.error || brightness.error || nightlight.error || schedule.error || (available ? '' : copy.notConfirmed))
+    error: String(source.error || brightness.error || nightlight.error || (available ? '' : copy.notConfirmed))
   };
 }
 
