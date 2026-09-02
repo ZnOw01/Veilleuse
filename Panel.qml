@@ -13,6 +13,7 @@ Panel {
     property Item anchorItem: null
     property var state: root.normalizeCombined({})
     property string route: "home"
+    property int transitionDirection: 1
     property string locale: "en"
     property string selectedMonitor: "focused"
     property string shortcutKeys: "SUPER+SHIFT+N"
@@ -70,6 +71,15 @@ Panel {
     readonly property string provenanceText: I18n.t("origin_" + root.automationOrigin, root.locale)
     readonly property string heroGlyph: root.glyphForState(root.state)
     readonly property bool snoozeActive: Boolean(root.state.automation && root.state.automation.snoozed)
+    readonly property string heroStatusDetail: {
+        if (!root.stateReady)
+            return root.text("unavailable");
+        if (root.snoozeActive)
+            return root.text("snooze_active");
+        if (root.state.enabled === true)
+            return root.provenanceText;
+        return root.text("disabled");
+    }
     // Minutes left on the active snooze, recomputed whenever the helper
     // refreshes the combined status (open, actions, reconcile).
     readonly property int snoozeRemainingMinutes: {
@@ -83,6 +93,7 @@ Panel {
     }
     readonly property var snoozeSeconds: Model.snoozeDurationSeconds(root.snoozeAmount, root.snoozeUnit)
     readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma, root.locale).error
+    readonly property var scheduleDurationInfo: Model.calculateScheduleDuration(root.editStart, root.editEnd)
     // Focus-owned controls suspend the arrow keyboard so editors and popup
     // lists receive their keys normally.
     readonly property bool keyCatcherBlocked: startEditor.activeFocus || endEditor.activeFocus
@@ -142,6 +153,15 @@ Panel {
     function navigateToRoute(nextRoute) {
         if (root.routeOptions.indexOf(nextRoute) === -1) return;
         if (nextRoute !== root.route) {
+            var curIdx = root.routeOptions.indexOf(root.route);
+            var nextIdx = root.routeOptions.indexOf(nextRoute);
+            if (curIdx === 2 && nextIdx === 0) {
+                root.transitionDirection = 1;
+            } else if (curIdx === 0 && nextIdx === 2) {
+                root.transitionDirection = -1;
+            } else {
+                root.transitionDirection = nextIdx >= curIdx ? 1 : -1;
+            }
             root.dragTarget = Model.dragTargetEmpty();
             root.cursor = Model.cursorStart();
         }
@@ -152,6 +172,7 @@ Panel {
             root.populateScheduleEditor();
             root.request(["schedule", "status"], "schedule-status");
         }
+        if (panelFlick) panelFlick.contentY = 0;
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
 
@@ -164,10 +185,25 @@ Panel {
 
     function monitorChoices() {
         var monitors = root.state && Array.isArray(root.state.monitors) ? root.state.monitors : [];
-        var choices = [{ value: "focused", label: text("focused_monitor") }];
+        var focusedName = "";
+        for (var f = 0; f < monitors.length; f++) {
+            if (monitors[f] && monitors[f].focused) focusedName = String(monitors[f].name);
+        }
+        var choices = [{
+            value: "focused",
+            label: text("focused_monitor"),
+            description: focusedName ? ("(" + focusedName + ")") : ""
+        }];
         for (var i = 0; i < monitors.length; i++) {
-            if (monitors[i] && monitors[i].enabled !== false)
-                choices.push({ value: String(monitors[i].name), label: String(monitors[i].name) });
+            if (monitors[i] && monitors[i].enabled !== false) {
+                var name = String(monitors[i].name);
+                var isFocused = Boolean(monitors[i].focused);
+                choices.push({
+                    value: name,
+                    label: name,
+                    description: isFocused ? text("focused_monitor") : ""
+                });
+            }
         }
         return choices;
     }
@@ -207,6 +243,32 @@ Panel {
         if (root.snoozeSeconds === null || root.actionPending)
             return ;
         root.issue(["snooze", "set", "--seconds", String(root.snoozeSeconds)], "snooze");
+    }
+
+    function minutesUntilSunset() {
+        var nightTime = (root.state && root.state.schedule && root.state.schedule.night_time)
+            ? root.state.schedule.night_time : "19:30";
+        var parts = nightTime.split(":");
+        var targetH = parseInt(parts[0], 10);
+        var targetM = parseInt(parts[1] || "0", 10);
+        if (isNaN(targetH)) targetH = 19;
+        if (isNaN(targetM)) targetM = 30;
+        var now = new Date();
+        var sunset = new Date(now.getFullYear(), now.getMonth(), now.getDate(), targetH, targetM, 0, 0);
+        var diffMs = sunset.getTime() - now.getTime();
+        if (diffMs <= 0) {
+            sunset.setDate(sunset.getDate() + 1);
+            diffMs = sunset.getTime() - now.getTime();
+        }
+        var mins = Math.round(diffMs / 60000);
+        return Math.max(1, Math.min(1440, mins));
+    }
+
+    function applyQuickSnooze(amount, unit) {
+        root.snoozeAmount = amount;
+        root.snoozeUnit = unit;
+        root.applySnooze();
+        root.refocusKeyCatcher();
     }
 
     function settingsCommand(name, args) {
@@ -373,6 +435,9 @@ Panel {
                 feedbackText = root.text("saved");
                 feedbackTimer.restart();
                 root.populateScheduleEditor();
+            } else if (queuedOperation === "shortcut") {
+                feedbackText = root.text("saved");
+                feedbackTimer.restart();
             }
 
             return ;
@@ -614,6 +679,13 @@ Panel {
         contentWidth: keyboardPanel.fittedContentWidth(root.panelWidth)
         contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, root.panelMaxHeight)
 
+        Behavior on contentHeight {
+            NumberAnimation {
+                duration: 180
+                easing.type: Easing.OutCubic
+            }
+        }
+
         // Arrows-only keyboard: Left/Right switch views, Up/Down move the
         // cursor, Enter/Space activate, Esc closes. Editors and popup lists
         // own their keys through the blocked gate.
@@ -696,6 +768,7 @@ Panel {
                         iconText: Icons.glyph("chevronLeft")
                         tooltipText: root.text(root.previousRoute)
                         foreground: root.foreground
+                        hoverColor: Color.accent
                         focusable: true
                         Accessible.name: root.text(root.previousRoute)
                         Accessible.role: Accessible.Button
@@ -731,6 +804,7 @@ Panel {
                         iconText: Icons.glyph("chevronRight")
                         tooltipText: root.text(root.nextRoute)
                         foreground: root.foreground
+                        hoverColor: Color.accent
                         focusable: true
                         Accessible.name: root.text(root.nextRoute)
                         Accessible.role: Accessible.Button
@@ -744,26 +818,77 @@ Panel {
                 // Global helper errors sit directly under the view header,
                 // near the top of the content, instead of at the very end of
                 // the scrollable column where they could fall off-screen.
-                Text {
+                BorderSurface {
+                    id: globalErrorBanner
+
                     visible: root.errorText !== ""
-                    width: parent.width
                     leftPadding: Style.spacing.rowPaddingX
                     rightPadding: Style.spacing.rowPaddingX
-                    text: root.errorText
-                    color: Color.urgent
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    wrapMode: Text.WordWrap
+                    opacity: root.errorText !== "" ? 1.0 : 0.0
+                    width: parent.width
+                    color: Style.hoverFillFor(root.foreground, Color.urgent)
+                    borderSpec: Border.flat(Util.alpha(Color.urgent, Style.hoverBorderAlpha), Style.spacing.hairline)
+                    radius: Style.cornerRadius
+                    implicitHeight: errorRow.implicitHeight + Style.spacing.controlPaddingY * 2
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 160
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Row {
+                        id: errorRow
+
+                        anchors.centerIn: parent
+                        width: parent.width - Style.spacing.rowPaddingX * 2
+                        spacing: Style.spacing.sm
+
+                        NerdIcon {
+                            glyph: Icons.glyph("alert")
+                            iconSize: Style.font.bodySmall
+                            iconColor: Color.urgent
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+
+                        Text {
+                            width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
+                            text: root.errorText
+                            color: Color.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.bodySmall
+                            wrapMode: Text.WordWrap
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
                 }
 
                 CursorSurface {
                     id: heroSurface
 
                     visible: root.route === "home"
+                    opacity: root.route === "home" ? 1.0 : 0.0
                     width: parent.width
                     hasCursor: root.cursor.section === 0
                     foreground: root.foreground
                     implicitHeight: hero.implicitHeight + Style.spacing.rowPaddingX
+                    transform: Translate {
+                        x: root.route === "home" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
+                        Behavior on x {
+                            NumberAnimation {
+                                duration: 180
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 180
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
                     HoverHandler {
                         onHoveredChanged: if (hovered) root.cursorToSection(0)
@@ -778,6 +903,7 @@ Panel {
                         anchors.leftMargin: Style.spacing.rowPaddingX
                         anchors.rightMargin: Style.spacing.rowPaddingX
                         title: root.text("night_light")
+                        detail: root.heroStatusDetail
                         foreground: root.foreground
                         fontFamily: root.fontFamily
                         iconOpacity: root.stateReady ? 1 : 0.45
@@ -794,6 +920,20 @@ Panel {
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
                                 Accessible.name: root.provenanceText
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 160
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: 160
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
                             }
 
                         }
@@ -818,8 +958,25 @@ Panel {
                     id: homeRoute
 
                     visible: root.route === "home"
+                    opacity: root.route === "home" ? 1.0 : 0.0
                     width: parent.width
                     spacing: Style.spacing.panelGap
+                    transform: Translate {
+                        x: root.route === "home" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
+                        Behavior on x {
+                            NumberAnimation {
+                                duration: 180
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 180
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
                     // Live controls: what acts on the screen right now. One
                     // row of label + live value per slider, slider below.
@@ -854,8 +1011,12 @@ Panel {
                                     iconSize: Style.font.icon
                                     width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
-                                    iconColor: root.foreground
+                                    iconColor: root.cursor.section === 1 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
+
+                                    Behavior on iconColor {
+                                        ColorAnimation { duration: 120 }
+                                    }
                                 }
 
                                 Text {
@@ -866,19 +1027,45 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - brightnessValue.implicitWidth - brightnessIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - brightnessBadge.implicitWidth - brightnessIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                Text {
-                                    id: brightnessValue
+                                BorderSurface {
+                                    id: brightnessBadge
 
-                                    text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.body
-                                    font.bold: true
+                                    implicitWidth: brightnessValue.implicitWidth + Style.space(12)
+                                    implicitHeight: brightnessValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
+                                    radius: Style.cornerRadius
+                                    color: root.cursor.section === 1
+                                        ? Style.selectedFillFor(root.foreground, Color.accent)
+                                        : Style.normalFillFor(root.foreground, Color.accent)
+                                    borderSpec: Border.flat(
+                                        root.cursor.section === 1
+                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
+                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
+                                        Style.spacing.hairline
+                                    )
+
+                                    Behavior on color {
+                                        ColorAnimation { duration: 120 }
+                                    }
+
+                                    Text {
+                                        id: brightnessValue
+
+                                        anchors.centerIn: parent
+                                        text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
+                                        color: root.cursor.section === 1 ? Color.accent : root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.bold: true
+
+                                        Behavior on color {
+                                            ColorAnimation { duration: 120 }
+                                        }
+                                    }
                                 }
                             }
 
@@ -930,8 +1117,12 @@ Panel {
                                     iconSize: Style.font.icon
                                     width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
-                                    iconColor: root.foreground
+                                    iconColor: root.cursor.section === 2 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
+
+                                    Behavior on iconColor {
+                                        ColorAnimation { duration: 120 }
+                                    }
                                 }
 
                                 Text {
@@ -942,19 +1133,45 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - temperatureValue.implicitWidth - temperatureIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - temperatureBadge.implicitWidth - temperatureIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                Text {
-                                    id: temperatureValue
+                                BorderSurface {
+                                    id: temperatureBadge
 
-                                    text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.body
-                                    font.bold: true
+                                    implicitWidth: temperatureValue.implicitWidth + Style.space(12)
+                                    implicitHeight: temperatureValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
+                                    radius: Style.cornerRadius
+                                    color: root.cursor.section === 2
+                                        ? Style.selectedFillFor(root.foreground, Color.accent)
+                                        : Style.normalFillFor(root.foreground, Color.accent)
+                                    borderSpec: Border.flat(
+                                        root.cursor.section === 2
+                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
+                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
+                                        Style.spacing.hairline
+                                    )
+
+                                    Behavior on color {
+                                        ColorAnimation { duration: 120 }
+                                    }
+
+                                    Text {
+                                        id: temperatureValue
+
+                                        anchors.centerIn: parent
+                                        text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
+                                        color: root.cursor.section === 2 ? Color.accent : root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.bold: true
+
+                                        Behavior on color {
+                                            ColorAnimation { duration: 120 }
+                                        }
+                                    }
                                 }
                             }
 
@@ -1006,8 +1223,12 @@ Panel {
                                     iconSize: Style.font.icon
                                     width: root.controlIconSlot
                                     height: Math.max(implicitHeight, iconSize)
-                                    iconColor: root.foreground
+                                    iconColor: root.cursor.section === 3 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
+
+                                    Behavior on iconColor {
+                                        ColorAnimation { duration: 120 }
+                                    }
                                 }
 
                                 Text {
@@ -1018,19 +1239,45 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - gammaValue.implicitWidth - gammaIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - gammaBadge.implicitWidth - gammaIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                Text {
-                                    id: gammaValue
+                                BorderSurface {
+                                    id: gammaBadge
 
-                                    text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
-                                    color: root.foreground
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.body
-                                    font.bold: true
+                                    implicitWidth: gammaValue.implicitWidth + Style.space(12)
+                                    implicitHeight: gammaValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
+                                    radius: Style.cornerRadius
+                                    color: root.cursor.section === 3
+                                        ? Style.selectedFillFor(root.foreground, Color.accent)
+                                        : Style.normalFillFor(root.foreground, Color.accent)
+                                    borderSpec: Border.flat(
+                                        root.cursor.section === 3
+                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
+                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
+                                        Style.spacing.hairline
+                                    )
+
+                                    Behavior on color {
+                                        ColorAnimation { duration: 120 }
+                                    }
+
+                                    Text {
+                                        id: gammaValue
+
+                                        anchors.centerIn: parent
+                                        text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
+                                        color: root.cursor.section === 3 ? Color.accent : root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.bold: true
+
+                                        Behavior on color {
+                                            ColorAnimation { duration: 120 }
+                                        }
+                                    }
                                 }
                             }
 
@@ -1090,8 +1337,25 @@ Panel {
                     id: automationRoute
 
                     visible: root.route === "automation"
+                    opacity: root.route === "automation" ? 1.0 : 0.0
                     width: parent.width
                     spacing: Style.spacing.panelGap
+                    transform: Translate {
+                        x: root.route === "automation" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
+                        Behavior on x {
+                            NumberAnimation {
+                                duration: 180
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 180
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
                     CursorSurface {
                         width: parent.width
@@ -1203,12 +1467,54 @@ Panel {
                             anchors.rightMargin: Style.spacing.rowPaddingX
                             spacing: Style.spacing.rowGap
 
-                            PanelSectionHeader {
+                            Item {
                                 width: parent.width
-                                text: root.text("day_period")
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                elide: Text.ElideRight
+                                implicitHeight: Math.max(dayHeaderRow.implicitHeight, dayDurationBadge.implicitHeight)
+
+                                Row {
+                                    id: dayHeaderRow
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: Style.spacing.sm
+
+                                    NerdIcon {
+                                        glyph: Icons.glyph("weatherSunny")
+                                        iconSize: Style.font.body
+                                        iconColor: Color.accent
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: root.text("day_period")
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.body
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+
+                                BorderSurface {
+                                    id: dayDurationBadge
+                                    visible: Boolean(root.scheduleDurationInfo && root.scheduleDurationInfo.valid && root.scheduleDurationInfo.dayFormatted)
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: Style.hoverFillFor(root.foreground, Color.accent)
+                                    borderSpec: Border.flat(Util.alpha(Color.accent, 0.3), Style.spacing.hairline)
+                                    radius: Style.cornerRadius
+                                    implicitHeight: dayDurationText.implicitHeight + Style.spacing.xxs * 2
+                                    implicitWidth: dayDurationText.implicitWidth + Style.spacing.sm * 2
+
+                                    Text {
+                                        id: dayDurationText
+                                        anchors.centerIn: parent
+                                        text: root.scheduleDurationInfo && root.scheduleDurationInfo.dayFormatted ? root.scheduleDurationInfo.dayFormatted : ""
+                                        color: Color.accent
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+                                }
                             }
 
                             Row {
@@ -1232,6 +1538,8 @@ Panel {
                                         id: startEditor
 
                                         width: parent.width
+                                        implicitHeight: Math.max(Style.spacing.controlHeight, font.pixelSize + Style.spacing.controlPaddingY * 2)
+                                        horizontalAlignment: Qt.AlignHCenter
                                         foreground: root.foreground
                                         font.family: root.fontFamily
                                         text: root.editStart
@@ -1332,12 +1640,54 @@ Panel {
                                 }
                             }
 
-                            PanelSectionHeader {
+                            Item {
                                 width: parent.width
-                                text: root.text("night_period")
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                elide: Text.ElideRight
+                                implicitHeight: Math.max(nightHeaderRow.implicitHeight, nightDurationBadge.implicitHeight)
+
+                                Row {
+                                    id: nightHeaderRow
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: Style.spacing.sm
+
+                                    NerdIcon {
+                                        glyph: Icons.glyph("weatherNight")
+                                        iconSize: Style.font.body
+                                        iconColor: Qt.darker(root.foreground, 1.2)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: root.text("night_period")
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.body
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
+
+                                BorderSurface {
+                                    id: nightDurationBadge
+                                    visible: Boolean(root.scheduleDurationInfo && root.scheduleDurationInfo.valid && root.scheduleDurationInfo.nightFormatted)
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: Style.hoverFillFor(root.foreground, Color.accent)
+                                    borderSpec: Border.flat(Util.alpha(Color.accent, 0.3), Style.spacing.hairline)
+                                    radius: Style.cornerRadius
+                                    implicitHeight: nightDurationText.implicitHeight + Style.spacing.xxs * 2
+                                    implicitWidth: nightDurationText.implicitWidth + Style.spacing.sm * 2
+
+                                    Text {
+                                        id: nightDurationText
+                                        anchors.centerIn: parent
+                                        text: root.scheduleDurationInfo && root.scheduleDurationInfo.nightFormatted ? root.scheduleDurationInfo.nightFormatted : ""
+                                        color: Color.accent
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        font.bold: true
+                                    }
+                                }
                             }
 
                             Row {
@@ -1361,6 +1711,8 @@ Panel {
                                         id: endEditor
 
                                         width: parent.width
+                                        implicitHeight: Math.max(Style.spacing.controlHeight, font.pixelSize + Style.spacing.controlPaddingY * 2)
+                                        horizontalAlignment: Qt.AlignHCenter
                                         foreground: root.foreground
                                         font.family: root.fontFamily
                                         text: root.editEnd
@@ -1459,42 +1811,132 @@ Panel {
 
                             // Field errors live right above the action that
                             // fails, so an inactive Save is never unexplained.
-                            Text {
+                            BorderSurface {
+                                id: scheduleValidationBanner
+
                                 visible: root.scheduleValidationError !== ""
+                                opacity: root.scheduleValidationError !== "" ? 1.0 : 0.0
                                 width: parent.width
-                                text: root.scheduleValidationError
-                                color: Color.urgent
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                wrapMode: Text.WordWrap
-                            }
+                                color: Style.hoverFillFor(root.foreground, Color.urgent)
+                                borderSpec: Border.flat(Util.alpha(Color.urgent, Style.hoverBorderAlpha), Style.spacing.hairline)
+                                radius: Style.cornerRadius
+                                implicitHeight: scheduleValidationRow.implicitHeight + Style.spacing.controlPaddingY * 2
 
-                            Button {
-                                id: saveScheduleButton
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 160
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
 
-                                text: root.text("save")
-                                width: parent.width
-                                leftAlign: false
-                                bordered: true
-                                focusable: true
-                                foreground: root.foreground
-                                Accessible.name: root.text("save")
-                                Accessible.role: Accessible.Button
-                                enabled: root.stateReady && !root.actionPending
-                                onClicked: {
-                                    root.queueSchedule();
-                                    root.refocusKeyCatcher();
+                                Row {
+                                    id: scheduleValidationRow
+
+                                    anchors.centerIn: parent
+                                    width: parent.width - Style.spacing.controlPaddingX * 2
+                                    spacing: Style.spacing.sm
+
+                                    NerdIcon {
+                                        glyph: Icons.glyph("alert")
+                                        iconSize: Style.font.bodySmall
+                                        iconColor: Color.urgent
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
+                                        text: root.scheduleValidationError
+                                        color: Color.urgent
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        wrapMode: Text.WordWrap
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
                                 }
                             }
 
-                            Text {
-                                visible: root.feedbackText !== ""
+                            Row {
                                 width: parent.width
-                                text: root.feedbackText
-                                color: root.foreground
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                wrapMode: Text.WordWrap
+                                spacing: Style.spacing.controlGap
+
+                                Button {
+                                    id: resetScheduleButton
+
+                                    text: root.text("cancel")
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    leftAlign: false
+                                    bordered: true
+                                    focusable: true
+                                    foreground: root.foreground
+                                    Accessible.name: root.text("cancel")
+                                    Accessible.role: Accessible.Button
+                                    enabled: root.stateReady && !root.actionPending
+                                    onClicked: {
+                                        root.populateScheduleEditor();
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+
+                                Button {
+                                    id: saveScheduleButton
+
+                                    text: root.text("save")
+                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    leftAlign: false
+                                    bordered: true
+                                    focusable: true
+                                    foreground: root.foreground
+                                    accent: Color.accent
+                                    Accessible.name: root.text("save")
+                                    Accessible.role: Accessible.Button
+                                    enabled: root.stateReady && !root.actionPending
+                                    onClicked: {
+                                        root.queueSchedule();
+                                        root.refocusKeyCatcher();
+                                    }
+                                }
+                            }
+
+                            BorderSurface {
+                                id: feedbackBanner
+
+                                width: parent.width
+                                visible: root.feedbackText !== ""
+                                opacity: root.feedbackText !== "" ? 1.0 : 0.0
+                                color: Style.hoverFillFor(root.foreground, Color.accent)
+                                borderSpec: Border.flat(Util.alpha(Color.accent, Style.hoverBorderAlpha), Style.spacing.hairline)
+                                radius: Style.cornerRadius
+                                implicitHeight: feedbackRow.implicitHeight + Style.spacing.controlPaddingY * 2
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 160
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Row {
+                                    id: feedbackRow
+
+                                    anchors.centerIn: parent
+                                    spacing: Style.spacing.sm
+
+                                    NerdIcon {
+                                        glyph: Icons.glyph("check")
+                                        iconSize: Style.font.bodySmall
+                                        iconColor: Color.accent
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: root.feedbackText
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
                             }
                         }
 
@@ -1531,14 +1973,138 @@ Panel {
 
                             // The active snooze is a fact the user set and must
                             // be able to verify at a glance.
-                            Text {
+                            BorderSurface {
                                 visible: root.snoozeActive
                                 width: parent.width
-                                text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
-                                color: Color.urgent
-                                font.family: root.fontFamily
-                                font.pixelSize: Style.font.bodySmall
-                                elide: Text.ElideRight
+                                radius: Style.cornerRadius
+                                color: Style.hoverFillFor(root.foreground, Color.accent)
+                                borderSpec: Border.controlSpec("normal", Color.urgent, Color.urgent)
+                                implicitHeight: activeSnoozeColumn.implicitHeight + Style.spacing.md * 2
+
+                                Column {
+                                    id: activeSnoozeColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.leftMargin: Style.spacing.controlPaddingX
+                                    anchors.rightMargin: Style.spacing.controlPaddingX
+                                    spacing: Style.spacing.xs
+
+                                    Row {
+                                        width: parent.width
+                                        spacing: Style.spacing.xs
+
+                                        NerdIcon {
+                                            glyph: Icons.glyph("snooze")
+                                            iconColor: Color.urgent
+                                            iconSize: Style.font.body
+                                            width: iconSize
+                                            height: iconSize
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Text {
+                                            width: parent.width - Style.font.body - Style.spacing.xs
+                                            text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
+                                            color: Color.urgent
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.bodySmall
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+
+                                    // Progress bar indicator
+                                    Rectangle {
+                                        width: parent.width
+                                        height: Style.space(3)
+                                        radius: Style.space(1.5)
+                                        color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+
+                                        Rectangle {
+                                            height: parent.height
+                                            radius: parent.radius
+                                            color: Color.urgent
+                                            width: {
+                                                var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
+                                                var remSecs = isFinite(until) && until > 0 ? Math.max(0, until - Date.now() / 1000) : 0;
+                                                var totalSecs = root.snoozeSeconds ? root.snoozeSeconds : 1800;
+                                                var ratio = Math.min(1.0, remSecs / Math.max(remSecs, totalSecs));
+                                                return parent.width * ratio;
+                                            }
+                                            Behavior on width { NumberAnimation { duration: 250 } }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Quick preset pills row
+                            Row {
+                                width: parent.width
+                                spacing: Style.spacing.xs
+
+                                Button {
+                                    width: (parent.width - 4 * Style.spacing.xs) / 5
+                                    text: "15m"
+                                    fontSize: Style.font.bodySmall
+                                    selected: root.snoozeAmount === 15 && root.snoozeUnit === "minutes"
+                                    focusable: true
+                                    bordered: true
+                                    leftAlign: false
+                                    foreground: root.foreground
+                                    onClicked: root.applyQuickSnooze(15, "minutes")
+                                }
+
+                                Button {
+                                    width: (parent.width - 4 * Style.spacing.xs) / 5
+                                    text: "1h"
+                                    fontSize: Style.font.bodySmall
+                                    selected: root.snoozeAmount === 1 && root.snoozeUnit === "hours"
+                                    focusable: true
+                                    bordered: true
+                                    leftAlign: false
+                                    foreground: root.foreground
+                                    onClicked: root.applyQuickSnooze(1, "hours")
+                                }
+
+                                Button {
+                                    width: (parent.width - 4 * Style.spacing.xs) / 5
+                                    text: "2h"
+                                    fontSize: Style.font.bodySmall
+                                    selected: root.snoozeAmount === 2 && root.snoozeUnit === "hours"
+                                    focusable: true
+                                    bordered: true
+                                    leftAlign: false
+                                    foreground: root.foreground
+                                    onClicked: root.applyQuickSnooze(2, "hours")
+                                }
+
+                                Button {
+                                    width: (parent.width - 4 * Style.spacing.xs) / 5
+                                    text: "4h"
+                                    fontSize: Style.font.bodySmall
+                                    selected: root.snoozeAmount === 4 && root.snoozeUnit === "hours"
+                                    focusable: true
+                                    bordered: true
+                                    leftAlign: false
+                                    foreground: root.foreground
+                                    onClicked: root.applyQuickSnooze(4, "hours")
+                                }
+
+                                Button {
+                                    width: (parent.width - 4 * Style.spacing.xs) / 5
+                                    text: root.text("sunset")
+                                    fontSize: Style.font.bodySmall
+                                    focusable: true
+                                    bordered: true
+                                    leftAlign: false
+                                    foreground: root.foreground
+                                    onClicked: {
+                                        var mins = root.minutesUntilSunset();
+                                        root.applyQuickSnooze(mins, "minutes");
+                                    }
+                                }
                             }
 
                             NumberField {
@@ -1656,8 +2222,25 @@ Panel {
                     id: settingsRoute
 
                     visible: root.route === "settings"
+                    opacity: root.route === "settings" ? 1.0 : 0.0
                     width: parent.width
                     spacing: Style.spacing.panelGap
+                    transform: Translate {
+                        x: root.route === "settings" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
+                        Behavior on x {
+                            NumberAnimation {
+                                duration: 180
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 180
+                            easing.type: Easing.OutCubic
+                        }
+                    }
 
                     PanelSectionHeader {
                         width: parent.width
@@ -1726,6 +2309,51 @@ Panel {
                             anchors.rightMargin: Style.spacing.rowPaddingX
                             spacing: Style.spacing.controlGap
 
+                            Row {
+                                id: shortcutBadgeRow
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                spacing: Style.spacing.xs
+                                visible: shortcutChipsRepeater.count > 0
+
+                                Repeater {
+                                    id: shortcutChipsRepeater
+                                    model: Model.parseShortcutTokens(shortcutField.text)
+
+                                    Row {
+                                        spacing: Style.spacing.xs
+
+                                        BorderSurface {
+                                            color: Style.hoverFillFor(root.foreground, Color.accent)
+                                            borderSpec: Border.flat(Util.alpha(Color.accent, 0.4), Style.spacing.hairline)
+                                            radius: Style.cornerRadius
+                                            implicitHeight: chipText.implicitHeight + Style.spacing.xxs * 2
+                                            implicitWidth: chipText.implicitWidth + Style.spacing.sm * 2
+                                            anchors.verticalCenter: parent.verticalCenter
+
+                                            Text {
+                                                id: chipText
+                                                anchors.centerIn: parent
+                                                text: modelData
+                                                color: (modelData === "SUPER" || modelData === "SHIFT" || modelData === "CTRL" || modelData === "ALT" || modelData === "MOD4" || modelData === "MOD1") ? Color.accent : root.foreground
+                                                font.family: root.fontFamily
+                                                font.pixelSize: Style.font.caption
+                                                font.bold: true
+                                            }
+                                        }
+
+                                        Text {
+                                            visible: index < shortcutChipsRepeater.count - 1
+                                            text: "+"
+                                            color: Qt.darker(root.foreground, 1.4)
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                            font.bold: true
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+                                }
+                            }
+
                             TextField {
                                 id: shortcutField
 
@@ -1779,6 +2407,48 @@ Panel {
                                     onClicked: {
                                         root.settingsCommand("shortcut", ["remove"]);
                                         root.refocusKeyCatcher();
+                                    }
+                                }
+                            }
+
+                            BorderSurface {
+                                id: settingsFeedbackBanner
+
+                                width: parent.width
+                                visible: root.feedbackText !== ""
+                                opacity: root.feedbackText !== "" ? 1.0 : 0.0
+                                color: Style.hoverFillFor(root.foreground, Color.accent)
+                                borderSpec: Border.flat(Util.alpha(Color.accent, Style.hoverBorderAlpha), Style.spacing.hairline)
+                                radius: Style.cornerRadius
+                                implicitHeight: settingsFeedbackRow.implicitHeight + Style.spacing.controlPaddingY * 2
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 160
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Row {
+                                    id: settingsFeedbackRow
+
+                                    anchors.centerIn: parent
+                                    spacing: Style.spacing.sm
+
+                                    NerdIcon {
+                                        glyph: Icons.glyph("check")
+                                        iconSize: Style.font.bodySmall
+                                        iconColor: Color.accent
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    Text {
+                                        text: root.feedbackText
+                                        color: root.foreground
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.bodySmall
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
                                     }
                                 }
                             }

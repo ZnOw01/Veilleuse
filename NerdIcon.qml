@@ -22,4 +22,11 @@ Text {
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
     renderType: Text.NativeRendering
+
+    Behavior on color {
+        ColorAnimation {
+            duration: 160
+            easing.type: Easing.OutCubic
+        }
+    }
 }

@@ -56,6 +56,8 @@ var en = {
   unitHours: 'Hours',
   unitMinutes: 'Minutes',
   unitSeconds: 'Seconds',
+  sunset: 'Sunset',
+  quickSnooze: 'Quick snooze',
   // Settings.
   settingsTitle: 'Settings',
   language: 'Language',
@@ -150,6 +152,8 @@ var es = {
   unitHours: 'Horas',
   unitMinutes: 'Minutos',
   unitSeconds: 'Segundos',
+  sunset: 'Atardecer',
+  quickSnooze: 'Posposición rápida',
   settingsTitle: 'Ajustes',
   language: 'Idioma',
   shortcut: 'Acceso directo',
@@ -218,6 +222,7 @@ var ALIASES = {
   snooze: 'snoozeTitle', snooze_set: 'snoozeSet', clear_snooze: 'snoozeClear',
   snooze_active: 'snoozeStatusActive', minutes_short: 'minutesShort',
   unit_hours: 'unitHours', unit_minutes: 'unitMinutes', unit_seconds: 'unitSeconds',
+  sunset: 'sunset', quick_snooze: 'quickSnooze',
   cancel: 'cancel', language: 'language', spanish: 'spanish', english: 'english',
   shortcut: 'shortcut', shortcut_keys: 'shortcutKeys', install_shortcut: 'shortcutInstall',
   remove_shortcut: 'shortcutRemove', working: 'working',
@@ -231,7 +236,7 @@ var ALIASES = {
 // Canonical keys the panel addresses without an alias.
 var CANONICAL_PASSTHROUGH = [
   'brightness', 'temperature', 'gamma', 'schedule', 'save', 'saved',
-  'unavailable', 'start', 'end'
+  'unavailable', 'start', 'end', 'sunset'
 ];
 
 function locales() {

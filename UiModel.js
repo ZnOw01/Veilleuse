@@ -74,6 +74,8 @@ var DEFAULT_COPY = {
   unitHours: 'Hours',
   unitMinutes: 'Minutes',
   unitSeconds: 'Seconds',
+  sunset: 'Sunset',
+  quickSnooze: 'Quick snooze',
   settingsTitle: 'Settings',
   language: 'Language',
   shortcut: 'Keyboard shortcut',
@@ -414,6 +416,18 @@ function snoozeDurationSeconds(value, unit) {
   return seconds;
 }
 
+function formatSnoozeRemaining(seconds, locale) {
+  if (seconds === null || seconds === undefined || !isFinite(seconds) || seconds <= 0)
+    return '';
+  var mins = Math.max(1, Math.ceil(seconds / 60));
+  var minUnit = t('minutesShort', locale);
+  if (mins < 60)
+    return mins + ' ' + minUnit;
+  var hours = Math.floor(mins / 60);
+  var remMins = mins % 60;
+  return hours + 'h' + (remMins > 0 ? ' ' + remMins + 'm' : '');
+}
+
 function isManualOverride(state) {
   if (!state || state.available !== true)
     return false;
@@ -603,6 +617,58 @@ function provenanceLabel(origin, locale) {
   return t(key, locale);
 }
 
+function calculateScheduleDuration(startTime, endTime) {
+  var start = validTime(startTime);
+  var end = validTime(endTime);
+  if (!start || !end || start === end) {
+    return {
+      valid: false,
+      dayMinutes: 0,
+      nightMinutes: 0,
+      dayDuration: '',
+      nightDuration: '',
+      dayFormatted: '',
+      nightFormatted: ''
+    };
+  }
+
+  var sParts = start.split(':');
+  var eParts = end.split(':');
+  var sMin = parseInt(sParts[0], 10) * 60 + parseInt(sParts[1], 10);
+  var eMin = parseInt(eParts[0], 10) * 60 + parseInt(eParts[1], 10);
+
+  var dayMin = (eMin >= sMin) ? (eMin - sMin) : (1440 - sMin + eMin);
+  var nightMin = 1440 - dayMin;
+
+  function fmt(mins) {
+    var h = Math.floor(mins / 60);
+    var m = mins % 60;
+    if (h > 0 && m > 0) return h + 'h ' + m + 'm';
+    if (h > 0) return h + 'h';
+    return m + 'm';
+  }
+
+  var dFmt = fmt(dayMin);
+  var nFmt = fmt(nightMin);
+
+  return {
+    valid: true,
+    dayMinutes: dayMin,
+    nightMinutes: nightMin,
+    dayDuration: dFmt,
+    nightDuration: nFmt,
+    dayFormatted: dFmt,
+    nightFormatted: nFmt
+  };
+}
+
+function parseShortcutTokens(shortcutStr) {
+  var s = String(shortcutStr || '').trim();
+  if (!s) return [];
+  var parts = s.split(/[\s+,]+/).filter(function(p) { return p.length > 0; });
+  return parts.map(function(p) { return p.toUpperCase(); });
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
@@ -622,6 +688,7 @@ if (typeof module !== 'undefined' && module.exports) {
     scheduleDisplayValues: scheduleDisplayValues,
     validateScheduleFields: validateScheduleFields,
     snoozeDurationSeconds: snoozeDurationSeconds,
+    formatSnoozeRemaining: formatSnoozeRemaining,
     isManualOverride: isManualOverride,
     mergeStatePatch: mergeStatePatch,
     commitResponse: commitResponse,
@@ -631,6 +698,8 @@ if (typeof module !== 'undefined' && module.exports) {
     localizeError: localizeError,
     localizeStateError: localizeStateError,
     routeOrder: routeOrder,
-    provenanceLabel: provenanceLabel
+    provenanceLabel: provenanceLabel,
+    calculateScheduleDuration: calculateScheduleDuration,
+    parseShortcutTokens: parseShortcutTokens
   };
 }
