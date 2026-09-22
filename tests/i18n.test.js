@@ -49,6 +49,13 @@ test('t() returns the requested locale translation', () => {
   assert.equal(I18n.t('enabled', 'en'), 'Enabled');
 });
 
+test('optional schedule input and persistence failure copy are localized', () => {
+  assert.equal(I18n.t('optional', 'en'), 'Optional');
+  assert.equal(I18n.t('optional', 'es'), 'Opcional');
+  assert.match(I18n.t('scheduleDisplayPersistError', 'en'), /saved.*brightness and gamma.*could not be saved/i);
+  assert.match(I18n.t('scheduleDisplayPersistError', 'es'), /guardó.*no se pudieron guardar.*brillo y gamma/i);
+});
+
 test('t() falls back to the default locale for an unknown requested locale', () => {
   assert.equal(I18n.t('save', 'fr'), I18n.en.save);
   assert.equal(I18n.t('save', null), I18n.en.save);

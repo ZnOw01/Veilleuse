@@ -41,6 +41,25 @@ test('isSliderSection owns exactly the three drag sections', () => {
     assert.equal(Model.isSliderSection(section), false, section);
 });
 
+test('only latest-wins slider and read operations may be superseded', () => {
+  for (const operation of ['schedule', 'schedule-toggle', 'shortcut', 'snooze', 'toggle']) {
+    assert.equal(Model.maySupersedeOperation(operation), false, operation);
+  }
+  for (const operation of ['brightness', 'temperature', 'gamma', 'status', 'schedule-status', 'reconcile', 'schedule-reconcile']) {
+    assert.equal(Model.maySupersedeOperation(operation), true, operation);
+  }
+  assert.equal(Model.maySupersedeOperation('future-mutation'), false);
+});
+
+test('a superseded schedule reconcile retries after reads but yields to manual actions', () => {
+  for (const operation of ['status', 'schedule-status', 'reconcile']) {
+    assert.equal(Model.shouldRetryScheduleReconcile(operation), true, operation);
+  }
+  for (const operation of ['brightness', 'temperature', 'gamma', 'schedule', 'shortcut', 'future-mutation']) {
+    assert.equal(Model.shouldRetryScheduleReconcile(operation), false, operation);
+  }
+});
+
 test('stepSliderValue moves within the section range by the keyboard step', () => {
   assert.equal(Model.stepSliderValue('brightness', 1, 41), 42);
   assert.equal(Model.stepSliderValue('brightness', -1, 1), 1);

@@ -23,7 +23,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_automa
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_state_utils.py
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_schedule_toggle_utils.py'
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_shortcut_utils.py'
-node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs
+node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs tests/navigation_stress.test.mjs
 "$PYTHON" -m json.tool manifest.json >/dev/null
 
 if command -v omarchy-plugin-validate >/dev/null 2>&1; then
@@ -35,9 +35,15 @@ if command -v omarchy-plugin-validate >/dev/null 2>&1; then
   else
     omarchy-plugin-validate "$ROOT"
   fi
+else
+  printf 'SKIP: omarchy-plugin-validate is not installed; package manifest validation did not run.\n' >&2
 fi
-if command -v qmllint >/dev/null 2>&1 && [[ -d /usr/share/omarchy/shell ]]; then
-  qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml
+if ! command -v qmllint >/dev/null 2>&1; then
+  printf 'SKIP: qmllint is not installed; QML static analysis did not run.\n' >&2
+elif [[ ! -d /usr/share/omarchy/shell ]]; then
+  printf 'SKIP: /usr/share/omarchy/shell is unavailable; Omarchy QML imports were not linted.\n' >&2
+else
+  qmllint -I /usr/share/omarchy/shell BarWidget.qml Panel.qml NerdIcon.qml
 fi
 
 ./scripts/check_hygiene.sh

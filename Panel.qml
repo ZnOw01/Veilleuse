@@ -10,6 +10,41 @@ import qs.Ui
 Panel {
     id: root
 
+    component OptionalNumberField: Column {
+        id: optionalField
+
+        property string label: ""
+        property string fontFamily: Style.font.family
+        property color foreground: Color.foreground
+        property real fieldWidth: width
+        property alias text: input.text
+        property alias field: input
+        property alias validator: input.validator
+        property alias inputMethodHints: input.inputMethodHints
+        property string accessibleName: label
+        spacing: Style.spacing.md
+
+        Text {
+            visible: optionalField.label !== ""
+            text: optionalField.label
+            color: Qt.darker(optionalField.foreground, 1.4)
+            font.family: optionalField.fontFamily
+            font.pixelSize: Style.font.bodySmall
+        }
+
+        TextField {
+            id: input
+
+            width: optionalField.fieldWidth
+            placeholderText: root.text("optional")
+            inputMethodHints: Qt.ImhDigitsOnly
+            foreground: optionalField.foreground
+            font.family: optionalField.fontFamily
+            Accessible.name: optionalField.accessibleName + " " + root.text("optional")
+            Accessible.role: Accessible.EditableText
+        }
+    }
+
     property Item anchorItem: null
     property var state: root.normalizeCombined({})
     property string route: "home"
@@ -36,6 +71,9 @@ Panel {
     property int latestRequestId: 0
     property int queuedRequestId: 0
     property int processRequestId: 0
+    property string processOperation: ""
+    property bool scheduleReconcilePending: false
+    property bool schedulePersistErrorPending: false
     property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
     property var queuedCommand: []
@@ -294,7 +332,19 @@ Panel {
         root.request(["reconcile"], "reconcile");
     }
 
+    function queueScheduleReconcile() {
+        // A slider readback may have queued another absolute value while the
+        // saved schedule was stale. Let that user intent finish first.
+        if (!scheduleReconcilePending || actionPending)
+            return false;
+        scheduleReconcilePending = false;
+        root.request(["reconcile"], "schedule-reconcile");
+        return true;
+    }
+
     function request(command, operation) {
+        if (scheduleReconcilePending && !Model.shouldRetryScheduleReconcile(operation))
+            scheduleReconcilePending = false;
         latestRequestId += 1;
         queuedRequestId = latestRequestId;
         queuedCommand = [root.helperPath].concat(command);
@@ -355,10 +405,10 @@ Panel {
         var command = ["schedule", "set", "--day-time", editStart,
                        "--night-time", editEnd, "--day-temp", editDayTemperature,
                        "--night-temp", editNightTemperature];
-        var periods = [["day", "brightness", "dayBrightness"],
-                       ["day", "gamma", "dayGamma"],
-                       ["night", "brightness", "nightBrightness"],
-                       ["night", "gamma", "nightGamma"]];
+        var periods = [["day", "brightness"],
+                       ["day", "gamma"],
+                       ["night", "brightness"],
+                       ["night", "gamma"]];
         for (var i = 0; i < periods.length; i++) {
             var draft = scheduleDisplayDraft(periods[i][0], periods[i][1]);
             if (draft !== "")
@@ -373,11 +423,14 @@ Panel {
 
     function launchLatest() {
         if (helperProcess.running) {
+            if (!Model.maySupersedeOperation(processOperation))
+                return ;
             stoppingForLatest = true;
             helperProcess.running = false;
             return ;
         }
         processRequestId = queuedRequestId;
+        processOperation = queuedOperation;
         processOutput = "";
         processError = "";
         helperProcess.command = queuedCommand;
@@ -411,11 +464,26 @@ Panel {
         var requestId = processRequestId;
         if (stoppingForLatest) {
             stoppingForLatest = false;
+            if (processOperation === "schedule-reconcile" && Model.shouldRetryScheduleReconcile(queuedOperation))
+                scheduleReconcilePending = true;
             Qt.callLater(root.launchLatest);
             return ;
         }
         if (requestId !== latestRequestId) {
             debounce.stop();
+            if (processOperation === "schedule" && exitCode === 0) {
+                var stalePayload = null;
+                try {
+                    stalePayload = processOutput === "" ? null : JSON.parse(processOutput);
+                } catch (error) {
+                    stalePayload = null;
+                }
+                if (stalePayload && stalePayload.state_persist_error) {
+                    schedulePersistErrorPending = true;
+                } else if (stalePayload && stalePayload.ok !== false && stalePayload.state && typeof stalePayload.state === "object") {
+                    scheduleReconcilePending = true;
+                }
+            }
             Qt.callLater(root.launchLatest);
             root.mergeStaleResponse(exitCode);
             return ;
@@ -441,13 +509,28 @@ Panel {
                 lastError = root.text("manualPersistError");
             }
             root.reconcilePending();
-            if (queuedOperation === "schedule") {
-                feedbackText = root.text("saved");
-                feedbackTimer.restart();
+            if (processOperation === "schedule") {
                 root.populateScheduleEditor();
-            } else if (queuedOperation === "shortcut") {
+                if (payload && payload.state_persist_error) {
+                    feedbackText = "";
+                    lastError = root.text("scheduleDisplayPersistError");
+                } else {
+                    scheduleReconcilePending = true;
+                }
+            } else if (processOperation === "schedule-reconcile") {
                 feedbackText = root.text("saved");
                 feedbackTimer.restart();
+            } else if (processOperation === "shortcut") {
+                feedbackText = root.text("saved");
+                feedbackTimer.restart();
+            }
+
+            if (schedulePersistErrorPending) {
+                schedulePersistErrorPending = false;
+                feedbackText = "";
+                lastError = root.text("scheduleDisplayPersistError");
+            } else {
+                root.queueScheduleReconcile();
             }
 
             return ;
@@ -464,6 +547,13 @@ Panel {
             lastError = Model.errorCodeMessage(payloadCode, root.locale);
         else
             lastError = root.localizeErrorString(payloadError || (failedState && failedState.error ? failedState.error : "")) || processError || root.text("not_confirmed");
+        if (schedulePersistErrorPending) {
+            schedulePersistErrorPending = false;
+            feedbackText = "";
+            lastError = root.text("scheduleDisplayPersistError");
+        } else {
+            root.queueScheduleReconcile();
+        }
     }
 
     function moveCursorVertically(direction) {
@@ -1605,20 +1695,18 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
-                                NumberField {
+                                OptionalNumberField {
                                     id: dayBrightnessEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("brightness") + " (%)"
-                                    value: Number(root.editDayBrightness || 100)
-                                    from: 1
-                                    to: 100
-                                    stepSize: 5
+                                    text: root.editDayBrightness
+                                    validator: RegularExpressionValidator { regularExpression: /^(?:[1-9][0-9]?|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
-                                    Accessible.name: root.text("day_period") + " " + root.text("brightness")
-                                    onModified: value => root.editDayBrightness = String(value)
+                                    accessibleName: root.text("day_period") + " " + root.text("brightness")
+                                    onTextChanged: root.editDayBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1631,20 +1719,18 @@ Panel {
                                     }
                                 }
 
-                                NumberField {
+                                OptionalNumberField {
                                     id: dayGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("gamma_short") + " (%)"
-                                    value: Number(root.editDayGamma || 100)
-                                    from: 0
-                                    to: 100
-                                    stepSize: 5
+                                    text: root.editDayGamma
+                                    validator: RegularExpressionValidator { regularExpression: /^(?:[0-9]{1,2}|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
-                                    Accessible.name: root.text("day_period") + " " + root.text("gamma")
-                                    onModified: value => root.editDayGamma = String(value)
+                                    accessibleName: root.text("day_period") + " " + root.text("gamma")
+                                    onTextChanged: root.editDayGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1774,20 +1860,18 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.controlGap
 
-                                NumberField {
+                                OptionalNumberField {
                                     id: nightBrightnessEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("brightness") + " (%)"
-                                    value: Number(root.editNightBrightness || 100)
-                                    from: 1
-                                    to: 100
-                                    stepSize: 5
+                                    text: root.editNightBrightness
+                                    validator: RegularExpressionValidator { regularExpression: /^(?:[1-9][0-9]?|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
-                                    Accessible.name: root.text("night_period") + " " + root.text("brightness")
-                                    onModified: value => root.editNightBrightness = String(value)
+                                    accessibleName: root.text("night_period") + " " + root.text("brightness")
+                                    onTextChanged: root.editNightBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1800,20 +1884,18 @@ Panel {
                                     }
                                 }
 
-                                NumberField {
+                                OptionalNumberField {
                                     id: nightGammaEditor
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("gamma_short") + " (%)"
-                                    value: Number(root.editNightGamma || 100)
-                                    from: 0
-                                    to: 100
-                                    stepSize: 5
+                                    text: root.editNightGamma
+                                    validator: RegularExpressionValidator { regularExpression: /^(?:[0-9]{1,2}|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
-                                    Accessible.name: root.text("night_period") + " " + root.text("gamma")
-                                    onModified: value => root.editNightGamma = String(value)
+                                    accessibleName: root.text("night_period") + " " + root.text("gamma")
+                                    onTextChanged: root.editNightGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {

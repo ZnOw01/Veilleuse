@@ -285,6 +285,70 @@ class ShortcutStatusTest(ShortcutUtilsTestBase):
 
 
 class InstallShortcutTest(ShortcutUtilsTestBase):
+    def test_install_rejects_symlink_bindings_file_without_replacing_it(self):
+        target = self.home / "bindings.lua"
+        target.write_text("local user_file = true\n", encoding="utf-8")
+        path = self.bindings_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
+
+        result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertTrue(path.is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "local user_file = true\n")
+
+    def test_install_rejects_symlink_parent(self):
+        external = self.home / "external"
+        external.mkdir()
+        (self.config_home / "hypr").parent.mkdir(parents=True, exist_ok=True)
+        (self.config_home / "hypr").symlink_to(external, target_is_directory=True)
+
+        result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertFalse((external / "bindings.lua").exists())
+
+    def test_install_refuses_to_replace_external_edit(self):
+        original = "local original = true\n"
+        path = self.write_bindings(original)
+        external = original + "local external = true\n"
+        write = shortcut_utils._atomic_write_text
+
+        def edit_before_commit(target, text, mode, **kwargs):
+            if Path(target) == path:
+                path.write_text(external, encoding="utf-8")
+            return write(target, text, mode, **kwargs)
+
+        with mock.patch.object(shortcut_utils, "_atomic_write_text", side_effect=edit_before_commit):
+            result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertIn("conflict", result["error"].lower())
+        self.assertEqual(path.read_text(encoding="utf-8"), external)
+        self.assertFalse(path.with_suffix(".lua.bak").exists())
+
+    def test_install_conflict_preserves_previous_backup(self):
+        original = "local original = true\n"
+        path = self.write_bindings(original)
+        backup = path.with_suffix(".lua.bak")
+        previous = b"previous backup snapshot\n"
+        backup.write_bytes(previous)
+        external = original + "local external = true\n"
+        write = shortcut_utils._atomic_write_text
+
+        def edit_before_commit(target, text, mode, **kwargs):
+            if Path(target) == path:
+                path.write_text(external, encoding="utf-8")
+            return write(target, text, mode, **kwargs)
+
+        with mock.patch.object(shortcut_utils, "_atomic_write_text", side_effect=edit_before_commit):
+            result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertIn("conflict", result["error"].lower())
+        self.assertEqual(backup.read_bytes(), previous)
+
     def test_fresh_install_creates_file_with_block_and_default_mode(self):
         result = shortcut_utils.install_shortcut("SUPER, V")
         self.assertTrue(result["available"])
@@ -357,12 +421,30 @@ class InstallShortcutTest(ShortcutUtilsTestBase):
 
 
 class RemoveShortcutTest(ShortcutUtilsTestBase):
+    def test_remove_refuses_to_delete_after_external_edit(self):
+        original = block_for("SUPER, V")
+        path = self.write_bindings(original)
+        external = original + "local external = true\n"
+
+        def edit_before_delete(target):
+            path.write_text(external, encoding="utf-8")
+
+        with mock.patch.object(
+            shortcut_utils, "_before_unlink", side_effect=edit_before_delete, create=True
+        ):
+            result = shortcut_utils.remove_shortcut()
+
+        self.assertFalse(result["available"])
+        self.assertIn("conflict", result["error"].lower())
+        self.assertEqual(path.read_text(encoding="utf-8"), external)
+
     def test_remove_without_file_is_successful_noop(self):
         result = shortcut_utils.remove_shortcut()
         self.assertTrue(result["available"])
         self.assertFalse(result["restored"])
         self.assertFalse(result["exists"])
         self.assertIsNone(result["reload"])
+        self.assertFalse(self.config_home.exists())
 
     def test_remove_on_clean_file_keeps_file_untouched(self):
         original = "local mine = true\n"

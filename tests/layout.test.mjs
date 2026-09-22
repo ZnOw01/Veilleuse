@@ -140,7 +140,8 @@ test('automation header carries the window only while the schedule runs', () => 
 test('the schedule editor is always visible and configures both periods', () => {
   const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
   assert.equal((editor.match(/\bTextField\s*\{/g) || []).length, 2);
-  assert.equal((editor.match(/\bNumberField\s*\{/g) || []).length, 6);
+  assert.equal((editor.match(/\bNumberField\s*\{/g) || []).length, 2);
+  assert.equal((editor.match(/\bOptionalNumberField\s*\{/g) || []).length, 4);
   assert.match(editor, /text:\s*root\.text\("day_period"\)/);
   assert.match(editor, /text:\s*root\.text\("night_period"\)/);
   assert.match(editor, /id:\s*dayTemperatureEditor[\s\S]*?fieldWidth:\s*width[\s\S]*?from:\s*5900[\s\S]*?to:\s*6500/);
@@ -156,7 +157,7 @@ test('saving a schedule sends the times, temperatures and per-period display val
   assert.match(qml, /--night-temp/);
   assert.match(qml, /"\--" \+ periods\[i\]\[0\] \+ "\-" \+ periods\[i\]\[1\]/);
   for (const entry of ['"day", "brightness"', '"day", "gamma"', '"night", "brightness"', '"night", "gamma"'])
-    assert.ok(qml.includes(`[${entry},`), `periods table must include ${entry}`);
+    assert.ok(qml.includes(`[${entry}`), `periods table must include ${entry}`);
   // Natural day is derived from the day temperature now, not a toggle.
   assert.doesNotMatch(qml, /--natural-day|--no-natural-day|natural_day/);
 });
@@ -224,7 +225,34 @@ test('successful schedule saves render short-lived feedback and refresh the draf
   assert.match(qml, /property string feedbackText/);
   assert.match(qml, /id:\s*feedbackTimer/);
   assert.match(qml, /feedbackTimer\.restart\(\)/);
-  assert.match(qml, /queuedOperation === "schedule"[\s\S]*?root\.populateScheduleEditor\(\)/);
+  assert.match(qml, /processOperation === "schedule"[\s\S]*?root\.populateScheduleEditor\(\)/);
+});
+
+test('schedule display values reconcile after save and persistence failure is surfaced', () => {
+  const scheduleSuccess = qml.slice(qml.indexOf('if (processOperation === "schedule")'), qml.indexOf('function moveCursorVertically'));
+  assert.match(scheduleSuccess, /payload\.state_persist_error/);
+  assert.match(qml, /function queueScheduleReconcile\(\)[\s\S]*?root\.request\(\["reconcile"\],\s*"schedule-reconcile"\)/);
+  assert.match(qml, /if\s*\(!scheduleReconcilePending\s*\|\|\s*actionPending\)/);
+  assert.match(scheduleSuccess, /if\s*\(payload\s*&&\s*payload\.state_persist_error\)[\s\S]*?scheduleDisplayPersistError[\s\S]*?\}\s*else\s*\{[\s\S]*?schedule-reconcile/);
+});
+
+test('transactional helper operations finish before the queued latest request launches', () => {
+  assert.match(qml, /property string processOperation/);
+  assert.match(qml, /processOperation\s*=\s*queuedOperation/);
+  assert.match(qml, /if\s*\(!Model\.maySupersedeOperation\(processOperation\)\)\s*return\s*;/);
+  assert.match(qml, /requestId\s*!==\s*latestRequestId[\s\S]*?Qt\.callLater\(root\.launchLatest\)/);
+  assert.match(qml, /processOperation === "schedule-reconcile"[\s\S]*?feedbackText = root\.text\("saved"\)/);
+  assert.match(qml, /if\s*\(processOperation === "schedule-reconcile"\s*&&\s*Model\.shouldRetryScheduleReconcile\(queuedOperation\)\)\s*scheduleReconcilePending = true/);
+  assert.match(qml, /function request\(command, operation\)\s*\{\s*if\s*\(scheduleReconcilePending\s*&&\s*!Model\.shouldRetryScheduleReconcile\(operation\)\)\s*scheduleReconcilePending = false/);
+});
+
+test('optional schedule brightness and gamma inputs preserve an empty draft', () => {
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze: enter a duration'));
+  assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*dayBrightnessEditor[\s\S]*?text:\s*root\.editDayBrightness/);
+  assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*dayGammaEditor[\s\S]*?text:\s*root\.editDayGamma/);
+  assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*nightBrightnessEditor[\s\S]*?text:\s*root\.editNightBrightness/);
+  assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*nightGammaEditor[\s\S]*?text:\s*root\.editNightGamma/);
+  assert.doesNotMatch(editor, /value:\s*Number\(root\.edit(?:Day|Night)(?:Brightness|Gamma)\s*\|\|\s*100\)/);
 });
 
 test('bar activity follows actual night-light state without depending on panel visibility', () => {
@@ -312,7 +340,7 @@ test('requests launch immediately when idle and only debounce bursts to preserve
 });
 
 test('a superseded helper exit cancels the stale burst debounce before relaunching the latest', () => {
-  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\s*\)\s*\{\s*debounce\.stop\(\);\s*Qt\.callLater\(root\.launchLatest\);/);
+  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\s*\)\s*\{[\s\S]*?debounce\.stop\(\);[\s\S]*?Qt\.callLater\(root\.launchLatest\);/);
 });
 
 test('a superseded helper exit still adopts the state of the write that physically applied', () => {
@@ -568,5 +596,5 @@ test('Tier 1 - F10 Error and Feedback Banners: Styled BorderSurface containers w
   assert.match(settings, /id:\s*settingsFeedbackBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("check"\)/);
 
   // Shortcut positive feedback trigger
-  assert.match(qml, /queuedOperation === "shortcut"[\s\S]*?feedbackText = root\.text\("saved"\)[\s\S]*?feedbackTimer\.restart\(\)/);
+  assert.match(qml, /processOperation === "shortcut"[\s\S]*?feedbackText = root\.text\("saved"\)[\s\S]*?feedbackTimer\.restart\(\)/);
 });

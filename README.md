@@ -51,7 +51,7 @@
 | **Hybrid Navigation** | Arrow-key navigation (`← → ↑ ↓`) with real-time mouse-hover cursor tracking. |
 | **Safe Hyprland Shortcuts** | Conflict-checked, reversible shortcut management in `~/.config/hypr/bindings.lua` with `.bak` backups. |
 | **Zero External Deps** | Python 3.12+ standard library only; zero pip dependencies and zero persistent daemons. |
-| **Dual Localization** | English (`en`) and Spanish (`es`) dictionaries with 100% key parity across all 37 backend error codes. |
+| **Dual Localization** | English (`en`) and Spanish (`es`) dictionaries with tested key parity and localized backend errors. |
 | **Atomic Persistence** | Mode `0600` XDG storage protected by `fcntl` file locks and atomic file replacement. |
 
 ---
@@ -67,14 +67,14 @@ graph TD
         P --> IC["Icons.js<br/>(Nerd Fonts Mappings)"]
     end
 
-    subgraph IPC ["Monotonic Request Bus"]
-        P -->|"Latest-Wins CLI Execution"| VC["scripts/veilleuse-control"]
+    subgraph IPC ["Request Bus"]
+        P -->|"Latest-Wins Responses; Safe Mutation Queue"| VC["scripts/veilleuse-control"]
     end
 
     subgraph Backend ["Backend Python Subsystem (Python 3.12+ stdlib)"]
         VC --> SU["schedule_utils.py<br/>(hyprsunset.conf Parser)"]
         VC --> STU["schedule_toggle_utils.py<br/>(Transactional Toggle)"]
-        VC --> SCU["shortcut_utils.py<br/>(Lua AST Bindings)"]
+        VC --> SCU["shortcut_utils.py<br/>(Lua Lexical Binding Scan)"]
         VC --> AU["automation_utils.py<br/>(Snooze & Reconcile Engine)"]
         VC --> ST["state_utils.py<br/>(Atomic XDG Storage 0600)"]
     end
@@ -93,10 +93,10 @@ graph TD
 
 | Module | Responsibility |
 | :--- | :--- |
-| `scripts/veilleuse-control` | Main CLI entry point, preflight diagnostics, subprocess bounds, and latest-wins IPC gateway. |
+| `scripts/veilleuse-control` | Main CLI entry point, preflight diagnostics, bounded subprocesses, and response handling for the request bus. |
 | `scripts/schedule_utils.py` | Comment-preserving parser for `hyprsunset.conf` with circular modulo-1440 time math. |
 | `scripts/schedule_toggle_utils.py` | Transactional profile stripper and restorer for schedule enable/disable with SHA-256 state locking. |
-| `scripts/shortcut_utils.py` | AST/lexical-safe Lua manipulator for `bindings.lua` with collision analysis and marker block isolation. |
+| `scripts/shortcut_utils.py` | Lexically scans `bindings.lua`, checks key collisions, and edits only the Veilleuse marker block. |
 | `scripts/automation_utils.py` | Dependency-injected orchestration engine for snooze countdowns, transition ramps, and drift reconciliation. |
 | `scripts/state_utils.py` | Atomic XDG JSON persistence layer for `config.json`, `state.json`, and `history.jsonl` (mode `0600`, `fcntl` locks). |
 
@@ -236,8 +236,8 @@ omarchy shell io.github.znow01.veilleuse toggle
 
 | File Path | Purpose | Permissions | Safety Mechanism |
 | :--- | :--- | :--- | :--- |
-| `~/.config/hypr/hyprsunset.conf` | Night light temperature & schedule | `0644` | Atomic temp write, `.lock` protection, `.bak` backup |
-| `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | `0644` | Bound marker blocks (`-- >>> Veilleuse shortcut >>>`), `.bak` backup |
+| `~/.config/hypr/hyprsunset.conf` | Night light temperature & schedule | Preserves the existing mode; a newly generated file uses `0600` | Atomic write under a shared lock; `.bak` when updating an existing file |
+| `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | Preserves the existing mode; a newly created file uses `0644` | Collision checks and marker-block ownership; one-time `.bak` before install/update |
 | `~/.config/veilleuse/config.json` | Plugin settings & language preference | `0600` | Atomic replace, versioned schema, stripped legacy keys |
 | `~/.local/state/veilleuse/state.json` | Runtime state, snooze tokens, display values | `0600` | Mode `0600`, atomic write, bounded validation |
 | `~/.local/state/veilleuse/history.jsonl` | Audit history of operations | `0600` | Ring buffer strictly capped at the last 50 entries |
@@ -245,7 +245,7 @@ omarchy shell io.github.znow01.veilleuse toggle
 ### Core Architectural Invariants
 
 1. **Non-destructive Parsing**: Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` are preserved during schedule updates.
-2. **Latest-Wins Request Bus**: Rapid slider drags use monotonic request IDs so stale responses never overwrite pending user intent.
+2. **Request Ordering**: Only the current request ID is accepted as the current response. A stale successful readback may still be merged to reflect a write that completed; a running non-supersedable mutation is allowed to finish before the latest queued request launches.
 3. **Fail-Closed Normalization**: Backend command failures or timeouts gracefully fall back to an explicit safe state with translated error messages.
 4. **Zero Daemon Policy**: Periodic reconciliation and snooze checks run synchronously on state changes and shell lifecycle events without spawning daemons.
 
@@ -255,8 +255,8 @@ omarchy shell io.github.znow01.veilleuse toggle
 
 Localization is decoupled from the UI framework in pure JavaScript (`I18n.js`):
 
-- **Strict Key Parity**: 100% key parity between English and Spanish dictionaries enforced by continuous automated tests.
-- **37 Mapped Error Codes**: Every backend error code (`invalid_json`, `helper_unavailable`, `timeout`, `conflict`, etc.) maps to a distinct localized string in both languages.
+- **Strict Key Parity**: English and Spanish dictionaries are checked for matching keys by automated tests.
+- **Backend Error Mapping**: Known backend error codes map to localized messages; unknown diagnostics retain a safe fallback.
 - **Fail-Safe Fallbacks**: Unknown locales fall back to English (`en`), missing keys fall back to Spanish (`es`), and unrecognized diagnostics pass through untouched.
 
 ---
@@ -296,12 +296,12 @@ Inspect the shortcut status and check for conflicting key bindings:
 
 ## Development
 
-Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests and Node.js test runners (450+ tests).
+The automated suite covers the Python backend and JavaScript model/contracts. It does not launch Quickshell or simulate real desktop input, so it is not an end-to-end UI suite.
 
 ### Run Verification Suite
 
 ```bash
-# Execute complete verification pipeline (Python tests, Node tests, linters, hygiene)
+# Run the Python and Node suites, hygiene checks, and available host validators
 ./scripts/check.sh
 
 # Run package hygiene check (manifest validation, bytecode & symlink blockers)
@@ -314,9 +314,15 @@ Veilleuse uses vertical Test-Driven Development (TDD) across Python unit tests a
 # Python backend unit tests
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 
-# Node.js UI model, layout, and localization tests
-node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs
+# Node.js model, contract, localization, transition, and navigation suites
+node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs tests/navigation_stress.test.mjs
 ```
+
+`check.sh` reports `SKIP` when `omarchy-plugin-validate` or the Omarchy QML
+imports needed by `qmllint` are unavailable. A successful run only proves
+those validations ran when the command output confirms they were available.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for pull request and Omarchy verification
+guidance, and [TEST_INFRA.md](TEST_INFRA.md) for the precise automated test scope.
 
 ---
 

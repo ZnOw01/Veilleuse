@@ -29,6 +29,9 @@ import re
 import subprocess
 import sys
 import tempfile
+import contextlib
+import fcntl
+import stat
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -40,6 +43,7 @@ MARKER_CLOSE = "-- <<< Veilleuse shortcut <<<"
 SHORTCUT_DESCRIPTION = "Veilleuse"
 BACKUP_SUFFIX = ".bak"
 NEW_FILE_MODE = 0o644
+_UNSET = object()
 RELOAD_TIMEOUT = 1.0
 RELOAD_EXIT_CODE = 124
 
@@ -110,20 +114,32 @@ def _reload():
     }
 
 
-def _atomic_write_text(path, text, mode):
+def _atomic_write_text(path, text, mode, *, expected=_UNSET):
     """Write text atomically (temp file + os.replace) preserving mode."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _prepare_parent(path)
+    _validate_path(path)
     temporary = None
+    descriptor = None
     try:
         descriptor, temporary = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
+        os.fchmod(descriptor, mode)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(temporary, mode)
+        _before_replace(path)
+        _validate_path(path)
+        if expected is not _UNSET:
+            try:
+                current = _read_bytes(path)
+            except FileNotFoundError:
+                current = None
+            if current != expected:
+                raise ValueError(f"Conflicto: bindings.lua cambió durante la escritura: {path}")
         os.replace(temporary, path)
         temporary = None
         try:
@@ -135,8 +151,104 @@ def _atomic_write_text(path, text, mode):
         except OSError:
             pass
     finally:
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
         if temporary:
-            Path(temporary).unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                Path(temporary).unlink(missing_ok=True)
+
+
+def _prepare_parent(path):
+    """Create missing parents while rejecting symlink and non-directory parts."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError(f"La ruta de bindings debe ser absoluta: {path}")
+    current = Path(path.parts[0])
+    for part in path.parts[1:-1]:
+        current /= part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            try:
+                current.mkdir(mode=0o755)
+            except FileExistsError:
+                pass
+            mode = os.lstat(current).st_mode
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ValueError(f"Ruta insegura de bindings: {current}")
+
+
+def _validate_path(path):
+    """Check each existing ancestor and require a regular destination."""
+    path = Path(path)
+    if not path.is_absolute():
+        raise ValueError(f"La ruta de bindings debe ser absoluta: {path}")
+    current = Path(path.parts[0])
+    for part in path.parts[1:-1]:
+        current /= part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ValueError(f"Ruta insegura de bindings: {current}")
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+        raise ValueError(f"Archivo de bindings inseguro: {path}")
+    return True
+
+
+def _read_bytes(path):
+    path = Path(path)
+    if not _validate_path(path):
+        raise FileNotFoundError(path)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Archivo de bindings inseguro: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            return stream.read()
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+@contextlib.contextmanager
+def _locked(path):
+    """Serialize Veilleuse writers of bindings.lua with a private lock file."""
+    path = Path(path)
+    _prepare_parent(path)
+    lock_path = path.with_name(f".{path.name}.veilleuse.lock")
+    descriptor = None
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Archivo de bloqueo inseguro: {lock_path}")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+
+def _before_replace(_path):
+    """Test seam before the final safety and content checks."""
+
+
+def _before_unlink(_path):
+    """Test seam before the final safety and content checks for deletion."""
 
 
 def _detect_eol(text):
@@ -523,10 +635,24 @@ def shortcut_status():
     """Read-only snapshot of the shortcut and its single backup."""
     path = bindings_path()
     backup = path.with_suffix(path.suffix + BACKUP_SUFFIX)
+    try:
+        exists = _validate_path(path)
+    except (OSError, ValueError) as caught:
+        return {
+            "available": False,
+            "file": str(path),
+            "exists": False,
+            "installed": False,
+            "keys": None,
+            "command": FIXED_COMMAND,
+            "backup": str(backup),
+            "backup_exists": False,
+            "error": str(caught),
+        }
     state = {
         "available": True,
         "file": str(path),
-        "exists": path.is_file(),
+        "exists": exists,
         "installed": False,
         "keys": None,
         "command": FIXED_COMMAND,
@@ -534,11 +660,11 @@ def shortcut_status():
         "backup_exists": backup.is_file(),
         "error": None,
     }
-    if not path.is_file():
+    if not exists:
         return state
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as caught:
+        text = _read_bytes(path).decode("utf-8")
+    except (OSError, ValueError, UnicodeError) as caught:
         state["error"] = str(caught)
         return state
     try:
@@ -556,11 +682,27 @@ def shortcut_status():
 def _backup_once(path, original_text):
     """Copy the original file to ``.bak`` exactly once (one backup)."""
     backup = path.with_suffix(path.suffix + BACKUP_SUFFIX)
-    if not path.exists() or backup.exists():
+    if not _validate_path(path):
         return False
-    mode = path.stat().st_mode & 0o7777
-    _atomic_write_text(backup, original_text, mode)
+    if _validate_path(backup):
+        return False
+    mode = stat.S_IMODE(os.lstat(path).st_mode)
+    _atomic_write_text(backup, original_text, mode, expected=None)
     return True
+
+
+def _remove_backup_if_unchanged(path, expected, identity):
+    """Remove a backup created by this operation after its source CAS fails."""
+    try:
+        if not _validate_path(path):
+            return
+        metadata = os.lstat(path)
+        if (metadata.st_dev, metadata.st_ino) != identity:
+            return
+        if _read_bytes(path) == expected:
+            os.unlink(path)
+    except (OSError, ValueError):
+        pass
 
 
 def install_shortcut(keys_spec):
@@ -573,8 +715,10 @@ def install_shortcut(keys_spec):
     canonical = canonical_keys(keys_spec)
     path = bindings_path()
     try:
-        if path.exists():
-            text = path.read_text(encoding="utf-8")
+        with _locked(path):
+            exists = _validate_path(path)
+            original = _read_bytes(path) if exists else None
+            text = original.decode("utf-8") if original is not None else ""
             conflict = collision(text, keys_spec)
             if conflict is not None:
                 return {
@@ -584,12 +728,20 @@ def install_shortcut(keys_spec):
                     ),
                 }
             candidate = install_block(text, keys_spec)
-        else:
-            text = ""
-            candidate = install_block("", keys_spec)
-        backup_created = _backup_once(path, text)
-        mode = path.stat().st_mode & 0o7777 if path.exists() else NEW_FILE_MODE
-        _atomic_write_text(path, candidate, mode)
+            backup_created = _backup_once(path, text)
+            backup_path = path.with_suffix(path.suffix + BACKUP_SUFFIX)
+            backup_metadata = os.lstat(backup_path) if backup_created else None
+            mode = stat.S_IMODE(os.lstat(path).st_mode) if exists else NEW_FILE_MODE
+            try:
+                _atomic_write_text(path, candidate, mode, expected=original)
+            except (OSError, ValueError):
+                if backup_metadata is not None:
+                    _remove_backup_if_unchanged(
+                        backup_path,
+                        text.encode("utf-8"),
+                        (backup_metadata.st_dev, backup_metadata.st_ino),
+                    )
+                raise
     except OSError as caught:
         return {"available": False, "error": str(caught)}
     except ValueError as caught:
@@ -598,7 +750,7 @@ def install_shortcut(keys_spec):
         "available": True,
         "action": "install",
         "keys": canonical,
-        "exists": path.is_file(),
+        "exists": _validate_path(path),
         "backup_created": backup_created,
         "reload": _reload(),
         "error": None,
@@ -613,36 +765,52 @@ def remove_shortcut():
     file is a successful no-op.
     """
     path = bindings_path()
-    if not path.is_file():
-        return {
-            "available": True,
-            "action": "remove",
-            "restored": False,
-            "exists": False,
-            "keys": None,
-            "reload": None,
-            "error": None,
-        }
     try:
-        text = path.read_text(encoding="utf-8")
-        new_text, found, keys = remove_block(text)
+        if not _validate_path(path):
+            return {
+                "available": True,
+                "action": "remove",
+                "restored": False,
+                "exists": False,
+                "keys": None,
+                "reload": None,
+                "error": None,
+            }
+        with _locked(path):
+            if not _validate_path(path):
+                return {
+                    "available": True,
+                    "action": "remove",
+                    "restored": False,
+                    "exists": False,
+                    "keys": None,
+                    "reload": None,
+                    "error": None,
+                }
+            original = _read_bytes(path)
+            text = original.decode("utf-8")
+            new_text, found, keys = remove_block(text)
+            if not found:
+                return {
+                    "available": True,
+                    "action": "remove",
+                    "restored": False,
+                    "exists": True,
+                    "keys": None,
+                    "reload": None,
+                    "error": None,
+                }
+            mode = stat.S_IMODE(os.lstat(path).st_mode)
+            if not new_text:
+                _before_unlink(path)
+                _validate_path(path)
+                if _read_bytes(path) != original:
+                    raise ValueError(f"Conflicto: bindings.lua cambió durante la eliminación: {path}")
+                os.unlink(path)
+            else:
+                _atomic_write_text(path, new_text, mode, expected=original)
     except (OSError, ValueError) as caught:
         return {"available": False, "error": str(caught)}
-    if not found:
-        return {
-            "available": True,
-            "action": "remove",
-            "restored": False,
-            "exists": True,
-            "keys": None,
-            "reload": None,
-            "error": None,
-        }
-    mode = path.stat().st_mode & 0o7777
-    if not new_text:
-        path.unlink(missing_ok=True)
-    else:
-        _atomic_write_text(path, new_text, mode)
     return {
         "available": True,
         "action": "remove",

@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import multiprocessing
 import os
 import re
 import shutil
@@ -1171,6 +1172,199 @@ class ScheduleTests(HelperModuleTests):
         self.assertIsNone(state["error"])
         self.assertLess(events.index("lock"), events.index("config-stat"))
 
+    def test_schedule_set_refuses_to_overwrite_external_edit(self):
+        original = (
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        path = self.write_config(original)
+        external = original + "# editor change\n"
+        module = vc._schedule_module()
+        write = module.atomic_write_text
+
+        def edit_before_commit(target, text, mode=None, **kwargs):
+            if Path(target) == path:
+                path.write_text(external, encoding="utf-8")
+            return write(target, text, mode, **kwargs)
+
+        with patch.object(module, "atomic_write_text", side_effect=edit_before_commit):
+            state = vc.schedule_set(
+                {
+                    "day_time": "07:00",
+                    "day_temp": 6000,
+                    "night_time": "21:00",
+                    "night_temp": 4000,
+                    "natural_day": True,
+                }
+            )
+        self.assertFalse(state["available"])
+        self.assertEqual(state["error_code"], "conflict")
+        self.assertIn("conflict", state["error"].lower())
+        self.assertEqual(path.read_text(encoding="utf-8"), external)
+        self.assertFalse(path.with_suffix(path.suffix + ".bak").exists())
+
+    def test_schedule_set_conflict_preserves_previous_backup(self):
+        original = (
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        path = self.write_config(original)
+        backup = path.with_suffix(path.suffix + ".bak")
+        old_backup = b"previous backup snapshot\n"
+        backup.write_bytes(old_backup)
+        external = original + "# editor change\n"
+        module = vc._schedule_module()
+        write = module.atomic_write_text
+
+        def edit_before_commit(target, text, mode=None, **kwargs):
+            if Path(target) == path:
+                path.write_text(external, encoding="utf-8")
+            return write(target, text, mode, **kwargs)
+
+        with patch.object(module, "atomic_write_text", side_effect=edit_before_commit):
+            state = vc.schedule_set(
+                {
+                    "day_time": "07:00",
+                    "day_temp": 6000,
+                    "night_time": "21:00",
+                    "night_temp": 4000,
+                    "natural_day": True,
+                }
+            )
+
+        self.assertEqual(state["error_code"], "conflict")
+        self.assertEqual(backup.read_bytes(), old_backup)
+
+    def test_schedule_set_publishes_durable_backup_before_config_replace(self):
+        original = (
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        path = self.write_config(original)
+        module = vc._schedule_module()
+        config = path
+        backup = path.with_suffix(path.suffix + ".bak")
+        values = {
+            "day_time": "07:00",
+            "day_temp": 6000,
+            "night_time": "21:00",
+            "night_temp": 4000,
+            "natural_day": True,
+        }
+
+        def exit_before_config_replace():
+            write = module.atomic_write_text
+
+            def exit_on_config(target, text, mode=None, **kwargs):
+                if Path(target) == config:
+                    os._exit(73)
+                return write(target, text, mode, **kwargs)
+
+            module.atomic_write_text = exit_on_config
+            vc.schedule_set(values)
+            os._exit(74)
+
+        process = multiprocessing.get_context("fork").Process(
+            target=exit_before_config_replace
+        )
+        process.start()
+        process.join(timeout=5)
+        if process.is_alive():
+            process.terminate()
+            process.join()
+
+        self.assertEqual(process.exitcode, 73)
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertEqual(backup.read_bytes(), original.encode("utf-8"))
+
+    def test_schedule_set_restores_backup_when_directory_fsync_fails(self):
+        original = (
+            "profile {\n    time = 06:00\n    identity = true\n}\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        values = {
+            "day_time": "07:00",
+            "day_temp": 6000,
+            "night_time": "21:00",
+            "night_temp": 4000,
+            "natural_day": True,
+        }
+        module = vc._schedule_module()
+
+        for previous_backup in (None, b"older snapshot\n"):
+            with self.subTest(previous_backup=previous_backup is not None):
+                path = self.write_config(original)
+                backup = path.with_suffix(path.suffix + ".bak")
+                if previous_backup is not None:
+                    backup.write_bytes(previous_backup)
+                    backup.chmod(0o640)
+                original_mode = backup.stat().st_mode & 0o7777 if backup.exists() else None
+                real_fsync = os.fsync
+                calls = 0
+
+                def fail_backup_directory_fsync(fd):
+                    nonlocal calls
+                    calls += 1
+                    if calls == 2:
+                        raise OSError("injected directory fsync failure")
+                    return real_fsync(fd)
+
+                with patch.object(module.os, "fsync", side_effect=fail_backup_directory_fsync):
+                    state = vc.schedule_set(values)
+
+                self.assertFalse(state["available"])
+                self.assertEqual(path.read_text(encoding="utf-8"), original)
+                if previous_backup is None:
+                    self.assertFalse(backup.exists())
+                else:
+                    self.assertEqual(backup.read_bytes(), previous_backup)
+                    self.assertEqual(backup.stat().st_mode & 0o7777, original_mode)
+
+    def test_schedule_set_compares_crlf_file_without_normalizing_snapshot(self):
+        original = (
+            "# existing\r\n"
+            "profile {\r\n    time = 06:00\r\n    identity = true\r\n}\r\n"
+            "profile {\r\n    time = 15:30\r\n    temperature = 3500\r\n}\r\n"
+        )
+        path = self.write_config(original)
+        path.write_bytes(original.encode("utf-8"))
+
+        state = vc.schedule_set(
+            {
+                "day_time": "07:00",
+                "day_temp": 6000,
+                "night_time": "21:00",
+                "night_temp": 4000,
+                "natural_day": True,
+            }
+        )
+
+        self.assertTrue(state["available"], state)
+        updated = path.read_bytes()
+        self.assertIn(b"# existing\r\n", updated)
+        self.assertNotIn(b"\n", updated.replace(b"\r\n", b""))
+
+    def test_schedule_set_rejects_symlink_parent_before_creating_external_lock(self):
+        config = vc.config_path()
+        external = self.xdg / "external-hypr"
+        external.mkdir(parents=True)
+        config.parent.parent.mkdir(parents=True, exist_ok=True)
+        config.parent.symlink_to(external, target_is_directory=True)
+
+        state = vc.schedule_set(
+            {
+                "day_time": "07:00",
+                "day_temp": 6000,
+                "night_time": "21:00",
+                "night_temp": 4000,
+                "natural_day": True,
+            }
+        )
+
+        self.assertFalse(state["available"])
+        self.assertFalse((external / ".veilleuse-schedule.lock").exists())
+        self.assertTrue(config.parent.is_symlink())
+
     def test_update_profile_clean_line_removal(self):
         original = "profile {\n    time = 06:00\n    temperature = 6000\n}"
         updated = vc._update_profile(original, "06:30", 6000, identity_day=True)
@@ -1983,7 +2177,7 @@ class ShortcutFilesystemTests(unittest.TestCase):
 
     def test_unreadable_bindings_reports_error_without_writing(self):
         path = self.write_bindings("# x\n")
-        with patch("veilleuse_shortcut_utils.Path.read_text", side_effect=PermissionError("denied")):
+        with patch.object(sc, "_read_bytes", side_effect=PermissionError("denied")):
             status = sc.shortcut_status()
             result = sc.install_shortcut("SUPER, V")
         self.assertIn("denied", status["error"])

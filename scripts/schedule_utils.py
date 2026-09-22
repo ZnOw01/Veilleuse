@@ -26,6 +26,21 @@ DAY_TEMP_MAX = 6500
 # (schedule set, enable and disable).  A divergent name here would let two
 # writers interleave and desynchronize the stored disabled hash.
 SCHEDULE_LOCK_NAME = ".veilleuse-schedule.lock"
+_UNSET = object()
+
+
+class ScheduleConflictError(ValueError):
+    """The target changed after it was read for a schedule update."""
+
+    error_code = "conflict"
+
+
+class AtomicWriteDurabilityError(OSError):
+    """The replace succeeded, but the containing directory was not flushed."""
+
+    def __init__(self, path, published_identity, cause):
+        super().__init__(f"No se pudo confirmar la durabilidad de {path}: {cause}")
+        self.published_identity = published_identity
 
 
 def xdg_config_home() -> Path:
@@ -402,9 +417,30 @@ def exclusive_lock(path):
             os.close(descriptor)
 
 
-def atomic_write_text(path, text, mode=None):
+def atomic_write_text(
+    path, text, mode=None, *, expected=_UNSET, require_durable=False
+):
+    """Replace a text file atomically, optionally requiring an exact prior value.
+
+    ``expected=None`` means the destination must still be absent.  A byte
+    snapshot detects edits made by writers that do not take Veilleuse's lock.
+    """
+    return _atomic_write_bytes(
+        path,
+        text.encode("utf-8"),
+        mode,
+        expected=expected,
+        require_durable=require_durable,
+    )
+
+
+def _atomic_write_bytes(
+    path, data, mode=None, *, expected=_UNSET, require_durable=False
+):
+    """Replace bytes atomically with the same path and compare safeguards."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _check_write_path(path)
     temporary = None
     descriptor = None
     try:
@@ -412,17 +448,24 @@ def atomic_write_text(path, text, mode=None):
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
         os.fchmod(descriptor, mode if mode is not None else 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        with os.fdopen(descriptor, "wb") as stream:
             descriptor = None
-            stream.write(text)
+            stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        try:
-            dest_stat = os.lstat(path)
-            if stat.S_ISLNK(dest_stat.st_mode):
-                raise ValueError(f"El destino es un enlace simbólico no seguro: {path}")
-        except FileNotFoundError:
-            pass
+        _before_replace(path)
+        _check_write_path(path)
+        if expected is not _UNSET:
+            try:
+                current = _read_regular_bytes(path)
+            except FileNotFoundError:
+                current = None
+            if current != expected:
+                raise ScheduleConflictError(
+                    f"Conflicto: el archivo cambió durante la escritura: {path}"
+                )
+        temporary_stat = os.stat(temporary, follow_symlinks=False)
+        published_identity = (temporary_stat.st_dev, temporary_stat.st_ino)
         os.replace(temporary, path)
         temporary = None
         try:
@@ -431,11 +474,55 @@ def atomic_write_text(path, text, mode=None):
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
-        except OSError:
-            pass
+        except OSError as error:
+            if require_durable:
+                raise AtomicWriteDurabilityError(
+                    path, published_identity, error
+                ) from error
     finally:
         if descriptor is not None:
             with contextlib.suppress(OSError):
                 os.close(descriptor)
         if temporary:
             Path(temporary).unlink(missing_ok=True)
+
+
+def _check_write_path(path):
+    """Reject symlinked or non-directory ancestors and unsafe destinations."""
+    if not path.is_absolute():
+        raise ValueError(f"La ruta debe ser absoluta: {path}")
+    current = Path(path.parts[0])
+    for part in path.parts[1:-1]:
+        current /= part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ValueError(f"Ruta insegura: {current}")
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(mode):
+        raise ValueError(f"Ruta insegura (enlace simbólico): {path}")
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"Destino inseguro: {path}")
+
+
+def _read_regular_bytes(path):
+    _check_write_path(path)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError(f"Destino inseguro: {path}")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            return stream.read()
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _before_replace(_path):
+    """Test seam before the last destination validation and comparison."""

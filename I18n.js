@@ -103,6 +103,8 @@ var en = {
   errNativeFailure: 'The native operation could not be completed.',
   errScheduleConflict: 'The schedule file changed during the operation.',
   manualPersistError: 'The manual setting was applied, but the preference could not be saved; the schedule may revert it on its next cycle.',
+  scheduleDisplayPersistError: 'The schedule was saved, but its brightness and gamma values could not be saved.',
+  optional: 'Optional',
   // Misc.
   monitor: 'Monitor',
   focusedMonitor: 'Focused monitor',
@@ -197,6 +199,8 @@ var es = {
   errNativeFailure: 'La operación nativa no se pudo completar.',
   errScheduleConflict: 'El archivo de horario cambió durante la operación.',
   manualPersistError: 'El ajuste manual se aplicó, pero no se pudo guardar la preferencia; el horario podría revertirlo al próximo ciclo.',
+  scheduleDisplayPersistError: 'Se guardó el horario, pero no se pudieron guardar sus valores de brillo y gamma.',
+  optional: 'Opcional',
   monitor: 'Monitor',
   focusedMonitor: 'Monitor enfocado',
   working: 'Aplicando…',

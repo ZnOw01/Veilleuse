@@ -25,7 +25,7 @@ BarWidget {
         var provenance = I18n.t("origin_" + origin, panelLoader.item ? panelLoader.item.locale : "en");
         if (automation.snoozed === true) {
             var until = Number(automation.snooze_until);
-            var remaining = isFinite(until) && until > 0 ? Math.max(1, Math.ceil((until - Date.now() / 1000) / 60)) : 0;
+            var remaining = isFinite(until) && until > 0 ? Math.max(0, Math.ceil((until - Date.now() / 1000) / 60)) : 0;
             var minText = I18n.t("minutes_short", panelLoader.item ? panelLoader.item.locale : "en");
             var snoozeText = I18n.t("snooze_active", panelLoader.item ? panelLoader.item.locale : "en");
             return snoozeText + (remaining > 0 ? " (" + remaining + " " + minText + ")" : "") + " · " + provenance;

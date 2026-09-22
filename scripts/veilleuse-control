@@ -915,6 +915,7 @@ def schedule_set(values):
                 "night_temp": values["night_temp"],
             }
         )
+        schedule_module._check_write_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with schedule_module.exclusive_lock(path.parent / schedule_module.SCHEDULE_LOCK_NAME):
             if path.exists():
@@ -927,9 +928,11 @@ def schedule_set(values):
                 except OSError as caught:
                     return _schedule_result(None, values.get("natural_day", True), str(caught))
                 original_mode = path.stat().st_mode & 0o7777
-                existing = path.read_text(encoding="utf-8")
+                original_bytes = schedule_module._read_regular_bytes(path)
+                existing = original_bytes.decode("utf-8")
             else:
                 original_mode = None
+                original_bytes = None
                 existing = ""
             if existing:
                 updated = _update_schedule_text(existing, schedule, values.get("natural_day", True))
@@ -939,17 +942,105 @@ def schedule_set(values):
                     return _schedule_result(None, values.get("natural_day", True), str(caught))
             else:
                 updated = _render_schedule(schedule, values.get("natural_day", True))
-            if path.exists():
+            backup_path = path.with_suffix(path.suffix + ".bak")
+            backup_bytes = None
+            backup_mode = None
+            if original_bytes is not None:
+                schedule_module._check_write_path(backup_path)
+                try:
+                    backup_bytes = schedule_module._read_regular_bytes(backup_path)
+                    backup_mode = stat.S_IMODE(os.lstat(backup_path).st_mode)
+                except FileNotFoundError:
+                    pass
+            if original_bytes is not None:
+                # Flush the backup before changing the config.
+                published_backup = existing.encode("utf-8")
+                try:
+                    schedule_module.atomic_write_text(
+                        backup_path,
+                        existing,
+                        original_mode,
+                        expected=backup_bytes,
+                        require_durable=True,
+                    )
+                except schedule_module.AtomicWriteDurabilityError as caught:
+                    if caught.published_identity is not None:
+                        try:
+                            _restore_schedule_backup(
+                                schedule_module,
+                                backup_path,
+                                backup_bytes,
+                                backup_mode,
+                                published_backup,
+                                caught.published_identity,
+                            )
+                        except (OSError, ValueError) as rollback_error:
+                            raise ValueError(
+                                f"{caught}; no se pudo restaurar el backup: {rollback_error}"
+                            ) from caught
+                    raise
+                backup_stat = os.lstat(backup_path)
+                backup_identity = (backup_stat.st_dev, backup_stat.st_ino)
+                try:
+                    schedule_module.atomic_write_text(
+                        path, updated, original_mode, expected=original_bytes
+                    )
+                except (OSError, ValueError) as caught:
+                    try:
+                        _restore_schedule_backup(
+                            schedule_module,
+                            backup_path,
+                            backup_bytes,
+                            backup_mode,
+                            published_backup,
+                            backup_identity,
+                        )
+                    except (OSError, ValueError) as rollback_error:
+                        raise ValueError(
+                            f"{caught}; no se pudo restaurar el backup: {rollback_error}"
+                        ) from caught
+                    raise
+            else:
                 schedule_module.atomic_write_text(
-                    path.with_suffix(path.suffix + ".bak"), existing, original_mode
+                    path, updated, original_mode, expected=original_bytes
                 )
-            schedule_module.atomic_write_text(path, updated, original_mode)
     except (OSError, ValueError) as caught:
-        return _schedule_result(None, values.get("natural_day", True), str(caught))
+        return _schedule_result(
+            None,
+            values.get("natural_day", True),
+            str(caught),
+            error_code=getattr(caught, "error_code", None),
+        )
     return schedule_get()
 
 
-def _schedule_result(schedule, day_identity, error, period_value=None):
+def _restore_schedule_backup(
+    schedule_module,
+    path,
+    previous_bytes,
+    previous_mode,
+    published_bytes,
+    published_identity,
+):
+    """Undo our backup publication only while it is still the file we wrote."""
+    schedule_module._check_write_path(path)
+    current_stat = os.lstat(path)
+    if (current_stat.st_dev, current_stat.st_ino) != published_identity:
+        return
+    if schedule_module._read_regular_bytes(path) != published_bytes:
+        return
+    if previous_bytes is None:
+        os.unlink(path)
+    else:
+        schedule_module._atomic_write_bytes(
+            path,
+            previous_bytes,
+            previous_mode,
+            expected=published_bytes,
+        )
+
+
+def _schedule_result(schedule, day_identity, error, period_value=None, error_code=None):
     result = {
         "available": schedule is not None,
         "day_time": None,
@@ -960,6 +1051,8 @@ def _schedule_result(schedule, day_identity, error, period_value=None):
         "period": period_value,
         "error": error,
     }
+    if error_code is not None:
+        result["error_code"] = error_code
     if schedule is not None:
         result.update(
             {
@@ -1232,7 +1325,6 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
 def read_status(*, nightlight=None, monitor_name=None):
     """Combine monitor/brightness, nightlight and schedule state in one JSON."""
     monitor = read_monitor_state()
-    brightness = None
     selected_monitor = monitor["monitor"] if monitor_name is None else monitor_name
     if selected_monitor:
         percent, error = read_brightness(selected_monitor)
@@ -1572,7 +1664,11 @@ def cmd_schedule(args):
         _emit(payload)
         return 0
     _emit(
-        {"error": state["error"], "error_code": "schedule_failed", "state": read_status()}
+        {
+            "error": state["error"],
+            "error_code": state.get("error_code", "schedule_failed"),
+            "state": read_status(),
+        }
     )
     return 0 if ok else 1
 

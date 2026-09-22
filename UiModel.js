@@ -119,6 +119,8 @@ var DEFAULT_COPY = {
   errNativeFailure: 'The native operation could not be completed.',
   errScheduleConflict: 'The schedule file changed during the operation.',
   manualPersistError: 'The manual setting was applied, but the preference could not be saved; the schedule may revert it on its next cycle.',
+  scheduleDisplayPersistError: 'The schedule was saved, but its brightness and gamma values could not be saved.',
+  optional: 'Optional',
   monitor: 'Monitor',
   focusedMonitor: 'Focused monitor',
   working: 'Applying…',
@@ -181,6 +183,16 @@ function adjacentRoute(route, direction) {
 // instead of switching routes while the cursor owns a slider.
 function isSliderSection(section) {
   return DRAG_SECTIONS.indexOf(section) !== -1;
+}
+
+// Keep transactional writes intact while allowing absolute slider values and
+// read/reconcile work to yield to the newest request.
+function maySupersedeOperation(operation) {
+  return ['brightness', 'temperature', 'gamma', 'status', 'schedule-status', 'reconcile', 'schedule-reconcile'].indexOf(operation) !== -1;
+}
+
+function shouldRetryScheduleReconcile(operation) {
+  return ['status', 'schedule-status', 'reconcile'].indexOf(operation) !== -1;
 }
 
 // Next value for a keyboard step on a slider section, clamped to the
@@ -680,6 +692,8 @@ if (typeof module !== 'undefined' && module.exports) {
     moveCursor: moveCursor,
     adjacentRoute: adjacentRoute,
     isSliderSection: isSliderSection,
+    maySupersedeOperation: maySupersedeOperation,
+    shouldRetryScheduleReconcile: shouldRetryScheduleReconcile,
     stepSliderValue: stepSliderValue,
     dragTargetEmpty: dragTargetEmpty,
     dragTargetPush: dragTargetPush,
