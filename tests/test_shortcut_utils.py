@@ -285,6 +285,46 @@ class ShortcutStatusTest(ShortcutUtilsTestBase):
 
 
 class InstallShortcutTest(ShortcutUtilsTestBase):
+    def test_install_refuses_to_modify_bindings_when_existing_backup_dir_fsync_fails(self):
+        original = "local original = true\n"
+        path = self.write_bindings(original)
+        backup = path.with_suffix(".lua.bak")
+        previous_backup = b"previous backup snapshot\n"
+        backup.write_bytes(previous_backup)
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError("injected directory fsync failure")
+            return real_fsync(descriptor)
+
+        with mock.patch.object(shortcut_utils.os, "fsync", side_effect=fail_directory_fsync):
+            result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertIn("injected directory fsync failure", result["error"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertEqual(backup.read_bytes(), previous_backup)
+
+    def test_install_does_not_change_bindings_when_new_backup_dir_fsync_fails(self):
+        original = "local original = true\n"
+        path = self.write_bindings(original)
+        backup = path.with_suffix(".lua.bak")
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError("injected directory fsync failure")
+            return real_fsync(descriptor)
+
+        with mock.patch.object(shortcut_utils.os, "fsync", side_effect=fail_directory_fsync):
+            result = shortcut_utils.install_shortcut("SUPER, V")
+
+        self.assertFalse(result["available"])
+        self.assertIn("injected directory fsync failure", result["error"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertEqual(backup.read_bytes(), original.encode("utf-8"))
+
     def test_install_rejects_symlink_bindings_file_without_replacing_it(self):
         target = self.home / "bindings.lua"
         target.write_text("local user_file = true\n", encoding="utf-8")
@@ -421,6 +461,24 @@ class InstallShortcutTest(ShortcutUtilsTestBase):
 
 
 class RemoveShortcutTest(ShortcutUtilsTestBase):
+    def test_remove_reports_directory_fsync_failure_after_deleting_bindings(self):
+        path = self.write_bindings(block_for("SUPER, V"))
+        real_fsync = os.fsync
+
+        def fail_directory_fsync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError("injected directory fsync failure")
+            return real_fsync(descriptor)
+
+        with mock.patch.object(shortcut_utils.os, "fsync", side_effect=fail_directory_fsync):
+            result = shortcut_utils.remove_shortcut()
+
+        self.assertFalse(result["available"])
+        self.assertIn("injected directory fsync failure", result["error"])
+        self.assertIn("se eliminó", result["error"])
+        self.assertFalse(path.exists())
+        self.reload_mock.assert_not_called()
+
     def test_remove_refuses_to_delete_after_external_edit(self):
         original = block_for("SUPER, V")
         path = self.write_bindings(original)

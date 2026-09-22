@@ -114,7 +114,7 @@ def _reload():
     }
 
 
-def _atomic_write_text(path, text, mode, *, expected=_UNSET):
+def _atomic_write_text(path, text, mode, *, expected=_UNSET, require_durable=False):
     """Write text atomically (temp file + os.replace) preserving mode."""
     path = Path(path)
     _prepare_parent(path)
@@ -149,7 +149,8 @@ def _atomic_write_text(path, text, mode, *, expected=_UNSET):
             finally:
                 os.close(directory_fd)
         except OSError:
-            pass
+            if require_durable:
+                raise
     finally:
         if descriptor is not None:
             with contextlib.suppress(OSError):
@@ -157,6 +158,15 @@ def _atomic_write_text(path, text, mode, *, expected=_UNSET):
         if temporary:
             with contextlib.suppress(OSError):
                 Path(temporary).unlink(missing_ok=True)
+
+
+def _fsync_parent(path):
+    """Confirm the containing directory entry has reached stable storage."""
+    directory_fd = os.open(Path(path).parent, os.O_DIRECTORY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _prepare_parent(path):
@@ -685,9 +695,12 @@ def _backup_once(path, original_text):
     if not _validate_path(path):
         return False
     if _validate_path(backup):
+        _fsync_parent(backup)
         return False
     mode = stat.S_IMODE(os.lstat(path).st_mode)
-    _atomic_write_text(backup, original_text, mode, expected=None)
+    _atomic_write_text(
+        backup, original_text, mode, expected=None, require_durable=True
+    )
     return True
 
 
@@ -807,6 +820,12 @@ def remove_shortcut():
                 if _read_bytes(path) != original:
                     raise ValueError(f"Conflicto: bindings.lua cambió durante la eliminación: {path}")
                 os.unlink(path)
+                try:
+                    _fsync_parent(path)
+                except OSError as error:
+                    raise OSError(
+                        f"bindings.lua se eliminó, pero no se pudo confirmar su persistencia: {error}"
+                    ) from error
             else:
                 _atomic_write_text(path, new_text, mode, expected=original)
     except (OSError, ValueError) as caught:
