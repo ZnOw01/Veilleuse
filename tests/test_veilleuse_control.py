@@ -873,6 +873,86 @@ class ScheduleTests(HelperModuleTests):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def crash_after_schedule_toggle_file_replace(self, path):
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(SCRIPTS)
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        crash_script = (
+            "import os, schedule_toggle_utils as toggle; "
+            "toggle._write_state_or_rollback = lambda *args, **kwargs: os._exit(73); "
+            "toggle.disable_schedule()"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", crash_script],
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 73, result.stderr)
+        pending = path.with_name(f".{path.name}.veilleuse-toggle.pending")
+        self.assertTrue(pending.is_file(), "crash fixture must leave its journal")
+        return pending
+
+    def test_schedule_set_recovers_crashed_toggle_before_overwriting_config(self):
+        path = self.write_config(
+            "profile {\n    time = 06:00\n    identity = true\n}\n\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        pending = self.crash_after_schedule_toggle_file_replace(path)
+        self.assertNotIn("profile {", path.read_text(encoding="utf-8"))
+
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "07:00", "--night-time", "21:00",
+            "--day-temp", "6000", "--night-temp", "4000",
+        )
+
+        self.assertEqual(code, 0, output)
+        self.assertFalse(pending.exists(), "schedule_set must resolve the journal")
+        payload = json.loads(output)
+        self.assertEqual(payload["schedule"]["day_time"], "07:00")
+        self.assertEqual(payload["schedule"]["night_time"], "21:00")
+
+        code, output = self.run_cli("schedule", "disable")
+        self.assertEqual(code, 0, output)
+        code, output = self.run_cli("schedule", "enable")
+        self.assertEqual(code, 0, output)
+
+    def test_status_recovers_crashed_toggle_before_reading_schedule(self):
+        path = self.write_config(
+            "profile {\n    time = 06:00\n    identity = true\n}\n\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        pending = self.crash_after_schedule_toggle_file_replace(path)
+
+        code, output = self.run_cli("status")
+
+        self.assertEqual(code, 0, output)
+        self.assertFalse(pending.exists(), "status must resolve the journal")
+        payload = json.loads(output)
+        self.assertEqual(payload["schedule"]["day_time"], "06:00")
+        self.assertEqual(payload["schedule"]["night_time"], "15:30")
+
+    def test_schedule_set_fails_closed_with_structured_error_for_invalid_journal(self):
+        path = self.write_config(
+            "profile {\n    time = 06:00\n    identity = true\n}\n\n"
+            "profile {\n    time = 15:30\n    temperature = 3500\n}\n"
+        )
+        original = path.read_bytes()
+        pending = path.with_name(f".{path.name}.veilleuse-toggle.pending")
+        pending.write_text("{}", encoding="utf-8")
+        pending.chmod(0o600)
+
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "07:00", "--night-time", "21:00",
+            "--day-temp", "6000", "--night-temp", "4000",
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(output)["error_code"], "malformed_state")
+        self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(pending.exists())
+
     def test_schedule_get_returns_parsed_values(self):
         self.write_config(
             "# comment\n"
@@ -1071,7 +1151,15 @@ class ScheduleTests(HelperModuleTests):
         self.assertIn("error", output.lower())
 
     def test_schedule_get_fails_closed_on_unreadable_config(self):
-        with patch.object(Path, "read_text", side_effect=PermissionError("denied")):
+        config = vc.config_path()
+        read_text = Path.read_text
+
+        def unreadable_config(path, *args, **kwargs):
+            if path == config:
+                raise PermissionError("denied")
+            return read_text(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", unreadable_config):
             state = vc.schedule_get()
         self.assertFalse(state["available"])
         self.assertIn("denied", state["error"])

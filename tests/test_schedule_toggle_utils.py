@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import json
 import os
+import subprocess
 import stat
 import sys
 import tempfile
@@ -276,6 +279,152 @@ class ScheduleToggleTests(unittest.TestCase):
 
         self.assertEqual(self.config.read_bytes(), original)
         self.assertEqual(self.read_state(), default_state())
+
+    def test_crash_between_schedule_and_state_write_recovers_original_config(self):
+        original = self.config.read_bytes()
+        code = (
+            "import os, schedule_toggle_utils, state_utils; "
+            "state_utils.update_state = lambda _mutator: os._exit(77); "
+            "schedule_toggle_utils.disable_schedule()"
+        )
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(ROOT / "scripts")
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        process = subprocess.run([sys.executable, "-c", code], env=environment)
+
+        self.assertEqual(process.returncode, 77)
+        self.assertNotIn(b"profile {", self.config.read_bytes())
+        journal = self.config.with_name(f".{self.config.name}{toggle.PENDING_SUFFIX}")
+        self.assertEqual(stat.S_IMODE(journal.stat().st_mode), 0o600)
+        toggle.enable_schedule()
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(journal.exists())
+        self.assertTrue(self.read_state()["schedule_enabled"])
+
+    def test_malformed_pending_transaction_reports_structured_error(self):
+        original = self.config.read_bytes()
+        journal = self.config.with_name(f".{self.config.name}{toggle.PENDING_SUFFIX}")
+        journal.write_text(
+            json.dumps(
+                {
+                    "old_file": base64.b64encode(original).decode("ascii"),
+                    "new_file": base64.b64encode(b"").decode("ascii"),
+                    "old_mode": stat.S_IMODE(self.config.stat().st_mode),
+                    "old_enabled": True,
+                    "old_disabled": None,
+                    "new_enabled": False,
+                    "new_disabled": {
+                        "original_hash": hashlib.sha256(original).hexdigest(),
+                        "disabled_hash": hashlib.sha256(b"").hexdigest(),
+                        "original_text": 123,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        journal.chmod(0o600)
+
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.schedule_status()
+
+        self.assertEqual(caught.exception.error_code, "malformed_state")
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_post_publish_state_failure_preserves_concurrent_state_update(self):
+        real_update = state_utils.update_state
+        real_atomic_write = state_utils._atomic_write
+        injected = False
+
+        def fail_after_publish(mutator):
+            real_update(lambda current: {**current, "transition_seconds": 77})
+
+            def publish_then_fail(path, data):
+                nonlocal injected
+                real_atomic_write(path, data)
+                if not injected:
+                    injected = True
+                    raise state_utils.StateError("io_error", "injected post-publish failure")
+
+            with mock.patch.object(state_utils, "_atomic_write", publish_then_fail):
+                return real_update(mutator)
+
+        with mock.patch.object(state_utils, "update_state", side_effect=fail_after_publish):
+            with self.assertRaises(state_utils.StateError):
+                toggle.disable_schedule()
+
+        self.assertEqual(self.config.read_bytes(), REALISTIC_CONFIG.encode("utf-8"))
+        self.assertEqual(self.read_state()["transition_seconds"], 77)
+
+    def test_post_publish_rollback_restores_override_cleared_by_disable(self):
+        override = {
+            "at": "1970-01-01T00:16:40Z",
+            "operation": "nightlight_toggle",
+            "profile": {"kind": "identity"},
+        }
+        state_utils.update_state(lambda current: {**current, "manual_override": override})
+        real_atomic = state_utils._atomic_write
+        failed = False
+
+        def publish_then_fail(path, data):
+            nonlocal failed
+            real_atomic(path, data)
+            if not failed:
+                failed = True
+                raise state_utils.StateError("io_error", "injected post-publish failure")
+
+        with mock.patch.object(state_utils, "_atomic_write", publish_then_fail):
+            with self.assertRaises(state_utils.StateError):
+                toggle.disable_schedule()
+
+        self.assertEqual(self.read_state()["manual_override"], override)
+
+    def test_crash_during_state_rollback_completes_file_from_published_state(self):
+        original = self.config.read_bytes()
+        code = r'''
+import os
+import schedule_toggle_utils as toggle
+import state_utils
+
+real_update = state_utils.update_state
+real_atomic = state_utils._atomic_write
+real_rollback = toggle._rollback_file
+
+def update_with_failure(mutator):
+    real_update(lambda current: {**current, "transition_seconds": 77})
+    failed = False
+    def publish_then_fail(path, data):
+        nonlocal failed
+        real_atomic(path, data)
+        if not failed:
+            failed = True
+            raise state_utils.StateError("io_error", "injected post-publish failure")
+    state_utils._atomic_write = publish_then_fail
+    try:
+        return real_update(mutator)
+    finally:
+        state_utils._atomic_write = real_atomic
+
+def exit_after_file_rollback(path, data, mode, expected):
+    real_rollback(path, data, mode, expected)
+    os._exit(78)
+
+state_utils.update_state = update_with_failure
+toggle._rollback_file = exit_after_file_rollback
+toggle.disable_schedule()
+'''
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = str(ROOT / "scripts")
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        process = subprocess.run([sys.executable, "-c", code], env=environment)
+
+        self.assertEqual(process.returncode, 78)
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(self.read_state()["schedule_enabled"])
+        self.assertEqual(self.read_state()["transition_seconds"], 77)
+        recovered = toggle.schedule_status()
+        self.assertFalse(recovered["schedule_enabled"])
+        self.assertNotIn(b"profile {", self.config.read_bytes())
+        self.assertEqual(self.read_state()["transition_seconds"], 77)
 
     def test_enable_state_failure_rolls_back_restoration(self):
         toggle.disable_schedule()

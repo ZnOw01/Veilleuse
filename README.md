@@ -237,6 +237,7 @@ omarchy shell io.github.znow01.veilleuse toggle
 | File Path | Purpose | Permissions | Safety Mechanism |
 | :--- | :--- | :--- | :--- |
 | `~/.config/hypr/hyprsunset.conf` | Night light temperature & schedule | Preserves the existing mode; a newly generated file uses `0600` | Atomic write under a shared lock; `.bak` when updating an existing file |
+| `~/.config/hypr/.hyprsunset.conf.veilleuse-toggle.pending` | Recovery record for an interrupted schedule enable/disable | `0600` | Written before changing the schedule; resolved under the shared lock on the next schedule operation |
 | `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | Preserves the existing mode; a newly created file uses `0644` | Collision checks and marker-block ownership; one-time `.bak` before install/update |
 | `~/.config/veilleuse/config.json` | Plugin settings & language preference | `0600` | Atomic replace, versioned schema, stripped legacy keys |
 | `~/.local/state/veilleuse/state.json` | Runtime state, snooze tokens, display values | `0600` | Mode `0600`, atomic write, bounded validation |
@@ -257,7 +258,7 @@ Localization is decoupled from the UI framework in pure JavaScript (`I18n.js`):
 
 - **Strict Key Parity**: English and Spanish dictionaries are checked for matching keys by automated tests.
 - **Backend Error Mapping**: Known backend error codes map to localized messages; unknown diagnostics retain a safe fallback.
-- **Fail-Safe Fallbacks**: Unknown locales fall back to English (`en`), missing keys fall back to Spanish (`es`), and unrecognized diagnostics pass through untouched.
+- **Fail-Safe Fallbacks**: Unknown locales select English (`en`). Missing translations fall back from the requested dictionary to English, then Spanish, then the raw key; unrecognized diagnostics pass through untouched.
 
 ---
 

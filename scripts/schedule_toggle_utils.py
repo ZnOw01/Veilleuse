@@ -9,7 +9,9 @@ guessing about similarly-shaped profiles belonging to another tool.
 from __future__ import annotations
 
 import contextlib
+import base64
 import hashlib
+import json
 import os
 import re
 import stat
@@ -25,6 +27,7 @@ import state_utils
 
 HYPRSUNSET_CONFIG = schedule_utils.HYPRSUNSET_CONFIG
 LOCK_NAME = schedule_utils.SCHEDULE_LOCK_NAME
+PENDING_SUFFIX = ".veilleuse-toggle.pending"
 
 
 class ScheduleToggleError(RuntimeError):
@@ -151,6 +154,209 @@ def _atomic_write_bytes(
                 os.unlink(temporary)
 
 
+def _pending_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}{PENDING_SUFFIX}")
+
+
+def _write_pending(path: Path, record: dict) -> None:
+    """Durably record the file/state boundary before changing the schedule."""
+    pending = _pending_path(path)
+    _check_parent(pending)
+    encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+    descriptor = None
+    temporary = None
+    try:
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{pending.name}.", suffix=".tmp", dir=pending.parent
+        )
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, pending)
+        temporary = None
+        directory = os.open(pending.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as caught:
+        raise _error("io_error", "Unable to persist schedule recovery journal", caught)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+
+
+def _read_pending(path: Path) -> dict | None:
+    pending = _pending_path(path)
+    _check_parent(pending)
+    try:
+        metadata = os.lstat(pending)
+    except FileNotFoundError:
+        return None
+    except OSError as caught:
+        raise _error("io_error", "Unable to inspect schedule recovery journal", caught)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise _error("unsafe_path", "Schedule recovery journal is not a regular file")
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise _error("unsafe_path", "Schedule recovery journal permissions are unsafe")
+    descriptor = None
+    try:
+        descriptor = os.open(pending, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise _error("unsafe_path", "Schedule recovery journal is not regular")
+        with os.fdopen(descriptor, "rb") as stream:
+            descriptor = None
+            payload = json.load(stream)
+    except ScheduleToggleError:
+        raise
+    except (OSError, ValueError, UnicodeError) as caught:
+        raise _error("malformed_state", "Schedule recovery journal is invalid", caught)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    try:
+        payload["old_file"] = base64.b64decode(payload["old_file"], validate=True)
+        payload["new_file"] = base64.b64decode(payload["new_file"], validate=True)
+        if type(payload["old_mode"]) is not int or not 0 <= payload["old_mode"] <= 0o7777:
+            raise ValueError("invalid file mode")
+        if type(payload["old_enabled"]) is not bool or type(payload["new_enabled"]) is not bool:
+            raise ValueError("invalid schedule state")
+        if not isinstance(payload["old_disabled"], (dict, type(None))) or not isinstance(
+            payload["new_disabled"], (dict, type(None))
+        ):
+            raise ValueError("invalid schedule transaction")
+        for transaction in (payload["old_disabled"], payload["new_disabled"]):
+            if transaction is not None and not all(
+                isinstance(transaction.get(key), str)
+                for key in ("original_hash", "disabled_hash", "original_text")
+            ):
+                raise ValueError("invalid schedule transaction fields")
+        if payload["new_disabled"] is not None:
+            transaction = payload["new_disabled"]
+            if (
+                transaction["original_hash"] != _hash(payload["old_file"])
+                or transaction["disabled_hash"] != _hash(payload["new_file"])
+                or transaction["original_text"].encode("utf-8") != payload["old_file"]
+            ):
+                raise ValueError("inconsistent schedule transaction")
+        if payload["old_disabled"] is not None:
+            transaction = payload["old_disabled"]
+            if (
+                transaction["disabled_hash"] != _hash(payload["old_file"])
+                or transaction["original_hash"] != _hash(payload["new_file"])
+                or transaction["original_text"].encode("utf-8") != payload["new_file"]
+            ):
+                raise ValueError("inconsistent schedule transaction")
+    except (KeyError, TypeError, ValueError) as caught:
+        raise _error("malformed_state", "Schedule recovery journal is invalid", caught)
+    return payload
+
+
+def _remove_pending(path: Path) -> None:
+    pending = _pending_path(path)
+    try:
+        os.unlink(pending)
+    except FileNotFoundError:
+        return
+    directory = os.open(pending.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        # A resurrected journal is safe: recovery is idempotent once file and
+        # state already agree, so cleanup fsync failure must not undo commit.
+        with contextlib.suppress(OSError):
+            os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def _state_schedule_projection(state: dict) -> tuple[bool, dict | None]:
+    return state["schedule_enabled"], state["schedule_disabled"]
+
+
+def _run_toggle_transaction(
+    path: Path,
+    old_file: bytes,
+    old_mode: int,
+    new_file: bytes,
+    old_state: dict,
+    new_schedule_state: tuple[bool, dict | None],
+    rollback_values: dict[str, tuple[object, object]],
+    commit,
+) -> dict:
+    record = {
+        "old_file": base64.b64encode(old_file).decode("ascii"),
+        "new_file": base64.b64encode(new_file).decode("ascii"),
+        "old_mode": old_mode,
+        "old_enabled": old_state["schedule_enabled"],
+        "old_disabled": old_state["schedule_disabled"],
+        "new_enabled": new_schedule_state[0],
+        "new_disabled": new_schedule_state[1],
+    }
+    _write_pending(path, record)
+    try:
+        _atomic_write_bytes(path, new_file, old_mode, expected=old_file)
+        result = _write_state_or_rollback(
+            path,
+            old_file,
+            old_mode,
+            new_file,
+            old_state,
+            new_schedule_state,
+            rollback_values,
+            commit,
+        )
+    except BaseException as cause:
+        try:
+            _recover_pending(path)
+        except BaseException as rollback_error:
+            raise _error(
+                "rollback_failed", "Unable to resolve pending schedule transaction", rollback_error
+            ) from cause
+        raise
+    _remove_pending(path)
+    return result
+
+
+def recover_pending_locked(path: str | os.PathLike[str]) -> None:
+    """Recover a pending transaction; caller must hold the shared schedule lock."""
+    _recover_pending(Path(path))
+
+
+def _recover_pending(path: Path) -> None:
+    """Resolve an interrupted toggle before another schedule operation runs."""
+    record = _read_pending(path)
+    if record is None:
+        return
+    current, _mode, _metadata = _read_bytes(path)
+    projection = _state_schedule_projection(state_utils.read_state())
+    old_projection = (record["old_enabled"], record["old_disabled"])
+    new_projection = (record["new_enabled"], record["new_disabled"])
+    if current == record["new_file"] and projection == new_projection:
+        _remove_pending(path)
+        return
+    if current == record["old_file"] and projection == old_projection:
+        _remove_pending(path)
+        return
+    if current == record["old_file"] and projection == new_projection:
+        _atomic_write_bytes(
+            path, record["new_file"], record["old_mode"], expected=record["old_file"]
+        )
+        _remove_pending(path)
+        return
+    if current == record["new_file"] and projection == old_projection:
+        _atomic_write_bytes(
+            path, record["old_file"], record["old_mode"], expected=record["new_file"]
+        )
+        _remove_pending(path)
+        return
+    raise _error("conflict", "Pending schedule recovery conflicts with current state")
+
+
 @contextlib.contextmanager
 def _locked(path: Path):
     _check_parent(path)
@@ -168,6 +374,7 @@ def _locked(path: Path):
         import fcntl
 
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        _recover_pending(path)
         yield
     except ScheduleToggleError:
         raise
@@ -265,50 +472,49 @@ def _rollback_file(path: Path, data: bytes, mode: int, expected: bytes) -> None:
         raise _error("rollback_failed", "Unable to roll back schedule file", caught)
 
 
-def _rollback_after_file_write(
-    path: Path,
-    old_file: bytes,
-    old_mode: int,
-    new_file: bytes,
-    cause: BaseException,
-) -> None:
-    """Undo a write only when the destination contains our new bytes."""
-    current, _mode, _metadata = _read_bytes(path)
-    if current == old_file:
-        raise cause
-    if current != new_file:
-        # The write failed before replacement, or another writer intervened.
-        # In either case, do not overwrite bytes we cannot identify.
-        raise cause
-    _rollback_file(path, old_file, old_mode, expected=new_file)
-    raise cause
-
-
 def _write_state_or_rollback(
     path: Path,
     old_file: bytes,
     old_mode: int,
     new_file: bytes,
     old_state: dict,
+    new_schedule_state: tuple[bool, dict | None],
+    rollback_values: dict[str, tuple[object, object]],
     commit,
 ) -> dict:
-    state_path = state_utils.state_path()
-    state_before = None
-    if state_path.exists():
-        state_before = state_path.read_bytes()
     try:
         new_state = state_utils.update_state(commit)
     except BaseException as cause:
         _rollback_file(path, old_file, old_mode, expected=new_file)
-        # A state writer may fail after replacing its destination.  Restore
-        # through state_utils as well; if that cannot be done, do not claim a
-        # successful transaction.
-        state_after = state_path.read_bytes() if state_path.exists() else None
-        if state_after != state_before:
+        current_state = state_utils.read_state()
+        current_projection = _state_schedule_projection(current_state)
+        old_projection = _state_schedule_projection(old_state)
+        if current_projection == new_schedule_state:
             try:
-                state_utils.write_state(old_state)
+                def restore(current):
+                    if _state_schedule_projection(current) != new_schedule_state:
+                        return None
+                    restored = {
+                        **current,
+                        "schedule_enabled": old_state["schedule_enabled"],
+                        "schedule_disabled": old_state["schedule_disabled"],
+                    }
+                    for key, (before, published) in rollback_values.items():
+                        if current.get(key) == published:
+                            restored[key] = before
+                    return restored
+
+                rolled_back = state_utils.update_state(restore)
+                if _state_schedule_projection(rolled_back) != old_projection:
+                    raise _error("rollback_failed", "Schedule state changed during rollback")
             except BaseException as caught:
                 raise _error("rollback_failed", "Unable to roll back schedule state", caught)
+        elif current_projection != old_projection:
+            raise _error(
+                "rollback_failed",
+                "Schedule state changed during rollback; preserving current state",
+                cause,
+            )
         raise cause
     return new_state
 
@@ -335,6 +541,8 @@ def _disable_locked(path: Path) -> dict:
         "original_text": text,
     }
 
+    rollback_values = {}
+
     def _commit(current):
         # Apply the schedule keys to the freshest state: concurrent writers
         # (snooze, reconcile, transitions) that committed while this toggle
@@ -343,15 +551,19 @@ def _disable_locked(path: Path) -> dict:
             current, enabled=False, disabled=transaction
         )
         if current.get("manual_override") is not None:
+            rollback_values["manual_override"] = (current["manual_override"], None)
             next_state["manual_override"] = None
         return next_state
 
-    try:
-        _atomic_write_bytes(path, disabled, mode, expected=data)
-    except BaseException as caught:
-        _rollback_after_file_write(path, data, mode, disabled, caught)
-    return _write_state_or_rollback(
-        path, data, mode, disabled, old_state, _commit
+    return _run_toggle_transaction(
+        path,
+        data,
+        mode,
+        disabled,
+        old_state,
+        (False, transaction),
+        rollback_values,
+        _commit,
     )
 
 
@@ -380,12 +592,15 @@ def _enable_locked(path: Path) -> dict:
         # held the schedule file lock must not be overwritten.
         return _state_with_schedule(current, enabled=True, disabled=None)
 
-    try:
-        _atomic_write_bytes(path, original, mode, expected=data)
-    except BaseException as caught:
-        _rollback_after_file_write(path, data, mode, original, caught)
-    return _write_state_or_rollback(
-        path, data, mode, original, old_state, _commit
+    return _run_toggle_transaction(
+        path,
+        data,
+        mode,
+        original,
+        old_state,
+        (True, None),
+        {},
+        _commit,
     )
 
 
@@ -432,4 +647,5 @@ __all__ = [
     "enable_schedule",
     "schedule_status",
     "status",
+    "recover_pending_locked",
 ]

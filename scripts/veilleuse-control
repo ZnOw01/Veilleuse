@@ -864,6 +864,38 @@ def schedule_get():
     if schedule_module is None:
         return _schedule_result(None, False, error)
     path = config_path()
+    pending_path = path.with_name(f".{path.name}.veilleuse-toggle.pending")
+    try:
+        os.lstat(pending_path)
+        pending_exists = True
+    except FileNotFoundError:
+        pending_exists = False
+    except OSError as caught:
+        return _schedule_result(None, False, str(caught))
+
+    if pending_exists:
+        toggle_module = _utility_module("schedule_toggle_utils")
+        if toggle_module is None:
+            return _schedule_result(
+                None, False, "El gestor de recuperación de horario no está disponible",
+                error_code="helper_unavailable",
+            )
+        try:
+            with schedule_module.exclusive_lock(path.parent / schedule_module.SCHEDULE_LOCK_NAME):
+                toggle_module.recover_pending_locked(path)
+                return _read_schedule(path, schedule_module)
+        except Exception as caught:
+            error_code = getattr(caught, "error_code", None)
+            if error_code is None:
+                raise
+            return _schedule_result(
+                None, False, str(caught), error_code=error_code
+            )
+    return _read_schedule(path, schedule_module)
+
+
+def _read_schedule(path, schedule_module):
+    """Read and parse the schedule after any pending toggle was resolved."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -906,6 +938,7 @@ def schedule_set(values):
     if schedule_module is None:
         return _schedule_result(None, False, error)
     path = config_path()
+    toggle_module = _utility_module("schedule_toggle_utils")
     try:
         schedule = schedule_module.validate_schedule(
             {
@@ -918,6 +951,17 @@ def schedule_set(values):
         schedule_module._check_write_path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with schedule_module.exclusive_lock(path.parent / schedule_module.SCHEDULE_LOCK_NAME):
+            if toggle_module is not None:
+                toggle_module.recover_pending_locked(path)
+            else:
+                pending_path = path.with_name(f".{path.name}.veilleuse-toggle.pending")
+                if os.path.lexists(pending_path):
+                    return _schedule_result(
+                        None,
+                        values.get("natural_day", True),
+                        "El gestor de recuperación de horario no está disponible",
+                        error_code="helper_unavailable",
+                    )
             if path.exists():
                 try:
                     mode_stat = os.lstat(path).st_mode
@@ -1010,6 +1054,16 @@ def schedule_set(values):
             values.get("natural_day", True),
             str(caught),
             error_code=getattr(caught, "error_code", None),
+        )
+    except Exception as caught:
+        error_code = getattr(caught, "error_code", None)
+        if error_code is None:
+            raise
+        return _schedule_result(
+            None,
+            values.get("natural_day", True),
+            str(caught),
+            error_code=error_code,
         )
     return schedule_get()
 
