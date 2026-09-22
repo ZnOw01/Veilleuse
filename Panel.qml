@@ -423,7 +423,7 @@ Panel {
 
     function launchLatest() {
         if (helperProcess.running) {
-            if (!Model.maySupersedeOperation(processOperation))
+            if (!Model.maySupersedeOperation(processOperation, queuedOperation))
                 return ;
             stoppingForLatest = true;
             helperProcess.running = false;

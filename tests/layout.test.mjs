@@ -239,7 +239,7 @@ test('schedule display values reconcile after save and persistence failure is su
 test('transactional helper operations finish before the queued latest request launches', () => {
   assert.match(qml, /property string processOperation/);
   assert.match(qml, /processOperation\s*=\s*queuedOperation/);
-  assert.match(qml, /if\s*\(!Model\.maySupersedeOperation\(processOperation\)\)\s*return\s*;/);
+  assert.match(qml, /if\s*\(!Model\.maySupersedeOperation\(processOperation,\s*queuedOperation\)\)\s*return\s*;/);
   assert.match(qml, /requestId\s*!==\s*latestRequestId[\s\S]*?Qt\.callLater\(root\.launchLatest\)/);
   assert.match(qml, /processOperation === "schedule-reconcile"[\s\S]*?feedbackText = root\.text\("saved"\)/);
   assert.match(qml, /if\s*\(processOperation === "schedule-reconcile"\s*&&\s*Model\.shouldRetryScheduleReconcile\(queuedOperation\)\)\s*scheduleReconcilePending = true/);

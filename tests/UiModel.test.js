@@ -41,14 +41,19 @@ test('isSliderSection owns exactly the three drag sections', () => {
     assert.equal(Model.isSliderSection(section), false, section);
 });
 
-test('only latest-wins slider and read operations may be superseded', () => {
+test('superseding respects active slider writes while preserving slider latest-wins', () => {
   for (const operation of ['schedule', 'schedule-toggle', 'shortcut', 'snooze', 'toggle']) {
-    assert.equal(Model.maySupersedeOperation(operation), false, operation);
+    assert.equal(Model.maySupersedeOperation(operation, 'brightness'), false, operation);
   }
-  for (const operation of ['brightness', 'temperature', 'gamma', 'status', 'schedule-status', 'reconcile', 'schedule-reconcile']) {
-    assert.equal(Model.maySupersedeOperation(operation), true, operation);
+  for (const operation of ['status', 'schedule-status', 'reconcile', 'schedule-reconcile']) {
+    assert.equal(Model.maySupersedeOperation(operation, 'status'), true, operation);
   }
-  assert.equal(Model.maySupersedeOperation('future-mutation'), false);
+  for (const slider of ['brightness', 'temperature', 'gamma']) {
+    assert.equal(Model.maySupersedeOperation(slider, 'status'), false, `${slider} -> status`);
+    for (const nextSlider of ['brightness', 'temperature', 'gamma'])
+      assert.equal(Model.maySupersedeOperation(slider, nextSlider), true, `${slider} -> ${nextSlider}`);
+  }
+  assert.equal(Model.maySupersedeOperation('future-mutation', 'status'), false);
 });
 
 test('a superseded schedule reconcile retries after reads but yields to manual actions', () => {

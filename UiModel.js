@@ -187,8 +187,11 @@ function isSliderSection(section) {
 
 // Keep transactional writes intact while allowing absolute slider values and
 // read/reconcile work to yield to the newest request.
-function maySupersedeOperation(operation) {
-  return ['brightness', 'temperature', 'gamma', 'status', 'schedule-status', 'reconcile', 'schedule-reconcile'].indexOf(operation) !== -1;
+function maySupersedeOperation(operation, nextOperation) {
+  var sliders = ['brightness', 'temperature', 'gamma'];
+  if (sliders.indexOf(operation) !== -1)
+    return sliders.indexOf(nextOperation) !== -1;
+  return ['status', 'schedule-status', 'reconcile', 'schedule-reconcile'].indexOf(operation) !== -1;
 }
 
 function shouldRetryScheduleReconcile(operation) {
