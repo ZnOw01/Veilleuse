@@ -17,7 +17,6 @@ brain/
 
 # Internal planning/spec material — never shipped
 docs/
-/ORIGINAL_REQUEST.md
 
 # Python bytecode and tool caches
 __pycache__/
