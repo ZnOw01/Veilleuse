@@ -5,7 +5,7 @@ import Model from '../UiModel.js';
 
 const qml = fs.readFileSync(new URL('../Panel.qml', import.meta.url), 'utf8');
 
-// --- Helper to extract Panel navigation state machine logic ---
+// Navigation model harness; source contracts below check the QML separately.
 function createPanelState() {
   const routeOptions = Model.routeOrder(); // ['home', 'automation', 'settings']
   let state = {
@@ -378,7 +378,7 @@ test('Panel.qml resets scroll position and refocuses key catcher on every naviga
 test('All interactive buttons in Panel.qml call refocusKeyCatcher to prevent dead focus traps', () => {
   // Navigation chevrons
   const prevBtn = qml.slice(qml.indexOf('id: prevRouteButton'), qml.indexOf('id: routeTitleText'));
-  const nextBtn = qml.slice(qml.indexOf('id: nextRouteButton'), qml.indexOf('// Global helper errors'));
+  const nextBtn = qml.slice(qml.indexOf('id: nextRouteButton'), qml.indexOf('id: globalErrorBanner'));
   assert.match(prevBtn, /root\.refocusKeyCatcher\(\)/);
   assert.match(nextBtn, /root\.refocusKeyCatcher\(\)/);
 

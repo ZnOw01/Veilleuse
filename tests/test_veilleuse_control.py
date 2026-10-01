@@ -277,6 +277,27 @@ class StatusTests(HelperModuleTests):
         self.assertFalse(status["brightness"]["available"])
         self.assertIsNone(status["brightness"]["percent"])
 
+    def test_status_unavailable_sections_include_stable_error_codes(self):
+        self.sim.fail_brightness_read = True
+        self.sim.hyprsunset_available = False
+        status = json.loads(self.run_cli("status")[1])
+        self.assertEqual(status["brightness"]["error_code"], "brightness_readback_failed")
+        self.assertEqual(status["nightlight"]["error_code"], "backend_unavailable")
+
+    def test_status_reads_brightness_from_the_selected_enabled_monitor(self):
+        self.sim.monitor_state_text = monitor_state_text(
+            focused="DP-1",
+            monitors=[
+                {"name": "eDP-1", "enabled": True, "focused": False},
+                {"name": "DP-1", "enabled": True, "focused": True},
+            ],
+        )
+        code, output = self.run_cli("status", "--monitor", "eDP-1")
+        self.assertEqual(code, 0, output)
+        status = json.loads(output)
+        self.assertEqual(status["brightness"]["monitor"], "eDP-1")
+        self.assertEqual(status["brightness"]["percent"], 42)
+
     def test_status_ignores_malformed_monitor_entries(self):
         self.sim.monitor_state_text = monitor_state_text(
             monitors=[
@@ -487,6 +508,15 @@ class FinalIntegrationCliTests(HelperModuleTests):
     def test_final_cli_grammar_matches_panel_commands(self):
         parser = vc.build_parser()
         commands = (
+            ("status", "--monitor", "DP-1"),
+            ("nightlight", "toggle", "--monitor", "DP-1"),
+            ("snooze", "status", "--monitor", "DP-1"),
+            ("snooze", "set", "--minutes", "30", "--monitor", "DP-1"),
+            ("snooze", "clear", "--monitor", "DP-1"),
+            ("schedule", "status", "--monitor", "DP-1"),
+            ("schedule", "enable", "--monitor", "DP-1"),
+            ("schedule", "disable", "--monitor", "DP-1"),
+            ("reconcile", "--monitor", "DP-1"),
             ("brightness", "60", "--monitor", "DP-1"),
             ("snooze", "status"),
             ("snooze", "set", "--minutes", "30"),
@@ -522,6 +552,13 @@ class FinalIntegrationCliTests(HelperModuleTests):
             "profile {\n    time = 06:00\n    identity = true\n}\n\n"
             "profile {\n    time = 15:30\n    temperature = 3500\n}\n",
             encoding="utf-8",
+        )
+        self.sim.monitor_state_text = monitor_state_text(
+            focused="DP-1",
+            monitors=[
+                {"name": "eDP-1", "enabled": True, "focused": False},
+                {"name": "DP-1", "enabled": True, "focused": True},
+            ],
         )
         module = vc._state_module()
         module.write_state(
@@ -566,11 +603,11 @@ class FinalIntegrationCliTests(HelperModuleTests):
         )
 
         for command in (
-            ("snooze", "status"),
-            ("snooze", "set", "--minutes", "30"),
-            ("snooze", "set", "--seconds", "90"),
-            ("snooze", "clear"),
-            ("reconcile",),
+            ("snooze", "status", "--monitor", "eDP-1"),
+            ("snooze", "set", "--minutes", "30", "--monitor", "eDP-1"),
+            ("snooze", "set", "--seconds", "90", "--monitor", "eDP-1"),
+            ("snooze", "clear", "--monitor", "eDP-1"),
+            ("reconcile", "--monitor", "eDP-1"),
         ):
             with self.subTest(command=command):
                 code, output = self.run_cli(*command)
@@ -578,13 +615,16 @@ class FinalIntegrationCliTests(HelperModuleTests):
                 payload = json.loads(output)
                 self.assertIn("automation", payload)
                 self.assertIn("nightlight", payload)
+                self.assertEqual(payload["brightness"]["monitor"], "eDP-1")
 
-        code, output = self.run_cli("schedule", "disable")
+        code, output = self.run_cli("schedule", "disable", "--monitor", "eDP-1")
         self.assertEqual(code, 0, output)
         self.assertFalse(json.loads(output)["automation"]["schedule_enabled"])
-        code, output = self.run_cli("schedule", "enable")
+        self.assertEqual(json.loads(output)["brightness"]["monitor"], "eDP-1")
+        code, output = self.run_cli("schedule", "enable", "--monitor", "eDP-1")
         self.assertEqual(code, 0, output)
         self.assertTrue(json.loads(output)["automation"]["schedule_enabled"])
+        self.assertEqual(json.loads(output)["brightness"]["monitor"], "eDP-1")
 
     def test_new_command_errors_have_stable_json_codes(self):
         code, output = self.run_cli("snooze", "set")
@@ -626,6 +666,18 @@ class FinalIntegrationCliTests(HelperModuleTests):
 
 
 class NightlightTests(HelperModuleTests):
+    def test_combined_nightlight_response_keeps_the_selected_monitor_reading(self):
+        self.sim.monitor_state_text = monitor_state_text(
+            focused="DP-1",
+            monitors=[
+                {"name": "eDP-1", "enabled": True, "focused": False},
+                {"name": "DP-1", "enabled": True, "focused": True},
+            ],
+        )
+        code, output = self.run_cli("nightlight", "toggle", "--monitor", "eDP-1")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(json.loads(output)["brightness"]["monitor"], "eDP-1")
+
     def test_temperature_set_applies_and_reads_back(self):
         code, output = self.run_cli("nightlight", "temperature", "4000")
         self.assertEqual(code, 0)

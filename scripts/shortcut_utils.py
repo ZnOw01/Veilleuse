@@ -63,7 +63,7 @@ _SINGLE_KEY = re.compile(r"^[A-Z0-9]$")
 _BIND_CALL = re.compile(r"(?m)\b(?:o|hl)\.(?:bind|unbind)\s*\(")
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # paths
 
 def xdg_config_home() -> Path:
@@ -78,7 +78,7 @@ def bindings_path() -> Path:
     return xdg_config_home() / "hypr" / "bindings.lua"
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # bounded subprocess (best-effort hyprctl reload only)
 
 def run_command(args, *, timeout=RELOAD_TIMEOUT):
@@ -265,7 +265,7 @@ def _detect_eol(text):
     return "\r\n" if "\r\n" in text else "\n"
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # key validation
 
 def parse_keys(spec):
@@ -319,7 +319,7 @@ def canonical_keys(spec):
     return _format_keys(mods, key)
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # marker block editing (pure text operations)
 
 def _block_text(keys_spec, eol):
@@ -397,14 +397,12 @@ def remove_block(text):
     keys = _block_keys(text[start:end])
     prefix = start
     eol = _detect_eol(text) if text else "\n"
-    if start > 0 and text[:start].endswith(eol + eol):
-        prefix = start - len(eol)
-    elif start > 0 and text[:start].endswith(eol):
+    if start > 0 and text[:start].endswith(eol):
         prefix = start - len(eol)
     return text[:prefix] + text[end:], True, keys
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # collision detection
 
 class UnparseableBindingError(ValueError):
@@ -638,7 +636,7 @@ def collision(text, keys_spec):
     return active_bind
 
 
-# --------------------------------------------------------------------------- \
+# ---------------------------------------------------------------------------
 # status / install / remove
 
 def shortcut_status():

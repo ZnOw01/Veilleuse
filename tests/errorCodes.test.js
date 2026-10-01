@@ -26,6 +26,7 @@ const EMITTED_ERROR_CODES = [
   'brightness_write_failed',
   'temperature_readback_failed',
   'gamma_readback_failed',
+  'schedule_invalid',
   'schedule_unavailable',
   'schedule_failed',
   'state_unavailable',

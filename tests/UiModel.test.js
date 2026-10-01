@@ -152,6 +152,17 @@ test('schedule parsing errors stay scoped to schedule without leaking into globa
   assert.equal(state.schedule.error, 'La configuración no contiene perfiles');
 });
 
+test('normalizes stable error codes for each status section', () => {
+  const state = Model.normalizeState({
+    brightness: { available: false, error: 'driver busy', error_code: 'brightness_readback_failed' },
+    nightlight: { available: false, error: 'hyprsunset not running', error_code: 'backend_unavailable' },
+    schedule: { available: false, error: 'malformed profile', error_code: 'schedule_invalid' }
+  });
+  assert.equal(state.brightness.error_code, 'brightness_readback_failed');
+  assert.equal(state.nightlight.error_code, 'backend_unavailable');
+  assert.equal(state.schedule.error_code, 'schedule_invalid');
+});
+
 test('rejects helper responses without a request identity', () => {
   const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
   const result = Model.commitResponse(state, { ok: true, state: { enabled: true } });
@@ -208,6 +219,21 @@ test('normalizes the combined JSON emitted by veilleuse-control', () => {
     temperature: 3200,
     error: null
   });
+});
+
+test('keeps each control ready when an unrelated backend section is unavailable', () => {
+  const state = Model.normalizeState({
+    brightness: { available: false, percent: null, monitor: 'DP-1', error: 'monitor unavailable' },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 90 },
+    schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500 }
+  });
+  assert.equal(state.available, false);
+  assert.equal(state.brightness.available, false);
+  assert.equal(state.nightlight.available, true);
+  assert.equal(state.enabled, true);
+  assert.equal(state.temperature, 3500);
+  assert.equal(state.gamma, 90);
+  assert.equal(state.schedule.available, true);
 });
 
 test('fails closed when schedule boundaries are equal', () => {
@@ -759,6 +785,13 @@ test('Tier 2 - F9 Navigation Boundary: moveCursor clamps at limits without wrap-
   }
 });
 
+test('cursorAtControl preserves the hovered control field and clamps by route section', () => {
+  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 1, 10, 'automation'), { section: 1, field: 10 });
+  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 2, 99, 'automation'), { section: 2, field: 11 });
+  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 2, 2, 'settings'), { section: 2, field: 2 });
+  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 0, 4, 'home'), { section: 0, field: 0 });
+});
+
 test('Tier 2 - F11 Drag Reconciliation: reconcileDragTargets respects tolerance windows', () => {
   const current = Model.normalizeState({
     available: true,
@@ -1271,6 +1304,16 @@ test('Tier 2 - F7 Schedule Duration Boundaries: calculateScheduleDuration handle
   assert.equal(Model.calculateScheduleDuration(null, '18:00').valid, false);
   assert.equal(Model.calculateScheduleDuration('06:00', '').valid, false);
   assert.equal(Model.calculateScheduleDuration(undefined, undefined).valid, false);
+});
+
+test('scheduleTrackSegments maps daytime and midnight-wrapping windows onto a 24-hour track', () => {
+  assert.deepEqual(Model.scheduleTrackSegments('06:00', '18:00'), [{ from: 0.25, to: 0.75 }]);
+  assert.deepEqual(Model.scheduleTrackSegments('22:00', '06:00'), [
+    { from: 0, to: 0.25 },
+    { from: 22 / 24, to: 1 }
+  ]);
+  assert.deepEqual(Model.scheduleTrackSegments('06:00', '06:00'), []);
+  assert.deepEqual(Model.scheduleTrackSegments('25:00', '06:00'), []);
 });
 
 test('Tier 1 - F8 Shortcut Tokenizer: parseShortcutTokens splits keys into uppercase tokens', () => {

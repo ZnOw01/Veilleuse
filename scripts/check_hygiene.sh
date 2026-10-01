@@ -1,9 +1,6 @@
 #!/bin/bash
-# Package hygiene gate shared by scripts/check.sh and CI.
-#
-# Fails on a clone that is not release-safe: missing or wrong package entry
-# points, symlinks, or any __pycache__ / *.pyc bytecode cache left behind by
-# running the python helpers outside the gate.
+# Package gate shared by local checks and CI: validate the manifest and helper
+# permissions, then reject symlinks and bytecode outside excluded tool directories.
 set -euo pipefail
 
 TARGET=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}

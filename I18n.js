@@ -1,11 +1,5 @@
-// I18n.js — pure localized dictionaries for the Veilleuse panel.
-//
-// Kept free of Qt globals so the dictionaries and the fallback/parity contract
-// can be exercised with Node (the module.exports guard below lets Quickshell
-// import it with `import "I18n.js" as I18n`).
-//
-// The default locale is `en`: the plugin ships in English and Spanish stays a
-// first-class choice in settings. `es` mirrors every key.
+// Qt-independent dictionaries shared by QML and Node tests.
+// English is the default; Spanish must keep the same keys.
 
 var DEFAULT_LOCALE = 'en';
 var LOCALES = ['en', 'es'];
@@ -41,6 +35,7 @@ var en = {
   // Schedule editor.
   dayPeriod: 'Day',
   nightPeriod: 'Night',
+  scheduleTrack: 'Daylight window · 24 hours',
   scheduleDayTimeFormat: 'Day time must use the HH:MM format',
   scheduleNightTimeFormat: 'Night time must use the HH:MM format',
   scheduleDayNightEqual: 'Day and night times must be different',
@@ -57,6 +52,7 @@ var en = {
   unitMinutes: 'Minutes',
   unitSeconds: 'Seconds',
   sunset: 'Sunset',
+  nightStart: 'Night start',
   quickSnooze: 'Quick snooze',
   // Settings.
   settingsTitle: 'Settings',
@@ -86,6 +82,7 @@ var en = {
   errReadbackFailed: 'The change could not be confirmed.',
   errBrightnessWrite: 'The monitor brightness could not be written.',
   errScheduleUnavailable: 'The configured schedule is unavailable.',
+  errAutomationUnavailable: 'Automation is unavailable.',
   errScheduleFailed: 'The schedule could not be updated.',
   errStateFailed: 'The state could not be saved.',
   errUnsafePath: 'The saved data path is not safe.',
@@ -140,6 +137,7 @@ var es = {
   provenanceUnknown: 'Desconocido',
   dayPeriod: 'Día',
   nightPeriod: 'Noche',
+  scheduleTrack: 'Ventana diurna · 24 horas',
   scheduleDayTimeFormat: 'La hora diurna debe usar el formato HH:MM',
   scheduleNightTimeFormat: 'La hora nocturna debe usar el formato HH:MM',
   scheduleDayNightEqual: 'Las horas de día y noche deben ser diferentes',
@@ -155,6 +153,7 @@ var es = {
   unitMinutes: 'Minutos',
   unitSeconds: 'Segundos',
   sunset: 'Atardecer',
+  nightStart: 'Inicio de noche',
   quickSnooze: 'Posposición rápida',
   settingsTitle: 'Ajustes',
   language: 'Idioma',
@@ -182,6 +181,7 @@ var es = {
   errReadbackFailed: 'No se pudo confirmar el cambio.',
   errBrightnessWrite: 'No se pudo escribir el brillo del monitor.',
   errScheduleUnavailable: 'El horario configurado no está disponible.',
+  errAutomationUnavailable: 'La automatización no está disponible.',
   errScheduleFailed: 'No se pudo actualizar el horario.',
   errStateFailed: 'No se pudo guardar el estado.',
   errUnsafePath: 'La ruta de datos guardados no es segura.',
@@ -222,11 +222,11 @@ var ALIASES = {
   home: 'routeHome', automation: 'routeAutomation', settings: 'routeSettings',
   night_light: 'heroTitle', manual_override: 'manualOverride',
   focused_monitor: 'focusedMonitor', monitor: 'monitor',
-  day_period: 'dayPeriod', night_period: 'nightPeriod',
+  day_period: 'dayPeriod', night_period: 'nightPeriod', schedule_track: 'scheduleTrack',
   snooze: 'snoozeTitle', snooze_set: 'snoozeSet', clear_snooze: 'snoozeClear',
   snooze_active: 'snoozeStatusActive', minutes_short: 'minutesShort',
   unit_hours: 'unitHours', unit_minutes: 'unitMinutes', unit_seconds: 'unitSeconds',
-  sunset: 'sunset', quick_snooze: 'quickSnooze',
+  sunset: 'sunset', night_start: 'nightStart', quick_snooze: 'quickSnooze',
   cancel: 'cancel', language: 'language', spanish: 'spanish', english: 'english',
   shortcut: 'shortcut', shortcut_keys: 'shortcutKeys', install_shortcut: 'shortcutInstall',
   remove_shortcut: 'shortcutRemove', working: 'working',

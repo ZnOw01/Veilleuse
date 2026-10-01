@@ -24,7 +24,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs tests/navigation_stress.test.mjs
 ```
 
-The Python baseline at commit `e1c16e4` is 357 passing tests. Node's built-in runner summarizes the seven test files; the gate does not claim a stable aggregate count of nested assertions.
+The Python baseline at commit `e1c16e4` is 357 passing tests. Node runs seven test files and reports test cases; those counts do not represent individual assertions.
 
 ## Host-dependent validation
 

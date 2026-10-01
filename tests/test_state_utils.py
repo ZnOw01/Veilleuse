@@ -594,7 +594,7 @@ class StateUtilsTest(unittest.TestCase):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
 
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # contract gaps: star-import safety, update_config, history corruption
 
     def test_star_import_exports_only_existing_symbols(self):

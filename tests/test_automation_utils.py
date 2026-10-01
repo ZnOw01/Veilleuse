@@ -8,7 +8,6 @@ temporary XDG home.  No live shell commands or real time are ever used.
 
 import copy
 import datetime
-import json
 import os
 import sys
 import tempfile
@@ -248,7 +247,7 @@ class AutomationUtilsTest(unittest.TestCase):
     def read_history(self):
         return state_utils.list_history()
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # snooze status
 
     def test_snooze_status_pure_active_expired_and_none(self):
@@ -443,7 +442,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(state["snooze_until"], 2800.0)
         self.assertEqual(state["manual_override"], self.manual_override())
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # transition
 
     def test_reconcile_noop_when_no_drift_and_idempotent(self):
@@ -659,7 +658,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertEqual(result["error_code"], "state_failed")
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # manual override / manual intent
 
     def manual_override(self, **changes):
@@ -944,7 +943,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertTrue(result["applied"])
         self.assertEqual(self.nightlight.applications, [(3500, 90)])
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # fail-closed defaults
 
     def test_reconcile_period_drift_applies_scheduled_display_once(self):
@@ -1073,7 +1072,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
 
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # ramp robustness: latest-wins cancellation, deadline, dedup
 
     def test_reconcile_ramp_cancelled_midway_reports_cancelled_with_honest_prefix(self):

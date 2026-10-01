@@ -1,9 +1,8 @@
 """Transactional enable/disable for Veilleuse-owned hyprsunset profiles.
 
-The schedule parser is deliberately shared with :mod:`schedule_utils`.  A
-toggle is allowed only when the complete file contains one valid day profile
-and one valid night profile.  This makes ownership unambiguous without
-guessing about similarly-shaped profiles belonging to another tool.
+The parser is shared with :mod:`schedule_utils`. A file with exactly one day
+and one night profile has implicit ownership. Files with additional profiles
+require explicit Veilleuse day/night markers so unrelated profiles survive.
 """
 
 from __future__ import annotations

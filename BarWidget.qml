@@ -8,7 +8,7 @@ BarWidget {
     id: root
 
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-    readonly property bool lightActive: panelLoader.item ? panelLoader.item.stateReady === true && panelLoader.item.state.enabled === true : false
+    readonly property bool lightActive: panelLoader.item ? panelLoader.item.nightlightReady === true && panelLoader.item.state.enabled === true : false
     readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
     readonly property var liveState: panelLoader.item ? panelLoader.item.state : null
     readonly property string barGlyph: root.glyphForState(root.liveState)
@@ -31,11 +31,12 @@ BarWidget {
             return snoozeText + (remaining > 0 ? " (" + remaining + " " + minText + ")" : "") + " · " + provenance;
         }
         var title = I18n.t("night_light", panelLoader.item ? panelLoader.item.locale : "en");
-        if (state.available !== true) return title;
+        var nightlight = state.nightlight || {};
+        if (nightlight.available !== true) return title + " · " + I18n.t("unavailable", panelLoader.item ? panelLoader.item.locale : "en");
         if (state.enabled === true && state.temperature) {
             return title + ": " + state.temperature + " K · " + provenance;
         }
-        return title + " · " + provenance;
+        return title + " · " + I18n.t("disabled", panelLoader.item ? panelLoader.item.locale : "en");
     }
 
     function injectPanel() {

@@ -1,7 +1,5 @@
-// Icons.js — Centralized Nerd Fonts (Material Design Icons nf-md-*) codepoints
-// for the Veilleuse plugin (Omarchy Quattro / Quickshell).
-//
-// Uses current Nerd Fonts v3 Material Design Icons (nf-md-*) codepoints.
+// Nerd Fonts v3 Material Design glyphs (nf-md-*).
+// Keep the names and codepoints beside the glyphs for font troubleshooting.
 
 var ICONS = {
   // Weather / Sun / Moon (Night Light)
@@ -54,8 +52,7 @@ function glyphForState(value) {
   if (automation.snoozed === true) return ICONS.snooze;
   if (input.available !== true) return ICONS.unavailable;
   if (input.enabled === true) return automation.origin === 'preset' ? ICONS.palette : ICONS.weatherSunny;
-  // Off is a state, not a fault: the moon reads as "night light idle".
-  // The close-circle glyph stays reserved for genuinely broken states.
+  // An idle night light uses the moon; availability failures use their own glyph.
   return ICONS.weatherNight;
 }
 

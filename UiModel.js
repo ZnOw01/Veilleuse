@@ -2,13 +2,18 @@
 
 var ROUTES = ['home', 'automation', 'settings'];
 
-// Each route owns its vertical list of cursor sections. The keyboard is
-// arrows-only: Up/Down walk the sections of the active route and Left/Right
-// switch routes; inside editors the fields themselves own the keys.
+// Up/Down move between sections; Left/Right adjust sliders or switch routes.
+// Focused editors handle their own keys.
 var ROUTE_SECTIONS = {
   home: ['nightLight', 'brightness', 'temperature', 'gamma', 'monitor'],
   automation: ['scheduleToggle', 'schedule', 'snooze'],
   settings: ['locale', 'shortcut', 'shortcutActions']
+};
+
+var CONTROL_FIELD_LIMITS = {
+  home: [0, 0, 0, 0, 0],
+  automation: [0, 10, 11],
+  settings: [0, 0, 2]
 };
 
 var DRAG_SECTIONS = ['brightness', 'temperature', 'gamma'];
@@ -22,17 +27,14 @@ var KEYBOARD_STEPS = {
   gamma: 1
 };
 
-// Load I18n when running under Node (CommonJS module present). Quickshell has
-// no `require`, so the bundled DEFAULT_COPY below keeps the panel fully
-// functional in its native English default until the locale wiring is added.
+// Node loads I18n through CommonJS; QML injects it from Component.onCompleted.
+// The English fallback keeps lookups valid before that injection.
 var I18n = null;
 if (typeof module !== 'undefined' && module.exports) {
   I18n = require('./I18n.js');
 }
 
-// Bundled English default used only as a Quickshell fallback; it mirrors the
-// exact I18n.en dictionary key-for-key (enforced by the parity test) so the
-// panel never shows a raw key before the locale library is wired in.
+// Keep the fallback in sync with I18n.en; parity tests enforce its keys.
 var DEFAULT_COPY = {
   heroTitle: 'Night light',
   brightness: 'Brightness',
@@ -60,6 +62,7 @@ var DEFAULT_COPY = {
   provenanceUnknown: 'Unknown',
   dayPeriod: 'Day',
   nightPeriod: 'Night',
+  scheduleTrack: 'Daylight window · 24 hours',
   scheduleDayTimeFormat: 'Day time must use the HH:MM format',
   scheduleNightTimeFormat: 'Night time must use the HH:MM format',
   scheduleDayNightEqual: 'Day and night times must be different',
@@ -75,6 +78,7 @@ var DEFAULT_COPY = {
   unitMinutes: 'Minutes',
   unitSeconds: 'Seconds',
   sunset: 'Sunset',
+  nightStart: 'Night start',
   quickSnooze: 'Quick snooze',
   settingsTitle: 'Settings',
   language: 'Language',
@@ -102,6 +106,7 @@ var DEFAULT_COPY = {
   errReadbackFailed: 'The change could not be confirmed.',
   errBrightnessWrite: 'The monitor brightness could not be written.',
   errScheduleUnavailable: 'The configured schedule is unavailable.',
+  errAutomationUnavailable: 'Automation is unavailable.',
   errScheduleFailed: 'The schedule could not be updated.',
   errStateFailed: 'The state could not be saved.',
   errUnsafePath: 'The saved data path is not safe.',
@@ -130,11 +135,7 @@ var DEFAULT_COPY = {
 
 var copy = (I18n && I18n.en) ? I18n.en : DEFAULT_COPY;
 
-// Wire the real locale library at runtime. Quickshell has no `module` or
-// `require`, so the Node bootstrap above cannot run there; the panel calls
-// this from Component.onCompleted with its imported I18n.js namespace to give
-// t() the locale-aware dictionaries instead of the bundled English fallback.
-// Passing null unwires the library and falls back to DEFAULT_COPY again.
+// QML supplies its imported I18n namespace here; null restores the fallback.
 function setI18n(lib) {
   I18n = lib || null;
   copy = I18n && I18n.en ? I18n.en : DEFAULT_COPY;
@@ -160,7 +161,6 @@ function boundedInteger(value, minimum, maximum) {
   return number === null ? null : Math.round(number);
 }
 
-// Vertical-only cursor movement: Up/Down walk the sections of the route.
 function moveCursor(cursor, key, route) {
   var names = routeSections(route);
   var section = boundedInteger(cursor && cursor.section, 0, names.length - 1);
@@ -170,8 +170,18 @@ function moveCursor(cursor, key, route) {
   return { section: section, field: 0 };
 }
 
-// Route switching for the Left/Right arrows: a fixed ring over the three
-// views, clamped to valid indices.
+function cursorAtControl(cursor, section, field, route) {
+  var names = routeSections(route);
+  var sectionIndex = boundedInteger(section, 0, names.length - 1);
+  var fieldLimit = CONTROL_FIELD_LIMITS[route] && CONTROL_FIELD_LIMITS[route][sectionIndex] !== undefined
+    ? CONTROL_FIELD_LIMITS[route][sectionIndex]
+    : 0;
+  var fieldIndex = boundedInteger(field, 0, fieldLimit);
+  if (sectionIndex === null || fieldIndex === null) return cursorStart();
+  return { section: sectionIndex, field: fieldIndex };
+}
+
+// Wrap at the ends so either arrow can reach every route.
 function adjacentRoute(route, direction) {
   var index = ROUTES.indexOf(route);
   if (index === -1) index = 0;
@@ -179,8 +189,6 @@ function adjacentRoute(route, direction) {
   return ROUTES[next];
 }
 
-// Slider sections respond to the Left/Right arrows: step the live value
-// instead of switching routes while the cursor owns a slider.
 function isSliderSection(section) {
   return DRAG_SECTIONS.indexOf(section) !== -1;
 }
@@ -224,10 +232,7 @@ var SECTION_TOLERANCE = {
   gamma: 1
 };
 
-// Absolute pointer drag intent. The helper writes absolute values in one
-// shot, so a drag target is the value the finger last aimed at; the label
-// shows it while the write is in flight and the confirmed state takes over
-// on readback.
+// Keep the latest pointer target visible until the hardware confirms it.
 function dragTargetEmpty() {
   return { brightness: null, temperature: null, gamma: null };
 }
@@ -260,10 +265,8 @@ function confirmedValue(state, section) {
   return null;
 }
 
-// Advance a pending drag target against a confirmed readback. With absolute
-// writes one request reaches the goal, so a target survives only while a
-// same-section readback has not reached it (within the helper tolerance) and
-// is cleared on success or on foreign operations.
+// Retry only an unsettled target for the operation just confirmed.
+// A foreign operation clears drag intent instead of replaying it.
 function reconcileDragTargets(previous, current, target, lastOperation) {
   var out = dragTargetEmpty();
   var src = target && typeof target === 'object' ? target : {};
@@ -297,12 +300,14 @@ function normalizeBrightness(source, root) {
   var percentValue = raw.percent !== undefined ? raw.percent : (typeof source === 'number' ? source : root.brightness);
   var percent = validNumber(percentValue, 1, 100);
   var advertised = raw.available !== undefined ? raw.available === true : root.available === true;
-  return {
+  var result = {
     available: advertised && percent !== null,
     percent: advertised && percent !== null ? percent : null,
     monitor: raw.monitor ? String(raw.monitor) : null,
     error: raw.error ? String(raw.error) : null
   };
+  if (typeof raw.error_code === 'string' && raw.error_code !== '') result.error_code = raw.error_code;
+  return result;
 }
 
 function normalizeNightlight(source, root) {
@@ -313,7 +318,7 @@ function normalizeNightlight(source, root) {
   var gamma = validNumber(gammaValue, 0, 100);
   var advertised = raw.available !== undefined ? raw.available === true : root.available === true;
   var enabled = raw.enabled !== undefined ? raw.enabled === true : root.enabled === true;
-  return {
+  var result = {
     available: advertised && temperature !== null && gamma !== null,
     enabled: advertised && temperature !== null && gamma !== null && enabled,
     identity: raw.identity === true || raw.identity === false ? raw.identity : null,
@@ -321,6 +326,8 @@ function normalizeNightlight(source, root) {
     gamma: advertised && gamma !== null ? gamma : null,
     error: raw.error ? String(raw.error) : null
   };
+  if (typeof raw.error_code === 'string' && raw.error_code !== '') result.error_code = raw.error_code;
+  return result;
 }
 
 function normalizeSchedule(source) {
@@ -338,7 +345,7 @@ function normalizeSchedule(source) {
     available = false;
   }
   var period = raw.period === 'day' || raw.period === 'night' ? raw.period : null;
-  return {
+  var result = {
     available: available,
     day_time: dayTime,
     day_temp: dayTemperature,
@@ -351,6 +358,8 @@ function normalizeSchedule(source) {
     temperature: nightTemperature,
     error: raw.error ? String(raw.error) : null
   };
+  if (typeof raw.error_code === 'string' && raw.error_code !== '') result.error_code = raw.error_code;
+  return result;
 }
 
 function normalizeState(raw) {
@@ -363,11 +372,11 @@ function normalizeState(raw) {
     available = available && source.available === true;
   return {
     available: available,
-    enabled: available && nightlight.enabled,
+    enabled: nightlight.available && nightlight.enabled,
     brightness: brightness,
     brightnessPercent: brightness.percent,
-    temperature: available ? nightlight.temperature : null,
-    gamma: available ? nightlight.gamma : null,
+    temperature: nightlight.temperature,
+    gamma: nightlight.gamma,
     nightlight: nightlight,
     schedule: schedule,
     error: String(source.error || brightness.error || nightlight.error || (available ? '' : copy.notConfirmed))
@@ -405,7 +414,7 @@ function validateScheduleFields(start, end, dayTemperature, dayBrightness, dayGa
     return { valid: false, error: t('scheduleDayTemperatureRange', locale) };
   if (validNumber(nightTemperature, 2500, 5000) === null)
     return { valid: false, error: t('scheduleNightTemperatureRange', locale) };
-  // Display values are optional: an empty editor means "leave unchanged".
+  // Empty display fields omit that setting from the saved schedule.
   if (dayBrightness !== null && dayBrightness !== '' && validNumber(dayBrightness, 1, 100) === null)
     return { valid: false, error: t('scheduleBrightnessRange', locale) };
   if (dayGamma !== null && dayGamma !== '' && validNumber(dayGamma, 0, 100) === null)
@@ -467,12 +476,9 @@ function isManualOverride(state) {
   return false;
 }
 
-// Superficial state merge: nested brightness/nightlight/schedule objects merge
-// key-by-key, every other patch key overwrites, a full status patch (brightness
-// plus nightlight) re-derives availability, `enabled` and nightlight.enabled
-// stay in sync, and the result re-normalizes so no unvalidated value renders.
-// Shared by commitResponse and by the panel when it adopts the state of a
-// superseded write that still physically applied.
+// Preserve unrelated sections when a partial readback arrives. Full status
+// refreshes recompute availability; normalization validates the merged values.
+// Superseded writes may still report physical progress through this path.
 function mergeStatePatch(previous, patch) {
   var current = normalizeState(previous);
   var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
@@ -568,6 +574,7 @@ var ERROR_CODE_KEYS = {
   gamma_readback_failed: 'errReadbackFailed',
   brightness_write_failed: 'errBrightnessWrite',
   schedule_unavailable: 'errScheduleUnavailable',
+  schedule_invalid: 'errScheduleInvalid',
   schedule_failed: 'errScheduleFailed',
   state_unavailable: 'errStateFailed',
   state_failed: 'errStateFailed',
@@ -677,6 +684,20 @@ function calculateScheduleDuration(startTime, endTime) {
   };
 }
 
+// Return daylight intervals as fractions of a normalized 24-hour track.
+// An overnight day window wraps midnight and therefore uses two segments.
+function scheduleTrackSegments(startTime, endTime) {
+  var start = validTime(startTime);
+  var end = validTime(endTime);
+  if (!start || !end || start === end) return [];
+  var startParts = start.split(':');
+  var endParts = end.split(':');
+  var from = (parseInt(startParts[0], 10) * 60 + parseInt(startParts[1], 10)) / 1440;
+  var to = (parseInt(endParts[0], 10) * 60 + parseInt(endParts[1], 10)) / 1440;
+  if (to > from) return [{ from: from, to: to }];
+  return [{ from: 0, to: to }, { from: from, to: 1 }];
+}
+
 function parseShortcutTokens(shortcutStr) {
   var s = String(shortcutStr || '').trim();
   if (!s) return [];
@@ -692,6 +713,7 @@ if (typeof module !== 'undefined' && module.exports) {
     setI18n: setI18n,
     routeSections: routeSections,
     cursorStart: cursorStart,
+    cursorAtControl: cursorAtControl,
     moveCursor: moveCursor,
     adjacentRoute: adjacentRoute,
     isSliderSection: isSliderSection,
@@ -717,6 +739,7 @@ if (typeof module !== 'undefined' && module.exports) {
     routeOrder: routeOrder,
     provenanceLabel: provenanceLabel,
     calculateScheduleDuration: calculateScheduleDuration,
+    scheduleTrackSegments: scheduleTrackSegments,
     parseShortcutTokens: parseShortcutTokens
   };
 }

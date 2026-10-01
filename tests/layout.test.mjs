@@ -58,20 +58,16 @@ test('mouse hover moves the panel cursor onto the hovered row', () => {
   // The Omarchy cursor contract: every navigable section binds hasCursor to
   // a cursor.section index and a HoverHandler points the cursor at that same
   // index, so hover + arrows drive one single cursor.
-  assert.match(qml, /function cursorToSection\(index\)/);
+  assert.match(qml, /function cursorToSection\(index,\s*field\)/);
   const sections = [...qml.matchAll(/hasCursor:\s*root\.cursor\.section === (\d+)/g)].map(m => m[1]);
   assert.ok(sections.length >= 9, `expected all routes to be hover-navigable, got ${sections.length}`);
   for (const index of [...new Set(sections)]) {
-    const cursorTargets = qml.match(new RegExp(`root\\.cursorToSection\\(${index}\\)`, 'g')) || [];
-    // Action buttons that share one row (shortcut install/remove) bind
-    // hasCursor individually but share the row's single HoverHandler.
-    const buttonBindings = [...qml.matchAll(
-      new RegExp(`Button\\s*\\{[^{}]*?hasCursor:\\s*root\\.cursor\\.section === ${index}`, 'g')
-    )].length;
-    const surfaceCount = sections.filter(s => s === index).length - buttonBindings;
-    assert.ok(cursorTargets.length >= surfaceCount,
-      `section ${index} must hover-set the cursor it claims (${cursorTargets.length} hover(s) for ${surfaceCount} hasCursor binding(s))`);
+    assert.match(qml, new RegExp(`root\\.cursorToSection\\(${index}(?:,\\s*\\d+)?\\)`),
+      `section ${index} must set the cursor when hovered`);
   }
+  assert.match(qml, /root\.cursorToSection\(1,\s*10\)/, 'schedule actions expose their own cursor field');
+  assert.match(qml, /root\.cursorToSection\(2,\s*11\)/, 'snooze clear has its own cursor field');
+  assert.match(qml, /root\.cursorToSection\(2,\s*2\)/, 'shortcut removal has its own cursor field');
 });
 
 test('the keyboard is arrows-only and owned by an inline key catcher', () => {
@@ -93,7 +89,7 @@ test('the keyboard is arrows-only and owned by an inline key catcher', () => {
 });
 
 test('view switching is the two chevrons plus the current view name', () => {
-  const nav = qml.slice(qml.indexOf('// View switching'), qml.indexOf('id: heroSurface'));
+  const nav = qml.slice(qml.indexOf('id: contentColumn'), qml.indexOf('id: heroSurface'));
   assert.equal((nav.match(/PanelActionButton\s*\{/g) || []).length, 2);
   assert.match(nav, /text:\s*root\.routeTitle/);
   assert.match(nav, /horizontalAlignment:\s*Text\.AlignHCenter/);
@@ -105,7 +101,7 @@ test('view switching is the two chevrons plus the current view name', () => {
 test('the hero shows the title and switch only, with no schedule meta line', () => {
   const hero = qml.slice(qml.indexOf('id: heroSurface'), qml.indexOf('id: homeRoute'));
   assert.match(hero, /title:\s*root\.text\("night_light"\)/);
-  assert.match(hero, /onToggled:\s*root\.request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)/);
+  assert.match(hero, /onToggled:\s*root\.request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)/);
   assert.doesNotMatch(hero, /meta:/);
   assert.doesNotMatch(hero, /periodText|period_day|period_night|manual_override/);
 });
@@ -127,18 +123,18 @@ test('home route keeps the monitor picker as its only saved setting', () => {
 });
 
 test('automation header carries the window only while the schedule runs', () => {
-  const header = qml.slice(qml.indexOf('id: automationHeader'), qml.indexOf('// The schedule itself'));
+  const header = qml.slice(qml.indexOf('id: automationHeader'), qml.indexOf('id: scheduleEditorSurface'));
   assert.match(header, /text:\s*root\.text\("schedule"\)/);
-  assert.match(header, /visible:\s*root\.scheduleEnabled\s*&&\s*root\.stateReady/);
+  assert.match(header, /visible:\s*root\.scheduleEnabled\s*&&\s*root\.scheduleReady/);
   assert.match(header, /elide:\s*Text\.ElideRight/);
   assert.match(header, /id:\s*scheduleLabelsColumn/);
   // The off switch already says paused: no redundant "paused" caption.
   assert.doesNotMatch(header, /schedule_disabled|schedule_paused/);
-  assert.match(qml, /\["schedule",\s*enabled \? "enable" : "disable"\]/);
+  assert.match(qml, /\["schedule",\s*enabled \? "enable" : "disable",\s*"--monitor",\s*root\.selectedMonitor\]/);
 });
 
 test('the schedule editor is always visible and configures both periods', () => {
-  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
   assert.equal((editor.match(/\bTextField\s*\{/g) || []).length, 2);
   assert.equal((editor.match(/\bNumberField\s*\{/g) || []).length, 2);
   assert.equal((editor.match(/\bOptionalNumberField\s*\{/g) || []).length, 4);
@@ -173,13 +169,13 @@ test('snooze composes a number, a unit and one apply action', () => {
   for (const unit of ['unit_hours', 'unit_minutes', 'unit_seconds'])
     assert.match(snooze, new RegExp(`text:\\s*root\\.text\\("${unit}"\\)`));
   assert.match(snooze, /text:\s*root\.text\("snooze_set"\)/);
-  assert.match(snooze, /enabled:\s*root\.snoozeSeconds !== null\s*&&\s*!root\.actionPending/);
-  assert.match(qml, /\["snooze",\s*"set",\s*"--seconds",\s*String\(root\.snoozeSeconds\)\]/);
+  assert.match(snooze, /enabled:\s*root\.automationReady\s*&&\s*root\.snoozeSeconds !== null\s*&&\s*!root\.actionPending/);
+  assert.match(qml, /\["snooze",\s*"set",\s*"--seconds",\s*String\(root\.snoozeSeconds\),\s*"--monitor",\s*root\.selectedMonitor\]/);
   // The active snooze shows its remaining time and a cancel; nothing else.
   assert.match(snooze, /visible:\s*root\.snoozeActive/);
   assert.match(snooze, /snoozeRemainingMinutes/);
   assert.match(snooze, /text:\s*root\.text\("clear_snooze"\)/);
-  // The preset durations and "until tomorrow" are gone.
+  // Manual duration controls remain available alongside quick snooze actions.
   assert.doesNotMatch(qml, /snooze_30|snooze_120|until-tomorrow|until_tomorrow|setSnooze\(30\)|setSnooze\(120\)/);
 });
 
@@ -203,7 +199,7 @@ test('errors, feedback and schedule validation stay visible with equal padding',
 
   // Field validation sits right above Save and the saved confirmation right
   // below it, both inside the schedule editor column.
-  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze: enter a duration'));
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
   const validateAt = editor.indexOf('visible: root.scheduleValidationError !== ""');
   const saveAt = editor.indexOf('id: saveScheduleButton');
   const feedbackAt = editor.indexOf('visible: root.feedbackText !== ""');
@@ -231,7 +227,7 @@ test('successful schedule saves render short-lived feedback and refresh the draf
 test('schedule display values reconcile after save and persistence failure is surfaced', () => {
   const scheduleSuccess = qml.slice(qml.indexOf('if (processOperation === "schedule")'), qml.indexOf('function moveCursorVertically'));
   assert.match(scheduleSuccess, /payload\.state_persist_error/);
-  assert.match(qml, /function queueScheduleReconcile\(\)[\s\S]*?root\.request\(\["reconcile"\],\s*"schedule-reconcile"\)/);
+  assert.match(qml, /function queueScheduleReconcile\(\)[\s\S]*?root\.request\(\["reconcile",\s*"--monitor",\s*root\.selectedMonitor\],\s*"schedule-reconcile"\)/);
   assert.match(qml, /if\s*\(!scheduleReconcilePending\s*\|\|\s*actionPending\)/);
   assert.match(scheduleSuccess, /if\s*\(payload\s*&&\s*payload\.state_persist_error\)[\s\S]*?scheduleDisplayPersistError[\s\S]*?\}\s*else\s*\{[\s\S]*?schedule-reconcile/);
 });
@@ -247,7 +243,7 @@ test('transactional helper operations finish before the queued latest request la
 });
 
 test('optional schedule brightness and gamma inputs preserve an empty draft', () => {
-  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze: enter a duration'));
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
   assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*dayBrightnessEditor[\s\S]*?text:\s*root\.editDayBrightness/);
   assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*dayGammaEditor[\s\S]*?text:\s*root\.editDayGamma/);
   assert.match(editor, /OptionalNumberField\s*\{[\s\S]*?id:\s*nightBrightnessEditor[\s\S]*?text:\s*root\.editNightBrightness/);
@@ -256,17 +252,24 @@ test('optional schedule brightness and gamma inputs preserve an empty draft', ()
 });
 
 test('bar activity follows actual night-light state without depending on panel visibility', () => {
-  assert.match(barQml, /readonly property bool lightActive/);
+  assert.match(barQml, /readonly property bool lightActive:.*nightlightReady/);
   assert.match(barQml, /state\.enabled/);
   assert.match(barQml, /active:\s*root\.lightActive/);
   assert.doesNotMatch(barQml, /active:\s*root\.opened/);
+});
+
+test('bar tooltip reports natural color and uses night-light readiness independently', () => {
+  assert.match(barQml, /var nightlight = state\.nightlight \|\| \{\}/);
+  assert.match(barQml, /nightlight\.available !== true/);
+  assert.match(barQml, /I18n\.t\("unavailable"/);
+  assert.match(barQml, /I18n\.t\("disabled"/);
 });
 
 test('closed panel reconciles periodically so snooze expiry and schedule boundaries physically apply', () => {
   assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
   assert.match(qml, /running:\s*!root\.opened/);
   assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.reconcile\(\)/);
-  assert.match(qml, /function reconcile\(\)\s*\{\s*root\.request\(\["reconcile"\],\s*"reconcile"\)\s*;/);
+  assert.match(qml, /function reconcile\(\)\s*\{\s*root\.request\(\["reconcile",\s*"--monitor",\s*root\.selectedMonitor\],\s*"reconcile"\)\s*;/);
 });
 
 test('panel reconciles once after load, retrying until idle so an expired snooze applies even after a shell restart', () => {
@@ -275,7 +278,7 @@ test('panel reconciles once after load, retrying until idle so an expired snooze
 });
 
 test('global IPC toggleNightlight queues through the latest-wins request bus instead of silently dropping while busy or unavailable', () => {
-  assert.match(qml, /function toggleNightlight\(\)\s*\{\s*root\.request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)\s*;\s*\}/);
+  assert.match(qml, /function toggleNightlight\(\)\s*\{\s*root\.request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)\s*;\s*\}/);
 });
 
 test('v2 panel exposes three native routes and route navigation preserves context', () => {
@@ -300,14 +303,16 @@ test('route sections match the three compact views', () => {
 
 test('keyboard activation opens the pickers, focuses editors and runs actions', () => {
   const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('moduleName:'));
-  assert.match(activate, /section\s*===\s*"nightLight"[\s\S]*?\["nightlight",\s*"toggle"\]/);
+  assert.match(activate, /section\s*===\s*"nightLight"[\s\S]*?\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\]/);
   assert.match(activate, /section\s*===\s*"monitor"\)\s*\{\s*monitorSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"scheduleToggle"[\s\S]*?root\.toggleSchedule\(!root\.scheduleEnabled\)/);
-  assert.match(activate, /section\s*===\s*"schedule"\)\s*\{\s*startEditor\.forceActiveFocus\(\);/);
-  assert.match(activate, /section\s*===\s*"snooze"\)\s*\{\s*root\.applySnooze\(\);/);
+  assert.match(activate, /section\s*===\s*"schedule"\)[\s\S]*?scheduleEditors\s*=\s*\[startEditor,\s*startEditor[\s\S]*?scheduleEditor\.forceActiveFocus\(\)/);
+  assert.match(activate, /cursor\.field\s*===\s*0\s*\|\|\s*cursor\.field\s*===\s*10[\s\S]*?root\.applySnooze\(\)/);
+  assert.match(activate, /cursor\.field\s*===\s*11[\s\S]*?settingsCommand\("snooze",\s*\["clear"\]\)/);
   assert.match(activate, /section\s*===\s*"locale"\)\s*\{\s*localeSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"shortcut"\)\s*\{\s*shortcutField\.forceActiveFocus\(\);/);
   assert.match(activate, /section\s*===\s*"shortcutActions"[\s\S]*?install",\s*"--keys",\s*shortcutField\.text/);
+  assert.match(activate, /cursor\.field\s*===\s*2[\s\S]*?settingsCommand\("shortcut",\s*\["remove"\]\)/);
 });
 
 test('the blocked gate covers every editor and popup that must own its keys', () => {
@@ -352,9 +357,53 @@ test('a superseded helper exit still adopts the state of the write that physical
   assert.match(merge, /Model\.mergeStatePatch\(state,\s*patch\)/);
 });
 
-test('brightness writes pass the selected monitor and nightlight writes do not', () => {
+test('brightness and nightlight writes pass the selected monitor', () => {
   assert.match(qml, /request\(\["brightness",\s*String\(Math\.round\(value\)\),\s*"--monitor",\s*root\.selectedMonitor\],\s*section\)/);
-  assert.match(qml, /request\(\["nightlight",\s*section,\s*String\(Math\.round\(value\)\)\],\s*section\)/);
+  assert.match(qml, /request\(\["nightlight",\s*section,\s*String\(Math\.round\(value\)\),\s*"--monitor",\s*root\.selectedMonitor\],\s*section\)/);
+});
+
+test('combined helper actions keep the selected monitor through every readback', () => {
+  assert.match(qml, /function toggleSchedule\(enabled\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function applySnooze\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function requestStatus\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function reconcile\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function queueScheduleReconcile\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function queueMutation\(section,\s*value\)[\s\S]*?\["nightlight",\s*section,[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /function queueSchedule\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+  assert.match(qml, /\["schedule",\s*"status",\s*"--monitor",\s*root\.selectedMonitor\]/);
+  assert.match(qml, /\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\]/);
+  assert.match(qml, /function settingsCommand\(name,\s*args\)[\s\S]*?name\s*===\s*"snooze"[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+});
+
+test('snooze actions require available automation and idle helper state', () => {
+  const snoozeActions = qml.slice(qml.indexOf('function applySnooze()'), qml.indexOf('function minutesUntilNightStart()'));
+  assert.match(snoozeActions, /!root\.automationReady\s*\|\|\s*root\.actionPending/);
+  const quickSnooze = qml.slice(qml.indexOf('function applyQuickSnooze('), qml.indexOf('function settingsCommand('));
+  assert.match(quickSnooze, /!root\.automationReady\s*\|\|\s*root\.actionPending/);
+  const snooze = qml.slice(qml.indexOf('id: snoozeSurface'), qml.indexOf('id: settingsRoute'));
+  assert.match(snooze, /enabled:\s*root\.automationReady\s*&&\s*!root\.actionPending/);
+});
+
+test('snooze expiry refresh can be retried after another operation supersedes it', () => {
+  const request = qml.slice(qml.indexOf('function request(command, operation) {'), qml.indexOf('function queueMutation('));
+  assert.match(request, /if\s*\(operation\s*!==\s*"reconcile"\)\s*snoozeExpiryRefreshPending\s*=\s*false/);
+});
+
+test('settings cursor resets on the shortcut field and scrolls to all route sections', () => {
+  assert.match(qml, /function ensureCursorVisible\(\)[\s\S]*?\[localeSurface,\s*shortcutSurface,\s*shortcutSurface\]/);
+  assert.match(qml, /id:\s*shortcutField[\s\S]*?HoverHandler\s*\{\s*onHoveredChanged:\s*if\s*\(hovered\)\s*root\.cursorToSection\(1,\s*0\)/);
+});
+
+test('dynamic errors and confirmations use accessible announcements where Qt supports them', () => {
+  assert.match(qml, /function announce\(message,\s*priority\)[\s\S]*?if\s*\(message\s*&&\s*Accessible\.announce\)[\s\S]*?Accessible\.announce\(message,\s*priority\)/);
+  assert.match(qml, /text:\s*root\.errorText[\s\S]*?onTextChanged:\s*if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Assertive\)/);
+  assert.match(qml, /text:\s*root\.scheduleValidationError[\s\S]*?onTextChanged:\s*if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Polite\)/);
+  assert.doesNotMatch(qml, /Accessible\.live/);
+});
+
+test('section diagnostics are translated from stable error codes before raw text', () => {
+  assert.match(qml, /function sectionErrorText\(section,\s*fallbackKey\)[\s\S]*?Model\.errorCodeMessage\(section\.error_code,\s*root\.locale\)/);
+  assert.match(qml, /function stateErrorText\(\)[\s\S]*?root\.sectionErrorText\(root\.state\.brightness,[\s\S]*?root\.sectionErrorText\(root\.state\.nightlight,[\s\S]*?root\.sectionErrorText\(root\.state\.schedule,[\s\S]*?root\.sectionErrorText\(root\.state\.automation/);
 });
 
 test('pointer drags record the latest drag target through the request bus', () => {
@@ -380,7 +429,7 @@ test('ToggleSwitch count is the two real toggles and neither binds interactive t
   assert.doesNotMatch(qml, /ToggleSwitch\s*\{[^}]*interactive:\s*[^;\n]*actionPending/);
 
   const heroSwitch = qml.slice(qml.indexOf('trailingControl: Component {'), qml.indexOf('id: homeRoute'));
-  assert.match(heroSwitch, /busy:\s*!root\.stateReady\s*\|\|\s*root\.actionPending/);
+  assert.match(heroSwitch, /busy:\s*!root\.nightlightReady\s*\|\|\s*root\.actionPending/);
   assert.match(heroSwitch, /Accessible\.name:\s*root\.text\("night_light"\)/);
 
   const schedSwitch = qml.slice(qml.indexOf('id: scheduleToggle'), qml.indexOf('id: scheduleEditorColumn'));
@@ -438,7 +487,7 @@ test('every translated QML key resolves in Spanish and English', async () => {
 test('global shortcut IPC endpoint performs a real helper toggle', () => {
   assert.match(qml, /manageIpc:\s*false/);
   assert.match(qml, /function toggleNightlight\(\)/);
-  assert.match(qml, /request\(\["nightlight",\s*"toggle"\],\s*"toggle"\)/);
+  assert.match(qml, /request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)/);
   assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
   for (const method of ['open', 'close', 'show', 'hide', 'toggle']) {
     assert.match(qml, new RegExp(`function ${method}\\(\\)`));
@@ -561,7 +610,7 @@ test('Tier 1 - F6 Route Transitions: Panel.qml defines animated cross-fade, dire
 });
 
 test('Tier 1 - F7 Schedule Grid: Aligned inputs, duration badges, and resetScheduleButton satisfy contracts', () => {
-  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
   assert.match(editor, /id:\s*startEditor[\s\S]*?horizontalAlignment:\s*Qt\.AlignHCenter/);
   assert.match(editor, /id:\s*endEditor[\s\S]*?horizontalAlignment:\s*Qt\.AlignHCenter/);
   assert.match(editor, /id:\s*dayDurationBadge/);
@@ -588,7 +637,7 @@ test('Tier 1 - F10 Error and Feedback Banners: Styled BorderSurface containers w
   assert.match(qml, /id:\s*globalErrorBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("alert"\)/);
 
   // Schedule validation banner
-  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('// Snooze:'));
+  const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
   assert.match(editor, /id:\s*scheduleValidationBanner[\s\S]*?Behavior on opacity[\s\S]*?Icons\.glyph\("alert"\)/);
 
   // Settings feedback banner

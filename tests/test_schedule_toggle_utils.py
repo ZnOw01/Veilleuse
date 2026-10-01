@@ -530,7 +530,7 @@ toggle.disable_schedule()
         self.assertFalse(any((ROOT / "scripts").rglob("__pycache__")))
         self.assertFalse(any((ROOT / "scripts").rglob("*.pyc")))
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # schedule_status: read-only consistency projection
 
     def test_schedule_status_reports_enabled_state_without_touching_documents(self):
@@ -564,7 +564,7 @@ toggle.disable_schedule()
             toggle.schedule_status()
         self.assertEqual(caught.exception.error_code, "conflict")
 
-    # ------------------------------------------------------------------ \
+    # ------------------------------------------------------------------
     # fail-closed error codes per scenario
 
     def test_missing_config_reports_missing_config_error_code(self):

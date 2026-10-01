@@ -74,6 +74,7 @@ Panel {
     property string processOperation: ""
     property bool scheduleReconcilePending: false
     property bool schedulePersistErrorPending: false
+    property bool snoozeExpiryRefreshPending: false
     property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
     property var queuedCommand: []
@@ -94,18 +95,16 @@ Panel {
     property string editNightGamma: ""
     readonly property color foreground: bar ? bar.foreground : Color.foreground
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-    // Named geometry: icon slot in slider rows and the panel's fixed outer
-    // dimensions, kept as properties so the magic numbers live in one place.
     readonly property int controlIconSlot: Style.space(20)
     readonly property int panelWidth: Style.space(330)
     readonly property int panelMaxHeight: Style.space(560)
-    // Uniform vertical breathing room: every cursor row pads with sectionPad,
-    // the taller automation header with headerPad.
     readonly property int sectionPad: Style.space(6)
     readonly property int headerPad: Style.space(16)
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
-    readonly property bool stateReady: state.available === true
-    readonly property string errorText: root.lastError !== "" ? root.lastError : root.localizeErrorString(root.state.error || "")
+    readonly property bool brightnessReady: Boolean(root.state.brightness && root.state.brightness.available === true)
+    readonly property bool nightlightReady: Boolean(root.state.nightlight && root.state.nightlight.available === true)
+    readonly property bool scheduleReady: Boolean(root.state.schedule && root.state.schedule.available === true)
+    readonly property string errorText: root.lastError !== "" ? root.lastError : root.stateErrorText()
     readonly property var routeOptions: Model.routeOrder()
     readonly property var monitorOptions: root.monitorChoices()
     readonly property string routeTitle: root.text(root.route)
@@ -118,7 +117,7 @@ Panel {
     readonly property string heroGlyph: root.glyphForState(root.state)
     readonly property bool snoozeActive: Boolean(root.state.automation && root.state.automation.snoozed)
     readonly property string heroStatusDetail: {
-        if (!root.stateReady)
+        if (!root.nightlightReady)
             return root.text("unavailable");
         if (root.snoozeActive)
             return root.text("snooze_active");
@@ -126,8 +125,6 @@ Panel {
             return root.provenanceText;
         return root.text("disabled");
     }
-    // Minutes left on the active snooze, recomputed whenever the helper
-    // refreshes the combined status (open, actions, reconcile).
     readonly property int snoozeRemainingMinutes: {
         // snoozeTick is read only so this binding re-evaluates every 30 s
         // while a snooze is active; its value never changes the math.
@@ -163,12 +160,36 @@ Panel {
         return I18n.t(key, root.locale);
     }
 
-    // Localize a structured diagnostic without mangling an already-localized
-    // literal: known error codes map through the dictionaries, the model's
-    // English "not confirmed" fallback maps to the active locale, and every
-    // other literal passes through verbatim.
+    function announce(message, priority) {
+        if (message && Accessible.announce)
+            Accessible.announce(message, priority);
+    }
+
+    // Translate known diagnostics while preserving already-localized messages.
     function localizeErrorString(value) {
         return Model.localizeStateError(value, root.locale);
+    }
+
+    function sectionErrorText(section, fallbackKey) {
+        if (!section || !section.error)
+            return "";
+        return section.error_code
+            ? Model.errorCodeMessage(section.error_code, root.locale)
+            : root.text(fallbackKey);
+    }
+
+    function stateErrorText() {
+        var messages = [
+            root.sectionErrorText(root.state.brightness, "errBrightnessUnavailable"),
+            root.sectionErrorText(root.state.nightlight, "errNightlightUnavailable"),
+            root.sectionErrorText(root.state.schedule, "errScheduleUnavailable"),
+            root.sectionErrorText(root.state.automation, "errAutomationUnavailable")
+        ];
+        for (var i = 0; i < messages.length; i++) {
+            if (messages[i] !== "")
+                return messages[i];
+        }
+        return root.localizeErrorString(root.state.error || "");
     }
 
     function normalizeCombined(raw) {
@@ -218,15 +239,13 @@ Panel {
         if (nextRoute === "home") root.requestStatus();
         if (nextRoute === "automation") {
             root.populateScheduleEditor();
-            root.request(["schedule", "status"], "schedule-status");
+            root.request(["schedule", "status", "--monitor", root.selectedMonitor], "schedule-status");
         }
         if (panelFlick) panelFlick.contentY = 0;
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
 
-    // Focusable buttons steal the active focus on click, which would leave the
-    // arrow keys dead. Deferred through Qt.callLater so the button's own focus
-    // grab settles first and the key catcher wins the frame after.
+    // Restore arrow navigation after the button finishes taking focus.
     function refocusKeyCatcher() {
         Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus(); });
     }
@@ -272,7 +291,10 @@ Panel {
 
     function setInlineSetting(name, value) {
         if (name === "locale") root.locale = String(value);
-        if (name === "monitor") root.selectedMonitor = String(value);
+        if (name === "monitor") {
+            root.selectedMonitor = String(value);
+            Qt.callLater(function() { root.requestStatus(); });
+        }
         if (name === "shortcutKeys") root.shortcutKeys = String(value);
         var values = {};
         values[name] = value;
@@ -284,16 +306,18 @@ Panel {
     }
 
     function toggleSchedule(enabled) {
-        root.issue(["schedule", enabled ? "enable" : "disable"], "schedule-toggle");
+        if (!root.automationReady || root.actionPending)
+            return;
+        root.issue(["schedule", enabled ? "enable" : "disable", "--monitor", root.selectedMonitor], "schedule-toggle");
     }
 
     function applySnooze() {
-        if (root.snoozeSeconds === null || root.actionPending)
+        if (root.snoozeSeconds === null || !root.automationReady || root.actionPending)
             return ;
-        root.issue(["snooze", "set", "--seconds", String(root.snoozeSeconds)], "snooze");
+        root.issue(["snooze", "set", "--seconds", String(root.snoozeSeconds), "--monitor", root.selectedMonitor], "snooze");
     }
 
-    function minutesUntilSunset() {
+    function minutesUntilNightStart() {
         var nightTime = (root.state && root.state.schedule && root.state.schedule.night_time)
             ? root.state.schedule.night_time : "19:30";
         var parts = nightTime.split(":");
@@ -302,17 +326,19 @@ Panel {
         if (isNaN(targetH)) targetH = 19;
         if (isNaN(targetM)) targetM = 30;
         var now = new Date();
-        var sunset = new Date(now.getFullYear(), now.getMonth(), now.getDate(), targetH, targetM, 0, 0);
-        var diffMs = sunset.getTime() - now.getTime();
+        var nightStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), targetH, targetM, 0, 0);
+        var diffMs = nightStart.getTime() - now.getTime();
         if (diffMs <= 0) {
-            sunset.setDate(sunset.getDate() + 1);
-            diffMs = sunset.getTime() - now.getTime();
+            nightStart.setDate(nightStart.getDate() + 1);
+            diffMs = nightStart.getTime() - now.getTime();
         }
         var mins = Math.round(diffMs / 60000);
         return Math.max(1, Math.min(1440, mins));
     }
 
     function applyQuickSnooze(amount, unit) {
+        if (!root.automationReady || root.actionPending)
+            return;
         root.snoozeAmount = amount;
         root.snoozeUnit = unit;
         root.applySnooze();
@@ -321,15 +347,17 @@ Panel {
 
     function settingsCommand(name, args) {
         var command = [name].concat(args || []);
+        if (name === "snooze")
+            command = command.concat(["--monitor", root.selectedMonitor]);
         root.issue(command, name);
     }
 
     function requestStatus() {
-        request(["status"], "status");
+        request(["status", "--monitor", root.selectedMonitor], "status");
     }
 
     function reconcile() {
-        root.request(["reconcile"], "reconcile");
+        root.request(["reconcile", "--monitor", root.selectedMonitor], "reconcile");
     }
 
     function queueScheduleReconcile() {
@@ -338,13 +366,15 @@ Panel {
         if (!scheduleReconcilePending || actionPending)
             return false;
         scheduleReconcilePending = false;
-        root.request(["reconcile"], "schedule-reconcile");
+        root.request(["reconcile", "--monitor", root.selectedMonitor], "schedule-reconcile");
         return true;
     }
 
     function request(command, operation) {
         if (scheduleReconcilePending && !Model.shouldRetryScheduleReconcile(operation))
             scheduleReconcilePending = false;
+        if (operation !== "reconcile")
+            snoozeExpiryRefreshPending = false;
         latestRequestId += 1;
         queuedRequestId = latestRequestId;
         queuedCommand = [root.helperPath].concat(command);
@@ -365,26 +395,24 @@ Panel {
     }
 
     function queueMutation(section, value) {
-        if (!stateReady)
+        if (section === "brightness" && !brightnessReady)
+            return ;
+        if ((section === "temperature" || section === "gamma") && !nightlightReady)
             return ;
 
         if (section === "brightness")
             request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], section);
         else
-            request(["nightlight", section, String(Math.round(value))], section);
+            request(["nightlight", section, String(Math.round(value)), "--monitor", root.selectedMonitor], section);
     }
 
-    // Pointer drag intent for a slider: the helper writes absolute values in
-    // one shot, so the newest target is recorded for the label while the
-    // readback is in flight and cleared once the confirmed state reaches it.
+    // Record pointer intent before starting its asynchronous hardware write.
     function queueDragMutation(section, value) {
         root.dragTarget = Model.dragTargetPush(root.dragTarget, section, value);
         root.queueMutation(section, value);
     }
 
-    // A slider shows its pending drag target while the write is in flight so
-    // the value the finger last aimed at stays on screen; once the readback
-    // reaches it the target clears and the confirmed state takes over.
+    // Pending intent keeps the slider steady while hardware readback lags.
     function displayValue(section, fallback) {
         var target = root.dragTarget && typeof root.dragTarget === "object" ? root.dragTarget[section] : null;
         return typeof target === "number" && isFinite(target) ? target : fallback;
@@ -399,10 +427,10 @@ Panel {
     }
 
     function queueSchedule() {
-        if (!stateReady || actionPending || !scheduleFieldsValid())
+        if (!scheduleReady || actionPending || !scheduleFieldsValid())
             return ;
 
-        var command = ["schedule", "set", "--day-time", editStart,
+        var command = ["schedule", "set", "--monitor", root.selectedMonitor, "--day-time", editStart,
                        "--night-time", editEnd, "--day-temp", editDayTemperature,
                        "--night-temp", editNightTemperature];
         var periods = [["day", "brightness"],
@@ -437,12 +465,8 @@ Panel {
         helperProcess.running = true;
     }
 
-    // A superseded exit still describes a write that physically applied: the
-    // latest-wins bus cancelled the readback chase, not the write itself. Adopt
-    // the stale payload's state patch superficially so the knob never reverts
-    // to a value the monitor has already left behind; the combined sections of
-    // the previous state survive and the newest request relaunches against the
-    // merged baseline.
+    // A superseded request may have changed the hardware. Merge its readback
+    // without replacing unrelated sections or the newest drag target.
     function mergeStaleResponse(exitCode) {
         if (exitCode !== 0)
             return ;
@@ -488,6 +512,7 @@ Panel {
             root.mergeStaleResponse(exitCode);
             return ;
         }
+        snoozeExpiryRefreshPending = false;
         var payload = null;
         try {
             payload = processOutput === "" ? null : JSON.parse(processOutput);
@@ -504,7 +529,7 @@ Panel {
         if (result.accepted) {
             state = root.mergeCombined(result.state, responseState);
             actionPending = false;
-            lastError = root.localizeErrorString(result.state.error);
+            lastError = root.stateErrorText();
             if (responseState && responseState.manual_persist_error) {
                 lastError = root.text("manualPersistError");
             }
@@ -545,8 +570,10 @@ Panel {
         var failedState = responseState && typeof responseState === "object" ? Model.normalizeState(responseState) : null;
         if (payloadCode !== "")
             lastError = Model.errorCodeMessage(payloadCode, root.locale);
+        else if (payloadError || (failedState && failedState.error))
+            lastError = root.text("errUnknown");
         else
-            lastError = root.localizeErrorString(payloadError || (failedState && failedState.error ? failedState.error : "")) || processError || root.text("not_confirmed");
+            lastError = processError || root.text("notConfirmed");
         if (schedulePersistErrorPending) {
             schedulePersistErrorPending = false;
             feedbackText = "";
@@ -559,16 +586,38 @@ Panel {
     function moveCursorVertically(direction) {
         var key = direction > 0 ? "ArrowDown" : "ArrowUp";
         cursor = Model.moveCursor(cursor, key, root.route);
+        Qt.callLater(root.ensureCursorVisible);
     }
 
-    // Mouse hover targets the same single cursor the arrows walk: the row
-    // under the pointer becomes the navigable section so Enter activates it
-    // and Left/Right adjust it. This is the Omarchy cursor contract.
-    function cursorToSection(index) {
+    // Pointer hover and keyboard navigation share the same section/field cursor.
+    function cursorToSection(index, field) {
         var names = Model.routeSections(root.route);
         if (index < 0 || index >= names.length)
             return;
-        root.cursor = { section: index, field: 0 };
+        var nextField = field === undefined
+            ? (root.cursor.section === index ? root.cursor.field : 0)
+            : field;
+        root.cursor = Model.cursorAtControl(root.cursor, index, nextField, root.route);
+    }
+
+    function ensureCursorVisible() {
+        if (!panelFlick || !panelFlick.visible || panelFlick.height <= 0)
+            return;
+        var surfaces = root.route === "home"
+            ? [heroSurface, brightnessSurface, temperatureSurface, gammaSurface, monitorSurface]
+            : (root.route === "automation"
+                ? [scheduleToggleSurface, scheduleEditorSurface, snoozeSurface]
+                : [localeSurface, shortcutSurface, shortcutSurface]);
+        var surface = surfaces[root.cursor.section];
+        if (!surface || !surface.visible)
+            return;
+        var position = surface.mapToItem(panelFlick.contentItem, 0, 0);
+        var top = position.y;
+        var bottom = top + Math.max(surface.height, surface.implicitHeight);
+        if (top < panelFlick.contentY)
+            panelFlick.contentY = top;
+        else if (bottom > panelFlick.contentY + panelFlick.height)
+            panelFlick.contentY = Math.min(panelFlick.contentHeight - panelFlick.height, bottom - panelFlick.height);
     }
 
     function switchRouteBy(direction) {
@@ -581,7 +630,9 @@ Panel {
     function adjustSliderBy(direction) {
         var names = Model.routeSections(root.route);
         var section = names[root.cursor.section];
-        if (!Model.isSliderSection(section) || !root.stateReady)
+        if (!Model.isSliderSection(section)
+                || (section === "brightness" && !root.brightnessReady)
+                || ((section === "temperature" || section === "gamma") && !root.nightlightReady))
             return false;
         var current = root.sliderCurrentValue(section);
         var next = Model.stepSliderValue(section, direction, current);
@@ -630,8 +681,8 @@ Panel {
     function activateCursor() {
         var section = Model.routeSections(root.route)[cursor.section];
         if (section === "nightLight") {
-            if (stateReady && !actionPending)
-                request(["nightlight", "toggle"], "toggle");
+            if (nightlightReady && !actionPending)
+                request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle");
 
             return ;
         }
@@ -646,11 +697,37 @@ Panel {
             return ;
         }
         if (section === "schedule") {
-            startEditor.forceActiveFocus();
+            if (cursor.field === 9) {
+                root.populateScheduleEditor();
+                return;
+            }
+            if (cursor.field === 10) {
+                root.queueSchedule();
+                return;
+            }
+            var scheduleEditors = [startEditor, startEditor, dayTemperatureEditor.field,
+                                   dayBrightnessEditor.field, dayGammaEditor.field,
+                                   endEditor, nightTemperatureEditor.field,
+                                   nightBrightnessEditor.field, nightGammaEditor.field];
+            var scheduleEditor = scheduleEditors[cursor.field];
+            if (scheduleEditor)
+                scheduleEditor.forceActiveFocus();
             return ;
         }
         if (section === "snooze") {
-            root.applySnooze();
+            if (cursor.field >= 1 && cursor.field <= 5) {
+                var quickAmounts = [15, 1, 2, 4, root.minutesUntilNightStart()];
+                var quickUnits = ["minutes", "hours", "hours", "hours", "minutes"];
+                root.applyQuickSnooze(quickAmounts[cursor.field - 1], quickUnits[cursor.field - 1]);
+            } else if (cursor.field === 6) {
+                snoozeEditor.field.forceActiveFocus();
+            } else if (cursor.field >= 7 && cursor.field <= 9) {
+                root.snoozeUnit = ["hours", "minutes", "seconds"][cursor.field - 7];
+            } else if (cursor.field === 0 || cursor.field === 10) {
+                root.applySnooze();
+            } else if (cursor.field === 11 && root.snoozeActive && !root.actionPending) {
+                root.settingsCommand("snooze", ["clear"]);
+            }
             return ;
         }
         if (section === "locale") {
@@ -661,8 +738,12 @@ Panel {
             shortcutField.forceActiveFocus();
             return ;
         }
-        if (section === "shortcutActions")
-            root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+        if (section === "shortcutActions") {
+            if (cursor.field === 2 && !root.actionPending)
+                root.settingsCommand("shortcut", ["remove"]);
+            else if (cursor.field <= 1 && !root.actionPending && shortcutField.text.trim() !== "")
+                root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+        }
     }
 
     moduleName: "io.github.znow01.veilleuse"
@@ -679,7 +760,7 @@ Panel {
         function toggle() { root.toggle(); }
 
         function toggleNightlight() {
-            root.request(["nightlight", "toggle"], "toggle");
+            root.request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle");
         }
     }
 
@@ -689,9 +770,7 @@ Panel {
 
     }
     Component.onCompleted: {
-        // Quickshell has no `module`/`require`, so UiModel.js boots without the
-        // locale library; hand it the imported I18n namespace so t() honors the
-        // persisted locale instead of the bundled English fallback.
+        // QML cannot use the model's CommonJS bootstrap; inject its locale library.
         Model.setI18n(I18n);
         root.locale = String(root.setting("locale", "en"));
         root.selectedMonitor = String(root.setting("monitor", "focused"));
@@ -730,7 +809,13 @@ Panel {
         interval: 30000
         repeat: true
         running: root.opened && root.snoozeActive
-        onTriggered: root.snoozeTick += 1
+        onTriggered: {
+            root.snoozeTick += 1;
+            if (root.snoozeRemainingMinutes <= 0 && !root.actionPending && !root.snoozeExpiryRefreshPending) {
+                root.snoozeExpiryRefreshPending = true;
+                root.reconcile();
+            }
+        }
     }
 
     Timer {
@@ -859,8 +944,6 @@ Panel {
                 width: panelFlick.width
                 spacing: Style.spacing.panelGap
 
-                // View switching: just the arrows, plus the name of the view
-                // you are on.
                 Item {
                     anchors.left: parent.left
                     anchors.right: parent.right
@@ -923,9 +1006,7 @@ Panel {
                     }
                 }
 
-                // Global helper errors sit directly under the view header,
-                // near the top of the content, instead of at the very end of
-                // the scrollable column where they could fall off-screen.
+                // Keep helper failures near the header so they are easy to find.
                 BorderSurface {
                     id: globalErrorBanner
 
@@ -963,6 +1044,9 @@ Panel {
                         Text {
                             width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                             text: root.errorText
+                            Accessible.name: root.errorText
+                            onTextChanged: if (visible) root.announce(text, Accessible.Assertive)
+                            onVisibleChanged: if (visible) root.announce(text, Accessible.Assertive)
                             color: Color.urgent
                             font.family: root.fontFamily
                             font.pixelSize: Style.font.bodySmall
@@ -1014,15 +1098,14 @@ Panel {
                         detail: root.heroStatusDetail
                         foreground: root.foreground
                         fontFamily: root.fontFamily
-                        iconOpacity: root.stateReady ? 1 : 0.45
+                        iconOpacity: root.nightlightReady ? 1 : 0.45
 
                         iconComponent: Component {
                             Text {
                                 text: root.heroGlyph
                                 color: root.foreground
-                                // Off is a state, not a fault: the moon glyph
-                                // dims instead of reading as an error.
-                                opacity: root.stateReady && root.state.enabled === false ? 0.4 : 1
+                                // Dim an idle light without presenting it as an error.
+                                opacity: root.nightlightReady && root.state.enabled === false ? 0.4 : 1
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.display
                                 horizontalAlignment: Text.AlignHCenter
@@ -1048,12 +1131,12 @@ Panel {
 
                         trailingControl: Component {
                             ToggleSwitch {
-                                checked: root.stateReady && root.state.enabled
-                                busy: !root.stateReady || root.actionPending
+                                checked: root.nightlightReady && root.state.enabled
+                                busy: !root.nightlightReady || root.actionPending
                                 trackHeight: Math.max(22, Style.space(24))
                                 foreground: root.foreground
                                 Accessible.name: root.text("night_light")
-                                onToggled: root.request(["nightlight", "toggle"], "toggle")
+                                onToggled: root.request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle")
                             }
 
                         }
@@ -1086,9 +1169,9 @@ Panel {
                         }
                     }
 
-                    // Live controls: what acts on the screen right now. One
-                    // row of label + live value per slider, slider below.
                     CursorSurface {
+                        id: brightnessSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
@@ -1164,7 +1247,7 @@ Panel {
                                         id: brightnessValue
 
                                         anchors.centerIn: parent
-                                        text: root.stateReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
+                                        text: root.brightnessReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
                                         color: root.cursor.section === 1 ? Color.accent : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -1186,7 +1269,7 @@ Panel {
                                 maximum: 100
                                 step: 1
                                 integer: true
-                                enabled: root.stateReady
+                                enabled: root.brightnessReady
                                 Accessible.name: root.text("brightness")
                                 onMoved: function(v) { root.queueDragMutation("brightness", v) }
                             }
@@ -1195,6 +1278,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: temperatureSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
@@ -1270,7 +1355,7 @@ Panel {
                                         id: temperatureValue
 
                                         anchors.centerIn: parent
-                                        text: root.stateReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
+                                        text: root.nightlightReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
                                         color: root.cursor.section === 2 ? Color.accent : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -1292,7 +1377,7 @@ Panel {
                                 maximum: 6500
                                 step: 1
                                 integer: true
-                                enabled: root.stateReady
+                                enabled: root.nightlightReady
                                 Accessible.name: root.text("temperature")
                                 onMoved: function(v) { root.queueDragMutation("temperature", v) }
                             }
@@ -1301,6 +1386,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: gammaSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 3
                         foreground: root.foreground
@@ -1376,7 +1463,7 @@ Panel {
                                         id: gammaValue
 
                                         anchors.centerIn: parent
-                                        text: root.stateReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
+                                        text: root.nightlightReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
                                         color: root.cursor.section === 3 ? Color.accent : root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -1398,7 +1485,7 @@ Panel {
                                 maximum: 100
                                 step: 1
                                 integer: true
-                                enabled: root.stateReady
+                                enabled: root.nightlightReady
                                 Accessible.name: root.text("gamma")
                                 onMoved: function(v) { root.queueDragMutation("gamma", v) }
                             }
@@ -1411,6 +1498,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: monitorSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 4
                         foreground: root.foreground
@@ -1466,6 +1555,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: scheduleToggleSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
@@ -1527,7 +1618,7 @@ Panel {
                                     // runs: the text carries the programmed window
                                     // only while it is enabled.
                                     Text {
-                                        visible: root.scheduleEnabled && root.stateReady
+                                        visible: root.scheduleEnabled && root.scheduleReady
                                         width: parent.width
                                         text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
                                         color: Qt.darker(root.foreground, 1.35)
@@ -1552,10 +1643,9 @@ Panel {
                         }
                     }
 
-                    // The schedule itself: each period sets its time and the
-                    // same three options the Home sliders drive, entered as
-                    // numbers.
                     CursorSurface {
+                        id: scheduleEditorSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
@@ -1574,6 +1664,66 @@ Panel {
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
                             spacing: Style.spacing.rowGap
+
+                            Column {
+                                width: parent.width
+                                spacing: Style.spacing.xs
+
+                                Text {
+                                    width: parent.width
+                                    text: root.text("schedule_track")
+                                    color: Qt.darker(root.foreground, 1.35)
+                                    font.family: root.fontFamily
+                                    font.pixelSize: Style.font.caption
+                                }
+
+                                Item {
+                                    id: scheduleTrack
+
+                                    width: parent.width
+                                    height: Style.space(9)
+                                    visible: root.scheduleDurationInfo.valid
+                                    Accessible.name: root.text("schedule_track") + ": " + root.editStart + "–" + root.editEnd
+
+                                    Rectangle {
+                                        anchors.fill: parent
+                                        radius: Style.space(4)
+                                        color: Style.normalFillFor(root.foreground, Color.accent)
+                                    }
+
+                                    Repeater {
+                                        model: Model.scheduleTrackSegments(root.editStart, root.editEnd)
+
+                                        Rectangle {
+                                            required property var modelData
+                                            x: modelData.from * scheduleTrack.width
+                                            width: Math.max(0, (modelData.to - modelData.from) * scheduleTrack.width)
+                                            height: scheduleTrack.height
+                                            radius: Style.space(4)
+                                            color: Color.accent
+                                        }
+                                    }
+                                }
+
+                                Row {
+                                    width: parent.width
+
+                                    Repeater {
+                                        model: ["00", "06", "12", "18", "24"]
+
+                                        Text {
+                                            required property int index
+                                            required property string modelData
+                                            width: parent.width / 5
+                                            text: modelData
+                                            color: Qt.darker(root.foreground, 1.5)
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                            horizontalAlignment: index === 0 ? Text.AlignLeft : (index === 4 ? Text.AlignRight : Text.AlignHCenter)
+                                        }
+                                    }
+                                }
+                            }
 
                             Item {
                                 width: parent.width
@@ -1654,6 +1804,7 @@ Panel {
                                         inputMask: "99:99"
                                         Accessible.name: root.text("day_period") + " " + root.text("start")
                                         Accessible.role: Accessible.EditableText
+                                        HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 1) }
                                         onTextChanged: root.editStart = text
                                         onAccepted: dayTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
@@ -1666,10 +1817,8 @@ Panel {
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
                                     label: root.text("temperature") + " (K)"
-                                    // Matches the helper's DAY_TEMP_MIN/DAY_TEMP_MAX
-                                    // (5900–6500): the day period is the high-light
-                                    // window, so its temperature range is narrower
-                                    // than the Home slider's.
+                                    // The parser classifies temperatures below 5900 K
+                                    // as night profiles, so day inputs use a narrower range.
                                     value: Number(root.editDayTemperature || 6000)
                                     from: 5900
                                     to: 6500
@@ -1677,6 +1826,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     Accessible.name: root.text("day_period") + " " + root.text("temperature")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 2) }
                                     onModified: value => root.editDayTemperature = String(value)
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1706,6 +1856,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("brightness")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 3) }
                                     onTextChanged: root.editDayBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1730,6 +1881,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("gamma")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 4) }
                                     onTextChanged: root.editDayGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1823,6 +1975,7 @@ Panel {
                                         inputMask: "99:99"
                                         Accessible.name: root.text("night_period") + " " + root.text("end")
                                         Accessible.role: Accessible.EditableText
+                                        HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 5) }
                                         onTextChanged: root.editEnd = text
                                         onAccepted: nightTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
@@ -1842,6 +1995,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     Accessible.name: root.text("night_period") + " " + root.text("temperature")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 6) }
                                     onModified: value => root.editNightTemperature = String(value)
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1871,6 +2025,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("brightness")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 7) }
                                     onTextChanged: root.editNightBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1895,6 +2050,7 @@ Panel {
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("gamma")
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 8) }
                                     onTextChanged: root.editNightGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
@@ -1946,6 +2102,9 @@ Panel {
                                     Text {
                                         width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                                         text: root.scheduleValidationError
+                                        Accessible.name: root.scheduleValidationError
+                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: Color.urgent
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -1970,7 +2129,9 @@ Panel {
                                     foreground: root.foreground
                                     Accessible.name: root.text("cancel")
                                     Accessible.role: Accessible.Button
-                                    enabled: root.stateReady && !root.actionPending
+                                    enabled: root.scheduleReady && !root.actionPending
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 9
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 9) }
                                     onClicked: {
                                         root.populateScheduleEditor();
                                         root.refocusKeyCatcher();
@@ -1989,7 +2150,9 @@ Panel {
                                     accent: Color.accent
                                     Accessible.name: root.text("save")
                                     Accessible.role: Accessible.Button
-                                    enabled: root.stateReady && !root.actionPending
+                                    enabled: root.scheduleReady && !root.actionPending && root.scheduleFieldsValid()
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 10
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 10) }
                                     onClicked: {
                                         root.queueSchedule();
                                         root.refocusKeyCatcher();
@@ -2030,6 +2193,9 @@ Panel {
 
                                     Text {
                                         text: root.feedbackText
+                                        Accessible.name: root.feedbackText
+                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -2044,6 +2210,8 @@ Panel {
 
                     // Snooze: enter a duration, pick its unit, apply.
                     CursorSurface {
+                        id: snoozeSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 2
                         foreground: root.foreground
@@ -2071,8 +2239,6 @@ Panel {
                                 elide: Text.ElideRight
                             }
 
-                            // The active snooze is a fact the user set and must
-                            // be able to verify at a glance.
                             BorderSurface {
                                 visible: root.snoozeActive
                                 width: parent.width
@@ -2115,36 +2281,16 @@ Panel {
                                         }
                                     }
 
-                                    // Progress bar indicator
-                                    Rectangle {
-                                        width: parent.width
-                                        height: Style.space(3)
-                                        radius: Style.space(1.5)
-                                        color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
-
-                                        Rectangle {
-                                            height: parent.height
-                                            radius: parent.radius
-                                            color: Color.urgent
-                                            width: {
-                                                var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
-                                                var remSecs = isFinite(until) && until > 0 ? Math.max(0, until - Date.now() / 1000) : 0;
-                                                var totalSecs = root.snoozeSeconds ? root.snoozeSeconds : 1800;
-                                                var ratio = Math.min(1.0, remSecs / Math.max(remSecs, totalSecs));
-                                                return parent.width * ratio;
-                                            }
-                                            Behavior on width { NumberAnimation { duration: 250 } }
-                                        }
-                                    }
                                 }
                             }
 
-                            // Quick preset pills row
                             Row {
                                 width: parent.width
                                 spacing: Style.spacing.xs
 
                                 Button {
+                                    id: snooze15Button
+
                                     width: (parent.width - 4 * Style.spacing.xs) / 5
                                     text: "15m"
                                     fontSize: Style.font.bodySmall
@@ -2153,10 +2299,15 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 1
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 1) }
                                     onClicked: root.applyQuickSnooze(15, "minutes")
                                 }
 
                                 Button {
+                                    id: snooze1hButton
+
                                     width: (parent.width - 4 * Style.spacing.xs) / 5
                                     text: "1h"
                                     fontSize: Style.font.bodySmall
@@ -2165,10 +2316,15 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 2
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 2) }
                                     onClicked: root.applyQuickSnooze(1, "hours")
                                 }
 
                                 Button {
+                                    id: snooze2hButton
+
                                     width: (parent.width - 4 * Style.spacing.xs) / 5
                                     text: "2h"
                                     fontSize: Style.font.bodySmall
@@ -2177,10 +2333,15 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 3
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 3) }
                                     onClicked: root.applyQuickSnooze(2, "hours")
                                 }
 
                                 Button {
+                                    id: snooze4hButton
+
                                     width: (parent.width - 4 * Style.spacing.xs) / 5
                                     text: "4h"
                                     fontSize: Style.font.bodySmall
@@ -2189,19 +2350,27 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 4
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 4) }
                                     onClicked: root.applyQuickSnooze(4, "hours")
                                 }
 
                                 Button {
+                                    id: snoozeNightStartButton
+
                                     width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: root.text("sunset")
+                                    text: root.text("night_start")
                                     fontSize: Style.font.bodySmall
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 5
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 5) }
                                     onClicked: {
-                                        var mins = root.minutesUntilSunset();
+                                        var mins = root.minutesUntilNightStart();
                                         root.applyQuickSnooze(mins, "minutes");
                                     }
                                 }
@@ -2219,6 +2388,8 @@ Panel {
                                 foreground: root.foreground
                                 fontFamily: root.fontFamily
                                 Accessible.name: root.text("snooze")
+                                enabled: root.automationReady && !root.actionPending
+                                HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 6) }
                                 onModified: value => root.snoozeAmount = value
                                 field.Keys.priority: Keys.BeforeItem
                                 field.Keys.onPressed: function(event) {
@@ -2238,6 +2409,8 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 Button {
+                                    id: snoozeHoursButton
+
                                     width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_hours")
                                     selected: root.snoozeUnit === "hours"
@@ -2245,6 +2418,9 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 7
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 7) }
                                     onClicked: {
                                         root.snoozeUnit = "hours";
                                         root.refocusKeyCatcher();
@@ -2252,6 +2428,8 @@ Panel {
                                 }
 
                                 Button {
+                                    id: snoozeMinutesButton
+
                                     width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_minutes")
                                     selected: root.snoozeUnit === "minutes"
@@ -2259,6 +2437,9 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 8
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 8) }
                                     onClicked: {
                                         root.snoozeUnit = "minutes";
                                         root.refocusKeyCatcher();
@@ -2266,6 +2447,8 @@ Panel {
                                 }
 
                                 Button {
+                                    id: snoozeSecondsButton
+
                                     width: (parent.width - 2 * Style.spacing.controlGap) / 3
                                     text: root.text("unit_seconds")
                                     selected: root.snoozeUnit === "seconds"
@@ -2273,6 +2456,9 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 9
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 9) }
                                     onClicked: {
                                         root.snoozeUnit = "seconds";
                                         root.refocusKeyCatcher();
@@ -2285,13 +2471,17 @@ Panel {
                                 spacing: Style.spacing.controlGap
 
                                 Button {
+                                    id: snoozeApplyButton
+
                                     width: root.snoozeActive ? (parent.width - Style.spacing.controlGap) / 2 : parent.width
                                     text: root.text("snooze_set")
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
-                                    enabled: root.snoozeSeconds !== null && !root.actionPending
+                                    enabled: root.automationReady && root.snoozeSeconds !== null && !root.actionPending
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 10
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 10) }
                                     onClicked: {
                                         root.applySnooze();
                                         root.refocusKeyCatcher();
@@ -2299,6 +2489,8 @@ Panel {
                                 }
 
                                 Button {
+                                    id: snoozeClearButton
+
                                     visible: root.snoozeActive
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     text: root.text("clear_snooze")
@@ -2306,7 +2498,9 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.snoozeActive ? Color.urgent : root.foreground
-                                    enabled: !root.actionPending
+                                    enabled: root.automationReady && !root.actionPending
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 11
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 11) }
                                     onClicked: {
                                         root.settingsCommand("snooze", ["clear"]);
                                         root.refocusKeyCatcher();
@@ -2351,6 +2545,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: localeSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 0
                         foreground: root.foreground
@@ -2390,6 +2586,8 @@ Panel {
                     }
 
                     CursorSurface {
+                        id: shortcutSurface
+
                         width: parent.width
                         hasCursor: root.cursor.section === 1
                         foreground: root.foreground
@@ -2464,6 +2662,7 @@ Panel {
                                 font.family: root.fontFamily
                                 Accessible.name: root.text("shortcut_keys")
                                 Accessible.role: Accessible.EditableText
+                                HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 0) }
                                 onAccepted: {
                                     root.setInlineSetting("shortcutKeys", text);
                                     keyCatcher.forceActiveFocus();
@@ -2480,13 +2679,16 @@ Panel {
                                 }
 
                                 Button {
+                                    id: shortcutInstallButton
+
                                     text: root.text("install_shortcut")
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 1
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 1) }
                                     enabled: !root.actionPending && shortcutField.text.trim() !== ""
                                     onClicked: {
                                         root.setInlineSetting("shortcutKeys", shortcutField.text);
@@ -2496,13 +2698,16 @@ Panel {
                                 }
 
                                 Button {
+                                    id: shortcutRemoveButton
+
                                     text: root.text("remove_shortcut")
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 2
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 2) }
                                     enabled: !root.actionPending
                                     onClicked: {
                                         root.settingsCommand("shortcut", ["remove"]);
@@ -2544,6 +2749,9 @@ Panel {
 
                                     Text {
                                         text: root.feedbackText
+                                        Accessible.name: root.feedbackText
+                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: root.foreground
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -2557,8 +2765,6 @@ Panel {
                     }
                 }
 
-                // One quiet line keeps the arrow model discoverable without a
-                // tutorial.
                 Text {
                     anchors.left: parent.left
                     anchors.right: parent.right

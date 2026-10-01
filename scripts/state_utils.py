@@ -580,7 +580,7 @@ def update_state(mutator: Callable[[dict], Mapping | None]) -> dict:
     ``mutator`` receives a deep copy of the current validated state and returns
     the complete new state, or ``None`` to leave the document untouched.  The
     read, the mutation and the write all happen inside one ``_locked`` span, so
-    concurrent updaters (toggles, snoozes, preset applies) can never overwrite
+    concurrent updaters (toggles, snoozes, manual applies) can never overwrite
     each other's keys the way a cold ``read_state()`` + ``write_state()`` pair
     would.  The document is written only when the mutated state actually
     differs from what was read.

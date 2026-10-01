@@ -56,6 +56,13 @@ test('optional schedule input and persistence failure copy are localized', () =>
   assert.match(I18n.t('scheduleDisplayPersistError', 'es'), /guardó.*no se pudieron guardar.*brillo y gamma/i);
 });
 
+test('schedule timeline and snooze preset labels describe their actual behavior in both locales', () => {
+  assert.equal(I18n.t('schedule_track', 'en'), 'Daylight window · 24 hours');
+  assert.equal(I18n.t('schedule_track', 'es'), 'Ventana diurna · 24 horas');
+  assert.equal(I18n.t('night_start', 'en'), 'Night start');
+  assert.equal(I18n.t('night_start', 'es'), 'Inicio de noche');
+});
+
 test('t() falls back to the default locale for an unknown requested locale', () => {
   assert.equal(I18n.t('save', 'fr'), I18n.en.save);
   assert.equal(I18n.t('save', null), I18n.en.save);

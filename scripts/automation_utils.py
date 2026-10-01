@@ -510,7 +510,7 @@ def _snooze_set_expiry(target_epoch: float, operation: str, env: dict, minutes=N
     values = _natural_values(natural)
     at = _iso_timestamp(now)
     try:
-        updated = env["update_state"](
+        env["update_state"](
             lambda current: {
                 **current,
                 "snooze_until": float(target_epoch),
@@ -567,10 +567,9 @@ def snooze_set_seconds(seconds, env=None) -> dict:
 
     The panel composes the duration from a number plus a unit (seconds,
     minutes or hours); seconds is the honest base unit so every combination
-    maps to one validation range.  The expiry is persisted only after the
-    natural application succeeded; the provenance entry and history record
-    are written transactionally with the expiry in the same atomic state
-    write.
+    maps to one validation range. Expiry and provenance share an atomic state
+    write after natural color is confirmed. History is appended separately;
+    its failure is reported without undoing the successful snooze.
     """
     env = _resolve_env(env)
     try:
@@ -816,7 +815,6 @@ def _apply_profile(
                 state.get("error") or "No se pudo aplicar el perfil",
                 operation="reconcile", applied=False, snoozed=False,
             ), None
-        applied = [(target_temperature, target_gamma)]
     else:
         ok, detail = _run_ramp(
             env,
@@ -827,7 +825,6 @@ def _apply_profile(
         )
         if not ok:
             return detail, None
-        applied = detail
     values = {"temperature": target_temperature, "gamma": target_gamma}
     if scheduled is not None and "brightness" in scheduled:
         display_values, display_failure = _apply_scheduled_display(
@@ -896,7 +893,7 @@ def reconcile(env=None) -> dict:
     * While snoozed: enforce natural identity (no-op once natural).
     * On expiry: clear the snooze first, then apply the current schedule
       profile once (even without drift) using the configured transition.
-    * Otherwise: apply the current period only when drift exists.
+    * Otherwise: honor manual intent; apply on drift or pending display values.
     """
     env = _resolve_env(env)
     try:
