@@ -74,6 +74,7 @@ Panel {
     property string processOperation: ""
     property bool scheduleReconcilePending: false
     property bool schedulePersistErrorPending: false
+    property string scheduleRefreshDraft: ""
     property bool snoozeExpiryRefreshPending: false
     property var dragTarget: Model.dragTargetEmpty()
     property string queuedOperation: ""
@@ -347,6 +348,8 @@ Panel {
 
     function settingsCommand(name, args) {
         var command = [name].concat(args || []);
+        if (name === "shortcut" && command[1] === "install" && command[2] === "--keys")
+            command[3] = Model.shortcutCommandKeys(command[3]);
         if (name === "snooze")
             command = command.concat(["--monitor", root.selectedMonitor]);
         root.issue(command, name);
@@ -373,6 +376,8 @@ Panel {
     function request(command, operation) {
         if (scheduleReconcilePending && !Model.shouldRetryScheduleReconcile(operation))
             scheduleReconcilePending = false;
+        if (operation === "schedule-status")
+            scheduleRefreshDraft = root.scheduleDraftSnapshot();
         if (operation !== "reconcile")
             snoozeExpiryRefreshPending = false;
         latestRequestId += 1;
@@ -519,11 +524,27 @@ Panel {
         } catch (error) {
             payload = null;
         }
+        // Shortcut mutations return their own result, not a display-state patch.
+        if (processOperation === "shortcut" && exitCode === 0 && payload
+                && payload.ok !== false && payload.available === true && !payload.error
+                && (payload.action === "install" || payload.action === "remove")) {
+            actionPending = false;
+            if (payload.reload && payload.reload.ok === false) {
+                feedbackText = "";
+                lastError = root.text("errNativeFailure");
+            } else {
+                lastError = "";
+                feedbackText = root.text("saved");
+                feedbackTimer.restart();
+            }
+            root.queueScheduleReconcile();
+            return ;
+        }
         var responseState = payload && payload.state ? payload.state : payload;
         var result = Model.commitResponse(root.state, {
             "requestId": requestId,
             "latestRequestId": latestRequestId,
-            "ok": exitCode === 0 && payload !== null && payload.ok !== false,
+            "ok": processOperation !== "shortcut" && exitCode === 0 && payload !== null && payload.ok !== false,
             "state": responseState
         });
         if (result.accepted) {
@@ -534,6 +555,9 @@ Panel {
                 lastError = root.text("manualPersistError");
             }
             root.reconcilePending();
+            if (processOperation === "schedule-status" && root.route === "automation"
+                    && scheduleRefreshDraft === root.scheduleDraftSnapshot())
+                root.populateScheduleEditor();
             if (processOperation === "schedule") {
                 root.populateScheduleEditor();
                 if (payload && payload.state_persist_error) {
@@ -543,9 +567,6 @@ Panel {
                     scheduleReconcilePending = true;
                 }
             } else if (processOperation === "schedule-reconcile") {
-                feedbackText = root.text("saved");
-                feedbackTimer.restart();
-            } else if (processOperation === "shortcut") {
                 feedbackText = root.text("saved");
                 feedbackTimer.restart();
             }
@@ -676,6 +697,11 @@ Panel {
         root.editDayGamma = display.day && display.day.gamma !== undefined ? String(display.day.gamma) : "";
         root.editNightBrightness = display.night && display.night.brightness !== undefined ? String(display.night.brightness) : "";
         root.editNightGamma = display.night && display.night.gamma !== undefined ? String(display.night.gamma) : "";
+    }
+
+    function scheduleDraftSnapshot() {
+        return JSON.stringify([editStart, editEnd, editDayTemperature, editDayBrightness,
+                               editDayGamma, editNightTemperature, editNightBrightness, editNightGamma]);
     }
 
     function activateCursor() {
@@ -838,7 +864,7 @@ Panel {
 
         interval: 30000
         repeat: true
-        running: !root.opened
+        running: true
         onTriggered: if (!root.actionPending) root.reconcile()
     }
 

@@ -56,7 +56,7 @@ BRIGHTNESS_COMMAND = ("omarchy-brightness-display", "--no-osd", "--monitor")
 HYPRSUNSET_COMMAND = ("hyprctl", "hyprsunset")
 
 _PERCENT_PATTERN = re.compile(r"\s*([0-9]{1,3})\s*")
-_INTEGER_PATTERN = re.compile(r"\s*([0-9]+)\s*")
+_INTEGER_PATTERN = re.compile(r"\s*([0-9]{1,10})\s*")
 _SCHEDULE_MODULE_CACHE = {}
 _SHORTCUT_MODULE_CACHE = {}
 _STATE_MODULE_CACHE = {}
@@ -222,6 +222,8 @@ def run_command(args, *, timeout=COMMAND_TIMEOUT):
         return subprocess.run(
             list(args),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
             timeout=float(timeout),
@@ -329,11 +331,17 @@ def _parse_monitors_json(text):
     return result
 
 
-def read_brightness(monitor):
+def read_brightness(monitor, *, deadline=None):
     """Read the current brightness percentage of one monitor."""
     if not monitor:
         return None, "No se pudo resolver un monitor enfocado"
-    result = run_command([*BRIGHTNESS_COMMAND, monitor])
+    timeout = COMMAND_TIMEOUT
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, "Tiempo de espera agotado al consultar el brillo"
+        timeout = min(timeout, remaining)
+    result = run_command([*BRIGHTNESS_COMMAND, monitor], timeout=timeout)
     if result.returncode != 0:
         return None, (result.stderr.strip() or "No se pudo leer el brillo")
     percent = _percent_or_none(result.stdout)
@@ -413,7 +421,7 @@ def apply_brightness(monitor, target, state=None):
         }
     deadline = time.monotonic() + WRITE_TIMEOUT
     while True:
-        percent, error = read_brightness(monitor)
+        percent, error = read_brightness(monitor, deadline=deadline)
         if percent is not None and abs(percent - target) <= READBACK_TOLERANCE_BRIGHTNESS:
             return {"available": True, "percent": percent, "monitor": monitor, "error": None}
         remaining = deadline - time.monotonic()
@@ -897,9 +905,13 @@ def schedule_get():
 def _read_schedule(path, schedule_module):
     """Read and parse the schedule after any pending toggle was resolved."""
     try:
-        text = path.read_text(encoding="utf-8")
+        text = schedule_module._read_regular_bytes(path).decode("utf-8")
     except FileNotFoundError:
         text = ""
+    except UnicodeError:
+        return _schedule_result(None, False, "La configuración no es UTF-8 válido", error_code="schedule_invalid")
+    except ValueError:
+        return _schedule_result(None, False, "La ruta de horario no es segura", error_code="unsafe_path")
     except OSError as caught:
         return _schedule_result(None, False, str(caught))
     try:
@@ -1198,10 +1210,16 @@ def _native_apply_values(temperature, gamma):
     return gamma_state
 
 
-def _apply_focused_brightness(percent):
-    """Apply an absolute brightness percentage to the focused monitor."""
-    monitor = read_monitor_state().get("monitor")
-    return apply_brightness(monitor, percent)
+def _apply_monitor_brightness(percent, target="focused"):
+    """Resolve the automation's selected monitor once before writing."""
+    monitor_state = read_monitor_state()
+    monitor, error = _resolve_monitor_target(target, state=monitor_state)
+    if error:
+        return {
+            "available": False, "percent": None, "monitor": monitor,
+            "error": error, "error_code": "monitor_unavailable",
+        }
+    return apply_brightness(monitor, percent, state=monitor_state)
 
 
 def _current_profile():
@@ -1230,7 +1248,7 @@ def _current_profile():
     }
 
 
-def _automation_environment():
+def _automation_environment(monitor_target="focused"):
     module = _utility_module("automation_utils")
     state = _state_module()
     if module is None or state is None:
@@ -1242,7 +1260,8 @@ def _automation_environment():
         "read_nightlight": read_nightlight,
         "apply_values": _native_apply_values,
         "apply_natural": _apply_natural,
-        "apply_brightness": _apply_focused_brightness,
+        "apply_brightness": lambda percent: _apply_monitor_brightness(percent, monitor_target),
+        "apply_gamma": _apply_gamma,
         "current_profile": _current_profile,
         "token": lambda: None,
     }
@@ -1537,7 +1556,7 @@ def cmd_brightness(args):
 
 
 def cmd_snooze(args):
-    module, environment = _automation_environment()
+    module, environment = _automation_environment(getattr(args, "monitor", "focused"))
     if module is None or environment is None:
         _emit(_operation_failure("helper_unavailable", "El automatizador no está disponible", monitor_name=_selected_monitor_name(args)))
         return 1
@@ -1566,7 +1585,7 @@ def cmd_snooze(args):
 
 
 def cmd_reconcile(args):
-    module, environment = _automation_environment()
+    module, environment = _automation_environment(getattr(args, "monitor", "focused"))
     if module is None or environment is None:
         _emit(_operation_failure("helper_unavailable", "El automatizador no está disponible", monitor_name=_selected_monitor_name(args)))
         return 1

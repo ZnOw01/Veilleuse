@@ -339,6 +339,8 @@ function normalizeSchedule(source) {
   var available = raw.available === true;
   if (raw.available === undefined)
     available = dayTime !== null && nightTime !== null && nightTemperature !== null;
+  available = available && dayTime !== null && nightTime !== null
+    && nightTemperature !== null && (dayTemperature !== null || raw.day_identity === true);
   if (dayTime !== null && dayTime === nightTime) {
     dayTime = null;
     nightTime = null;
@@ -705,6 +707,17 @@ function parseShortcutTokens(shortcutStr) {
   return parts.map(function(p) { return p.toUpperCase(); });
 }
 
+// The panel displays MOD+KEY chips; the CLI owns validation of MODS, KEY.
+function shortcutCommandKeys(value) {
+  var spec = String(value || '');
+  if (spec.indexOf(',') !== -1 || /[\r\n]/.test(spec) || spec.indexOf('+') === -1)
+    return spec;
+  var parts = spec.split('+').map(function(part) { return part.trim(); });
+  if (parts.some(function(part) { return part === ''; })) return spec;
+  var key = parts.pop();
+  return parts.join(' ') + ', ' + key;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     copy: copy,
@@ -740,6 +753,7 @@ if (typeof module !== 'undefined' && module.exports) {
     provenanceLabel: provenanceLabel,
     calculateScheduleDuration: calculateScheduleDuration,
     scheduleTrackSegments: scheduleTrackSegments,
-    parseShortcutTokens: parseShortcutTokens
+    parseShortcutTokens: parseShortcutTokens,
+    shortcutCommandKeys: shortcutCommandKeys
   };
 }

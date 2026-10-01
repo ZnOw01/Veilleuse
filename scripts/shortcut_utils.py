@@ -87,6 +87,8 @@ def run_command(args, *, timeout=RELOAD_TIMEOUT):
         return subprocess.run(
             list(args),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
             timeout=float(timeout),

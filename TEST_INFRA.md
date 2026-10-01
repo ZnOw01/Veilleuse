@@ -6,7 +6,7 @@ The repository has deterministic Python unit tests plus Node.js tests for the Ja
 
 - Python tests cover the helper CLI, automation, schedule parsing/toggling, shortcut handling, and state persistence.
 - `UiModel.test.js` exercises normalization, validation, navigation-model behavior, request commits, and modeled scenarios.
-- `layout.test.mjs` checks QML contracts by inspecting source text.
+- `layout.test.mjs` checks QML contracts by inspecting source text and executes selected panel JavaScript handlers in Node's VM for response, refresh, and timer regressions. It does not instantiate Qt objects.
 - `transitions.test.mjs` checks route and request-bus behavior through JavaScript test logic.
 - `navigation_stress.test.mjs` uses a JavaScript harness to stress navigation and focus rules; it does not send input to a running panel.
 - `i18n.test.js`, `errorCodes.test.js`, and `icons.test.mjs` check translation and glyph contracts.
@@ -26,8 +26,8 @@ node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests
 
 ## Baseline
 
-- Python: 382 unit tests pass across the five suites invoked by `scripts/check.sh` (`test_veilleuse_control`, `test_shortcut_utils`, `test_automation_utils`, `test_schedule_toggle_utils`, `test_state_utils`).
-- Node.js: the built-in runner executes seven test files and reports 210 test cases. Those counts are test cases, not individual assertions.
+- Python: 395 unit tests pass across the five suites invoked by `scripts/check.sh` (`test_veilleuse_control`, `test_shortcut_utils`, `test_automation_utils`, `test_schedule_toggle_utils`, `test_state_utils`).
+- Node.js: the built-in runner executes seven test files and reports 220 test cases. Those counts are test cases, not individual assertions.
 - `scripts/check.sh` also runs manifest JSON parsing, package hygiene, and `git diff --check`.
 - `omarchy-plugin-validate` and `qmllint` are host-dependent. The gate prints `SKIP` when unavailable; a skipped validator is not a pass.
 

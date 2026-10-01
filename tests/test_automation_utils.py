@@ -946,6 +946,39 @@ class AutomationUtilsTest(unittest.TestCase):
     # ------------------------------------------------------------------
     # fail-closed defaults
 
+    def test_unconfigured_period_rearms_display_without_temperature_drift(self):
+        self.initial_state(schedule_display={"night": {"brightness": 60}}, schedule_period_applied="night")
+        self.profile = {"available": True, "kind": "identity", "period": "day"}
+        self.nightlight.identity = True
+        self.assertTrue(automation.reconcile(env=self.env())["success"])
+        self.assertIsNone(self.read_state()["schedule_period_applied"])
+        self.assertEqual(self.display.brightness_writes, [])
+
+    def test_display_period_reset_failure_stops_before_hardware_writes(self):
+        self.initial_state(schedule_display={"night": {"brightness": 60}}, schedule_period_applied="night")
+        self.profile = {"available": True, "kind": "identity", "period": "day"}
+
+        def denied_update(mutator):
+            raise OSError("denied")
+
+        result = automation.reconcile(env=self.env(update_state=denied_update))
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "state_failed")
+        self.assertEqual(self.nightlight.naturals, 0)
+        self.assertEqual(self.read_state()["schedule_period_applied"], "night")
+
+    def test_single_period_display_reapplies_after_unconfigured_period(self):
+        self.initial_state(schedule_display={"night": {"brightness": 60}})
+        self.assertTrue(automation.reconcile(env=self.env())["success"])
+        self.assertEqual(self.display.brightness_writes, [60])
+        self.profile = {"available": True, "kind": "identity", "period": "day"}
+        self.assertTrue(automation.reconcile(env=self.env())["success"])
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500, "period": "night"}
+        self.assertTrue(automation.reconcile(env=self.env())["success"])
+        self.assertEqual(self.display.brightness_writes, [60, 60])
+        self.assertTrue(automation.reconcile(env=self.env())["success"])
+        self.assertEqual(self.display.brightness_writes, [60, 60])
+
     def test_reconcile_period_drift_applies_scheduled_display_once(self):
         # Entering a period with scheduled display values applies brightness
         # and gamma alongside the profile temperature, records the period so
@@ -1005,9 +1038,8 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertTrue(result["success"], result)
         self.assertTrue(result["applied"])  # temperature drift still applies
         self.assertEqual(self.display.brightness_writes, [])
-        # No scheduled values exist for the night period, so the day marker
-        # survives untouched.
-        self.assertEqual(self.read_state()["schedule_period_applied"], "day")
+        # The unconfigured night period re-arms the next day's display values.
+        self.assertIsNone(self.read_state()["schedule_period_applied"])
 
     def test_reconcile_display_failure_is_honest_and_retried(self):
         self.initial_state(

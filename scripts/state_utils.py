@@ -621,9 +621,13 @@ def validate_history_record(value: object) -> dict:
         raise StateError("invalid_history", "timestamp is invalid")
     if isinstance(timestamp, str) and not timestamp:
         raise StateError("invalid_history", "timestamp is invalid")
+    if isinstance(timestamp, float) and not math.isfinite(timestamp):
+        raise StateError("invalid_history", "timestamp is invalid")
     if not isinstance(value["operation"], str) or not value["operation"]:
         raise StateError("invalid_history", "operation is invalid")
-    if "origin" in value and value["origin"] not in _ORIGINS:
+    if "origin" in value and (
+        not isinstance(value["origin"], str) or value["origin"] not in _ORIGINS
+    ):
         raise StateError("invalid_history", "origin is invalid")
     string_fields = {"preset", "monitor", "error_code"}
     for field in string_fields & set(value):

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import vm from 'node:vm';
+import { createRequire } from 'node:module';
+const Model = createRequire(import.meta.url)('../UiModel.js');
 
 const qml = fs.readFileSync(new URL('../Panel.qml', import.meta.url), 'utf8');
 const barQml = fs.readFileSync(new URL('../BarWidget.qml', import.meta.url), 'utf8');
@@ -267,7 +270,8 @@ test('bar tooltip reports natural color and uses night-light readiness independe
 
 test('closed panel reconciles periodically so snooze expiry and schedule boundaries physically apply', () => {
   assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
-  assert.match(qml, /running:\s*!root\.opened/);
+  const timer = qml.slice(qml.indexOf('id: backgroundStatusTimer'), qml.indexOf('Process {'));
+  assert.match(timer, /running:\s*true/);
   assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.reconcile\(\)/);
   assert.match(qml, /function reconcile\(\)\s*\{\s*root\.request\(\["reconcile",\s*"--monitor",\s*root\.selectedMonitor\],\s*"reconcile"\)\s*;/);
 });
@@ -646,4 +650,105 @@ test('Tier 1 - F10 Error and Feedback Banners: Styled BorderSurface containers w
 
   // Shortcut positive feedback trigger
   assert.match(qml, /processOperation === "shortcut"[\s\S]*?feedbackText = root\.text\("saved"\)[\s\S]*?feedbackTimer\.restart\(\)/);
+});
+
+
+// Execute the panel's actual JavaScript handler; this does not launch Qt.
+function responseHarness(operation, payload, requestId = 1, options = {}) {
+  const context = {
+    Model, route: 'automation', scheduleRefreshDraft: '', processRequestId: requestId, latestRequestId: 1, stoppingForLatest: false,
+    processOperation: operation, queuedOperation: operation,
+    queuedCommand: ['/helper', 'shortcut', 'install'],
+    processOutput: JSON.stringify(payload), processError: '',
+    actionPending: true, lastError: '', feedbackText: '',
+    schedulePersistErrorPending: false, scheduleReconcilePending: false,
+    snoozeExpiryRefreshPending: false, state: Model.normalizeState({}),
+    feedbackTimer: { restart() {} }, debounce: { stop() {} },
+    Qt: { callLater() {} }
+  };
+  Object.assign(context, options);
+  context.root = context;
+  context.text = key => Model.t(key, 'en');
+  context.originalState = context.state;
+  const combined = qml.slice(qml.indexOf('function normalizeCombined('), qml.indexOf('function navigateToRoute('));
+  context.stateErrorText = () => '';
+  context.reconcilePending = () => {};
+  context.queueScheduleReconcile = () => {};
+  context.scheduleDraftSnapshot = () => context.currentDraft || '';
+  context.populateScheduleEditor = () => { context.draft = context.state.schedule.day_time; };
+  context.mergeStaleResponse = () => {};
+  vm.createContext(context);
+  const handler = qml.slice(qml.indexOf('function handleExit('), qml.indexOf('function moveCursorVertically('));
+  vm.runInContext(combined + handler + '\nhandleExit(0);', context);
+  return context;
+}
+
+test('shortcut success completes the request without replacing display state', () => {
+  for (const action of ['install', 'remove']) {
+    const payload = { available: true, action, error: null, reload: { ok: true, error: null } };
+    // The response action is owned by the CLI; both successful mutations have no display fields.
+    const context = responseHarness('shortcut', payload);
+    assert.equal(context.actionPending, false);
+    assert.equal(context.feedbackText, Model.t('saved', 'en'));
+    assert.equal(context.lastError, '');
+    assert.equal(context.state, context.originalState);
+  }
+});
+
+test('failed shortcut reload does not announce successful activation', () => {
+  const context = responseHarness('shortcut', {
+    available: true, action: 'install', error: null, reload: { ok: false, error: 'backend detail' }
+  });
+  assert.equal(context.feedbackText, '');
+  assert.equal(context.lastError, Model.t('errNativeFailure', 'en'));
+});
+
+test('stale shortcut success cannot announce completion of a newer request', () => {
+  const context = responseHarness('shortcut', { available: true, action: 'install', error: null }, 0);
+  assert.equal(context.actionPending, true);
+  assert.equal(context.feedbackText, '');
+});
+
+test('schedule status response populates drafts from the fresh readback', () => {
+  const context = responseHarness('schedule-status', {
+    schedule: { available: true, day_time: '08:00', night_time: '19:00', day_temp: 6000, night_temp: 3500 }
+  });
+  assert.equal(context.draft, '08:00');
+});
+
+test('periodic reconcile remains active while the panel is open and yields to mutations', () => {
+  const timer = qml.slice(qml.indexOf('id: backgroundStatusTimer'), qml.indexOf('Process {'));
+  const running = timer.match(/running:\s*([^\n]+)/)[1];
+  const triggered = timer.match(/onTriggered:\s*([^\n]+)/)[1];
+  for (const opened of [false, true]) {
+    for (const actionPending of [false, true]) {
+      let reconciles = 0;
+      const root = { opened, actionPending, reconcile() { reconciles++; } };
+      if (vm.runInNewContext(running, { root })) vm.runInNewContext(triggered, { root });
+      assert.equal(reconciles, actionPending ? 0 : 1);
+    }
+  }
+});
+
+test('shortcut submission converts the displayed default before invoking the helper', () => {
+  let submitted;
+  const root = { issue(command) { submitted = command; } };
+  const handler = qml.slice(qml.indexOf('function settingsCommand('), qml.indexOf('function requestStatus('));
+  vm.runInNewContext(handler + '\nsettingsCommand("shortcut", ["install", "--keys", "SUPER+SHIFT+N"]);', { root, Model });
+  assert.deepEqual(Array.from(submitted), ['shortcut', 'install', '--keys', 'SUPER SHIFT, N']);
+});
+
+test('schedule readback preserves edits made while the refresh was pending', () => {
+  const context = responseHarness('schedule-status', {
+    schedule: { available: true, day_time: '08:00', night_time: '19:00', day_temp: 6000, night_temp: 3500 }
+  }, 1, { currentDraft: 'user changed the draft' });
+  assert.equal(context.draft, undefined);
+});
+
+test('malformed shortcut success fails closed instead of displaying saved feedback', () => {
+  const context = responseHarness('shortcut', { available: true, error: null });
+  assert.equal(context.actionPending, false);
+  assert.equal(context.feedbackText, '');
+  assert.equal(context.state, context.originalState);
+  assert.ok(context.lastError);
 });

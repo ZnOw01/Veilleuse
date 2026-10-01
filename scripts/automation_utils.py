@@ -887,6 +887,20 @@ def _pending_display(state: Mapping, profile: Mapping) -> Mapping | None:
     return display[period]
 
 
+def _reset_display_period(env: dict, state: Mapping, profile: Mapping) -> None:
+    """Re-arm one-period display settings when the other period is observed."""
+    previous = state.get("schedule_period_applied")
+    period = profile.get("period")
+    if previous is None or period not in ("day", "night") or previous == period:
+        return
+    env["update_state"](
+        lambda current: (
+            {**current, "schedule_period_applied": None}
+            if current.get("schedule_period_applied") == previous else None
+        )
+    )
+
+
 def reconcile(env=None) -> dict:
     """Idempotent enforcement of snooze and schedule.
 
@@ -1007,6 +1021,13 @@ def reconcile(env=None) -> dict:
                 current.get("error") or "No se pudo leer el estado de la luz nocturna",
                 operation="reconcile", applied=False, snoozed=False,
             )
+        try:
+            _reset_display_period(env, state, profile)
+        except Exception:
+            return _failure(
+                "state_failed", "No se pudo guardar el cambio de período",
+                operation="reconcile", applied=False, snoozed=False,
+            )
         scheduled = _pending_display(state, profile)
         result, values = _apply_profile(
             env, profile, current, state.get("transition_seconds", 0), token,
@@ -1057,6 +1078,13 @@ def reconcile(env=None) -> dict:
         return _failure(
             _failure_code(profile, "schedule_unavailable"),
             profile.get("error") or "El perfil de horario no está disponible",
+            operation="reconcile", applied=False, snoozed=False,
+        )
+    try:
+        _reset_display_period(env, state, profile)
+    except Exception:
+        return _failure(
+            "state_failed", "No se pudo guardar el cambio de período",
             operation="reconcile", applied=False, snoozed=False,
         )
     override = state.get("manual_override")

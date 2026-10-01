@@ -208,6 +208,70 @@ class HelperModuleTests(unittest.TestCase):
         return code, stream.getvalue()
 
 
+class AuditBoundaryTests(HelperModuleTests):
+    def test_cli_reconcile_applies_scheduled_gamma_without_temperature_drift(self):
+        module = vc._state_module()
+        module.update_state(lambda current: dict(current, schedule_display={"night": {"gamma": 80}}))
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "temperature", "temperature": 3500, "period": "night"}):
+            code, output = self.run_cli("reconcile")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.sim.gamma, 80)
+        self.assertEqual(module.read_state()["schedule_period_applied"], "night")
+
+    def test_cli_reconcile_applies_scheduled_gamma_with_natural_day(self):
+        module = vc._state_module()
+        module.update_state(lambda current: dict(current, schedule_display={"day": {"gamma": 85}}))
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity", "period": "day"}):
+            code, output = self.run_cli("reconcile")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.sim.identity)
+        self.assertEqual(self.sim.gamma, 85)
+
+    def test_cli_reconcile_brightness_uses_selected_monitor(self):
+        vc._state_module().update_state(lambda current: dict(current, schedule_display={"night": {"brightness": 60}}))
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "temperature", "temperature": 3500, "period": "night"}):
+            code, output = self.run_cli("reconcile", "--monitor", "DP-1")
+        self.assertEqual(code, 0, output)
+        writes = [tokens for tokens, _ in self.sim.calls if tokens[0] == "omarchy-brightness-display" and len(tokens) == 5]
+        self.assertEqual(writes, [["omarchy-brightness-display", "--no-osd", "--monitor", "DP-1", "60%"]])
+
+    def test_oversized_nightlight_integer_fails_closed(self):
+        self.assertIsNone(vc._int_or_none("9" * 5000))
+
+    def test_subprocess_invalid_utf8_is_a_readback_error_not_a_crash(self):
+        self.runner_patch.stop()
+        result = vc.run_command([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff')"])
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(vc._int_or_none(result.stdout))
+
+    def test_schedule_status_rejects_symlink_without_reading_target(self):
+        target = self.xdg / "private.txt"
+        target.write_text("private fixture", encoding="utf-8")
+        path = vc.config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.symlink_to(target)
+        result = vc.schedule_get()
+        self.assertFalse(result["available"])
+        self.assertEqual(result.get("error_code"), "unsafe_path")
+        self.assertNotIn("private fixture", result["error"])
+
+    def test_brightness_readback_uses_remaining_deadline(self):
+        calls = []
+        with patch.object(vc, "run_command", side_effect=lambda args, timeout=None: calls.append(timeout) or cp(args, stdout="42")):
+            with patch.object(vc.time, "monotonic", return_value=10.8):
+                percent, error = vc.read_brightness("DP-1", deadline=11.0)
+        self.assertEqual(percent, 42)
+        self.assertIsNone(error)
+        self.assertAlmostEqual(calls[0], 0.2)
+
+    def test_expired_brightness_deadline_starts_no_command(self):
+        with patch.object(vc.time, "monotonic", return_value=11.0):
+            percent, error = vc.read_brightness("DP-1", deadline=11.0)
+        self.assertIsNone(percent)
+        self.assertTrue(error)
+        self.assertEqual(self.sim.calls, [])
+
+
 class PluginRootTests(HelperModuleTests):
     def test_resolves_plugin_root_from_helper_location(self):
         root = vc.resolve_plugin_root()
@@ -1203,15 +1267,8 @@ class ScheduleTests(HelperModuleTests):
         self.assertIn("error", output.lower())
 
     def test_schedule_get_fails_closed_on_unreadable_config(self):
-        config = vc.config_path()
-        read_text = Path.read_text
-
-        def unreadable_config(path, *args, **kwargs):
-            if path == config:
-                raise PermissionError("denied")
-            return read_text(path, *args, **kwargs)
-
-        with patch.object(Path, "read_text", unreadable_config):
+        module = vc._schedule_module()
+        with patch.object(module, "_read_regular_bytes", side_effect=PermissionError("denied")):
             state = vc.schedule_get()
         self.assertFalse(state["available"])
         self.assertIn("denied", state["error"])
@@ -2597,7 +2654,7 @@ class ReadmeShortcutTests(unittest.TestCase):
 
     def test_readme_documents_single_backup_and_exact_removal(self):
         self.assertIn("bindings.lua.bak", self.readme)
-        self.assertIn("backup is created before modification", self.readme)
+        self.assertRegex(self.readme, r"backup is created before (?:the first )?modification")
 
 
 if __name__ == "__main__":

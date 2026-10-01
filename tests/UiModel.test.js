@@ -1330,3 +1330,20 @@ test('Tier 2 - F8 Shortcut Tokenizer Boundaries: parseShortcutTokens handles whi
   assert.deepEqual(Model.parseShortcutTokens(undefined), []);
   assert.deepEqual(Model.parseShortcutTokens('++  + ,'), []);
 });
+
+test('schedule readiness rejects incomplete advertised schedules', () => {
+  for (const patch of [{ day_time: null }, { night_time: '25:00' }, { day_temp: null }, { night_temp: false }]) {
+    const state = Model.normalizeState({ schedule: {
+      available: true, day_time: '06:00', night_time: '18:00', day_temp: 6000, night_temp: 3500, ...patch
+    } });
+    assert.equal(state.schedule.available, false, JSON.stringify(patch));
+  }
+});
+
+test('UI shortcut notation converts to the CLI format without sanitizing invalid input', () => {
+  assert.equal(Model.shortcutCommandKeys('SUPER+SHIFT+N'), 'SUPER SHIFT, N');
+  assert.equal(Model.shortcutCommandKeys(' CTRL + F8 '), 'CTRL, F8');
+  assert.equal(Model.shortcutCommandKeys('SUPER, V'), 'SUPER, V');
+  for (const value of ['SUPER++N', 'SUPER+N\nevil()', 'SUPER+SHIFT, N'])
+    assert.equal(Model.shortcutCommandKeys(value), value);
+});

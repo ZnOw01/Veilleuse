@@ -53,6 +53,22 @@ class StateUtilsTest(unittest.TestCase):
     def history_file(self):
         return self.state_home / "veilleuse" / "history.jsonl"
 
+    def test_invalid_history_origins_raise_stable_validation_error(self):
+        for origin in ([], {}, 42, None):
+            with self.subTest(origin=origin):
+                with self.assertRaises(state_utils.StateError) as caught:
+                    state_utils.append_history({"time": "2026-10-01T00:00:00Z", "operation": "reconcile", "origin": origin})
+                self.assertEqual(caught.exception.error_code, "invalid_history")
+                self.assertFalse(self.history_file().exists())
+
+    def test_nonfinite_history_timestamps_are_rejected(self):
+        for timestamp in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(timestamp=timestamp):
+                with self.assertRaises(state_utils.StateError) as caught:
+                    state_utils.append_history({"time": timestamp, "operation": "reconcile"})
+                self.assertEqual(caught.exception.error_code, "invalid_history")
+                self.assertFalse(self.history_file().exists())
+
     def test_paths_are_absolute_and_relative_xdg_values_fall_back_to_home(self):
         with mock.patch.dict(
             os.environ,
