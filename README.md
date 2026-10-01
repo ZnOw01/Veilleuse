@@ -320,7 +320,6 @@ Running the suites requires Node.js (CI uses Node 24) alongside Python 3.12+.
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Environment, verification gates, and review expectations |
 | [TEST_INFRA.md](TEST_INFRA.md) | Test coverage, limits, and host-dependent validators |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |
-| [ORIGINAL_REQUEST.md](ORIGINAL_REQUEST.md) | Archived original feature requests |
 
 ## Contributing
 
