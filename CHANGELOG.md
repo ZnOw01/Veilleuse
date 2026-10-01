@@ -1,5 +1,7 @@
 # Changelog
 
+Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
+
 ## v3.5.0 (2026-10-01)
 
 - Brightness, night light, and schedule controls remain available when an unrelated reading fails.

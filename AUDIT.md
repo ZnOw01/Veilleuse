@@ -1,5 +1,11 @@
 # Technical audit — 2026-10-01
 
+This is the historical record of the review accompanying commit
+`cf4570c` (`fix(control): repair scheduling and harden UI integration`).
+Results and runtime versions describe that review, not a fresh validation.
+For maintained documentation, see [PROJECT.md](PROJECT.md),
+[TEST_INFRA.md](TEST_INFRA.md), and [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Scope and architecture
 
 The review covered the QML frontend, JavaScript model/localization/icons,

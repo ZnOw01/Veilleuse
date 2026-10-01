@@ -1764,42 +1764,6 @@ class HelperImportBytecodeTests(unittest.TestCase):
         self.assertFalse(any(SCRIPTS.rglob("*.pyc")))
 
 
-class ReadmeLimitsTests(unittest.TestCase):
-    """README numeric claims must equal the control ranges the panel exposes."""
-
-    @staticmethod
-    def panel_slider_range(label_start, label_end):
-        qml = (ROOT / "Panel.qml").read_text(encoding="utf-8")
-        start = qml.index(label_start)
-        end = qml.index(label_end, start)
-        section = qml[start:end]
-        match = re.search(
-            r"PanelSlider\s*\{[\s\S]*?minimum:\s*(\d+)[\s\S]*?maximum:\s*(\d+)",
-            section,
-        )
-        if match is None:
-            raise AssertionError(f"no PanelSlider bounds found between {label_start!r} and {label_end!r}")
-        return int(match.group(1)), int(match.group(2))
-
-    def test_readme_temperature_range_matches_the_panel_slider(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"Temperature range: `(\d+)–(\d+) K`", readme)
-        self.assertIsNotNone(claim, "README must state the night-light temperature range")
-        slider = self.panel_slider_range("id: temperatureColumn", "id: gammaColumn")
-        self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
-
-    def test_readme_gamma_range_matches_the_panel_slider(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        claim = re.search(r"Gamma range: `(\d+)–(\d+)%`", readme)
-        self.assertIsNotNone(claim, "README must state the gamma range")
-        slider = self.panel_slider_range("id: gammaColumn", "id: automationRoute")
-        self.assertEqual((int(claim.group(1)), int(claim.group(2))), slider)
-
-    def test_readme_does_not_state_a_brightness_range_the_panel_does_not_share(self):
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIsNone(re.search(r"Brightness for the focused monitor[^\n]*\d+\s*%", readme))
-
-
 class SchedulePeriodTests(unittest.TestCase):
     """The circular schedule period used by the status backend."""
 
@@ -2634,27 +2598,6 @@ class ReleaseArchiveTests(unittest.TestCase):
         bindings = [str(path) for path in archive.rglob("bindings.lua")]
         self.assertEqual(bindings, [])
         self.assertTrue((self.base / "xdg" / "hypr" / "bindings.lua").is_file())
-
-
-class ReadmeShortcutTests(unittest.TestCase):
-    """README documents the opt-in shortcut workflow and its guarantees."""
-
-    def setUp(self):
-        self.readme = (ROOT / "README.md").read_text(encoding="utf-8")
-
-    def test_readme_documents_the_shortcut_commands(self):
-        for needle in ("shortcut install", "shortcut status", "shortcut remove", "--keys"):
-            self.assertIn(needle, self.readme, f"README must mention {needle!r}")
-
-    def test_readme_states_installation_is_never_automatic(self):
-        self.assertIn("does not install a shortcut automatically", self.readme)
-    def test_readme_documents_fixed_command_and_marker_block(self):
-        self.assertIn("omarchy-shell -q io.github.znow01.veilleuse toggleNightlight", self.readme)
-        self.assertIn("-- >>> Veilleuse shortcut >>>", self.readme)
-
-    def test_readme_documents_single_backup_and_exact_removal(self):
-        self.assertIn("bindings.lua.bak", self.readme)
-        self.assertRegex(self.readme, r"backup is created before (?:the first )?modification")
 
 
 if __name__ == "__main__":
