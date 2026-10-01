@@ -1,6 +1,6 @@
-# Veilleuse architecture
+# Veilleuse Architecture
 
-Veilleuse is an Omarchy Quattro shell plugin for display brightness, hyprsunset night light, and schedule automation. The QML panel talks to a synchronous, standard-library-only Python helper through bounded subprocess calls.
+Veilleuse is an Omarchy Quattro shell plugin for display brightness, hyprsunset night light, and schedule automation. The QML panel talks to a synchronous, standard-library-only Python helper through bounded subprocess calls. Installation, usage, and the CLI reference live in the [README](README.md).
 
 ## Components
 
@@ -20,6 +20,6 @@ Veilleuse is an Omarchy Quattro shell plugin for display brightness, hyprsunset 
 - Schedule input uses 24-hour `HH:MM` values, day temperatures from 5900–6500 K, and night temperatures from 2500–5000 K. Optional per-period brightness and gamma values are supported.
 - The UI dictionaries provide English and Spanish translations. Backend errors use machine-readable codes mapped by the UI.
 
-## Verification scope
+## Verification Scope
 
 `tests/` contains Python unit tests and Node.js model/contract tests. Layout tests inspect QML source and navigation stress tests run a JavaScript harness; neither suite launches the real Quickshell UI. See [TEST_INFRA.md](TEST_INFRA.md) for coverage limits and [CONTRIBUTING.md](CONTRIBUTING.md) for local verification steps.

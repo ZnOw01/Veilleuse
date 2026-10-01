@@ -1,4 +1,6 @@
-# Original User Request
+# Original User Requests
+
+Historical record of the requests that shaped the current design work. Kept verbatim for reference.
 
 ## 2026-09-01T18:47:05Z
 
