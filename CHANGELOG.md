@@ -2,12 +2,11 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
-## Unreleased
+## v3.5.1 (2026-10-17)
 
 - Preserve non-default schedule values when disabling removes every profile from the config.
 - Reject schedule edits while disabled after recovering any interrupted toggle; preserve the backup and saved recovery transaction, and explain the required action in English and Spanish.
 - Recognize whitespace before Lua `unbind` parentheses so removed shortcuts do not cause false collisions.
-
 - Reject malformed structured numeric readings and snooze durations instead of coercing JSON arrays to numbers.
 - Disable only the affected control when a partial readback contains a malformed section array, rather than retaining its stale available state.
 
