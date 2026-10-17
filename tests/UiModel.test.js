@@ -108,6 +108,42 @@ test('rejects boolean numeric fields from malformed JSON', () => {
   assert.equal(state.gamma, null);
 });
 
+test('rejects structured numeric readings instead of coercing JSON arrays', () => {
+  for (const value of [[50], [], {}, [null]]) {
+    const state = Model.normalizeState({
+      brightness: { available: true, percent: value },
+      nightlight: { available: true, temperature: [3500], gamma: value }
+    });
+    assert.equal(state.brightness.available, false);
+    assert.equal(state.brightness.percent, null);
+    assert.equal(state.nightlight.available, false);
+    assert.equal(state.temperature, null);
+    assert.equal(state.gamma, null);
+    assert.deepEqual(Model.scheduleDisplayValues({ schedule_display: { day: { brightness: value, gamma: value } } }), {});
+  }
+});
+
+test('malformed section arrays invalidate only the affected control on readback', () => {
+  const previous = Model.normalizeState({
+    brightness: { available: true, percent: 50 },
+    nightlight: { available: true, enabled: true, temperature: 3500, gamma: 100 }
+  });
+  for (const section of ['brightness', 'nightlight']) {
+    const result = Model.commitResponse(previous, {
+      requestId: 1, latestRequestId: 1, ok: true, state: { [section]: [] }
+    });
+    assert.equal(result.state[section].available, false);
+    const unaffected = section === 'brightness' ? 'nightlight' : 'brightness';
+    assert.equal(result.state[unaffected].available, true);
+  }
+});
+
+test('snooze duration rejects structured values but accepts numeric text from editors', () => {
+  for (const value of [[30], [], {}, [null]])
+    assert.equal(Model.snoozeDurationSeconds(value, 'minutes'), null);
+  assert.equal(Model.snoozeDurationSeconds('30', 'minutes'), 1800);
+});
+
 test('accepts only the latest successful helper response', () => {
   const state = Model.normalizeState({ available: true, enabled: false, brightness: 50, temperature: 3500, gamma: 100 });
   const stale = Model.commitResponse(state, { requestId: 3, latestRequestId: 4, ok: true, state: { enabled: true } });

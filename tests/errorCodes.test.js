@@ -8,6 +8,11 @@ const I18n = require('../I18n.js');
 
 const ROOT = path.join(__dirname, '..');
 
+test('disabled schedule errors explain how to resume editing in both languages', () => {
+  assert.equal(Model.errorCodeMessage('schedule_disabled', 'en'), 'Enable the schedule before saving changes.');
+  assert.equal(Model.errorCodeMessage('schedule_disabled', 'es'), 'Activa el horario antes de guardar los cambios.');
+});
+
 // Canonical inventory of every stable error code the Python helper can emit
 // into a payload the panel parses.  Kept in lockstep with the sources by the
 // coverage tests below: adding a new code requires extending this list, and
@@ -29,6 +34,7 @@ const EMITTED_ERROR_CODES = [
   'schedule_invalid',
   'schedule_unavailable',
   'schedule_failed',
+  'schedule_disabled',
   'state_unavailable',
   'state_failed',
   'unsafe_path',

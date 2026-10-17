@@ -534,7 +534,7 @@ def _parse_keys_string(keys_string):
 
 def _binding_call_kind(call_text):
     """Return ``"bind"`` or ``"unbind"`` for a matched call like ``hl.unbind(``."""
-    return "unbind" if ".unbind(" in call_text else "bind"
+    return "unbind" if re.search(r"\.unbind\s*\(", call_text) else "bind"
 
 
 def _literal_string_first_arg(text, position):

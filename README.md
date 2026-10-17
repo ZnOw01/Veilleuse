@@ -85,7 +85,7 @@ Relative XDG bases fall back to the home-directory defaults. Omarchy's shell IPC
 
 **Home** controls night light, brightness, temperature, and gamma. Monitor selection changes the brightness target; color temperature and gamma are global `hyprsunset` controls.
 
-**Automation** edits day/night times in 24-hour `HH:MM` format. Day temperature accepts 5900–6500 K; values at or above 6000 K are saved as natural color. Night temperature accepts 2500–5000 K. Optional brightness (1–100%) and gamma (0–100%) fields can be left blank to omit that period's scheduled display value. Snooze temporarily applies natural color for the selected duration.
+**Automation** edits day/night times in 24-hour `HH:MM` format. Day temperature accepts 5900–6500 K; values at or above 6000 K are saved as natural color. Night temperature accepts 2500–5000 K. Optional brightness (1–100%) and gamma (0–100%) fields can be left blank to omit that period's scheduled display value. Snooze temporarily applies natural color for the selected duration. Enable a disabled schedule before saving edits; its saved values remain visible while disabled.
 
 Veilleuse reconciles schedule and snooze state every 30 seconds while the panel component is loaded, including when the panel is closed. Pending requests defer reconciliation. If the shell/plugin is stopped, Veilleuse does not apply scheduled brightness/gamma or process snooze expiration until reconciliation resumes. Native `hyprsunset` scheduling is separate.
 

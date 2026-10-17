@@ -989,14 +989,14 @@ class ScheduleTests(HelperModuleTests):
         path.write_text(text, encoding="utf-8")
         return path
 
-    def crash_after_schedule_toggle_file_replace(self, path):
+    def crash_after_schedule_toggle_file_replace(self, path, action="disable"):
         environment = dict(os.environ)
         environment["PYTHONPATH"] = str(SCRIPTS)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         crash_script = (
             "import os, schedule_toggle_utils as toggle; "
             "toggle._write_state_or_rollback = lambda *args, **kwargs: os._exit(73); "
-            "toggle.disable_schedule()"
+            f"toggle.{action}_schedule()"
         )
         result = subprocess.run(
             [sys.executable, "-c", crash_script],
@@ -1303,6 +1303,81 @@ class ScheduleTests(HelperModuleTests):
         self.assertEqual(result["night_time"], "15:30")
         self.assertEqual(result["night_temp"], 3000)
         self.assertIsNone(result["error"])
+
+    def test_schedule_get_keeps_nondefault_values_when_disabled_file_is_empty(self):
+        self.write_config(
+            "profile {\n    time = 07:00\n    temperature = 6200\n}\n"
+            "profile {\n    time = 21:00\n    temperature = 4000\n}\n"
+        )
+        code, output = self.run_cli("schedule", "disable")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(vc.config_path().read_text().strip(), "")
+
+        result = vc.schedule_get()
+        self.assertTrue(result["available"], result)
+        self.assertEqual(result["day_time"], "07:00")
+        self.assertEqual(result["day_temp"], 6200)
+        self.assertEqual(result["night_time"], "21:00")
+        self.assertEqual(result["night_temp"], 4000)
+
+    def test_schedule_set_while_disabled_preserves_reenable_transaction(self):
+        original = (
+            "profile {\n    time = 07:00\n    temperature = 6200\n}\n"
+            "profile {\n    time = 21:00\n    temperature = 4000\n}\n"
+        )
+        path = self.write_config(original)
+        code, output = self.run_cli("schedule", "disable")
+        self.assertEqual(code, 0, output)
+        disabled = path.read_bytes()
+        before = vc._state_module().read_state()
+
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "08:00", "--night-time", "22:00",
+            "--day-temp", "6000", "--night-temp", "3500",
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(json.loads(output)["error_code"], "schedule_disabled")
+        self.assertEqual(path.read_bytes(), disabled)
+        self.assertEqual(vc._state_module().read_state(), before)
+        self.assertFalse(path.with_suffix(path.suffix + ".bak").exists())
+
+        code, output = self.run_cli("schedule", "enable")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(path.read_text(), original)
+
+    def test_disabled_schedule_save_recovers_interrupted_enable_without_applying_edits(self):
+        original = (
+            "profile {\n    time = 07:00\n    temperature = 6200\n}\n"
+            "profile {\n    time = 21:00\n    temperature = 4000\n}\n"
+        )
+        path = self.write_config(original)
+        code, output = self.run_cli("schedule", "disable")
+        self.assertEqual(code, 0, output)
+        disabled = path.read_bytes()
+        before = vc._state_module().read_state()
+        backup = path.with_suffix(path.suffix + ".bak")
+        backup.write_bytes(b"existing backup\n")
+        pending = self.crash_after_schedule_toggle_file_replace(path, "enable")
+        self.assertEqual(path.read_text(), original)
+
+        code, output = self.run_cli(
+            "schedule", "set", "--day-time", "08:00", "--night-time", "22:00",
+            "--day-temp", "6000", "--night-temp", "3500",
+        )
+
+        self.assertEqual(code, 1, output)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "schedule_disabled")
+        self.assertEqual(payload["state"]["schedule"]["day_time"], "07:00")
+        self.assertEqual(payload["state"]["schedule"]["night_time"], "21:00")
+        self.assertFalse(pending.exists())
+        self.assertEqual(path.read_bytes(), disabled)
+        self.assertEqual(vc._state_module().read_state(), before)
+        self.assertEqual(backup.read_bytes(), b"existing backup\n")
+
+        code, output = self.run_cli("schedule", "enable")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(path.read_text(), original)
 
     def test_schedule_get_rejects_out_of_range_profile_temperature(self):
         self.write_config(

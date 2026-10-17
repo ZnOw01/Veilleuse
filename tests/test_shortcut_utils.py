@@ -205,6 +205,18 @@ class CollisionTest(unittest.TestCase):
         )
         self.assertIsNone(shortcut_utils.collision(text, "SUPER, V"))
 
+    def test_whitespace_before_unbind_parenthesis_leaves_keys_free(self):
+        for whitespace in (" ", "\t", "\n"):
+            with self.subTest(whitespace=whitespace):
+                text = (
+                    'o.bind("SUPER + V", "A", "a")\n'
+                    f'hl.unbind{whitespace}("SUPER + V")\n'
+                )
+                self.assertIsNone(shortcut_utils.collision(text, "SUPER, V"))
+                installed = shortcut_utils.install_block(text, "SUPER, V")
+                self.assertTrue(installed.startswith(text))
+                self.assertIn(shortcut_utils.MARKER_OPEN, installed)
+
     def test_unbind_then_bind_collides_with_last_active_bind(self):
         line = 'hl.bind("SUPER + V", "B", "b")'
         text = 'hl.unbind("SUPER + V")\n' + line + "\n"

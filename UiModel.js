@@ -123,6 +123,7 @@ var DEFAULT_COPY = {
   errReadFailed: 'The current state could not be read.',
   errNativeFailure: 'The native operation could not be completed.',
   errScheduleConflict: 'The schedule file changed during the operation.',
+  errScheduleDisabled: 'Enable the schedule before saving changes.',
   manualPersistError: 'The manual setting was applied, but the preference could not be saved; the schedule may revert it on its next cycle.',
   scheduleDisplayPersistError: 'The schedule was saved, but its brightness and gamma values could not be saved.',
   optional: 'Optional',
@@ -290,7 +291,7 @@ function validTime(value) {
 }
 
 function validNumber(value, minimum, maximum) {
-  if (value === null || value === undefined || typeof value === 'boolean' || (typeof value === 'string' && value.trim() === '')) return null;
+  if ((typeof value !== 'number' && typeof value !== 'string') || (typeof value === 'string' && value.trim() === '')) return null;
   var number = Number(value);
   return isFinite(number) && number >= minimum && number <= maximum ? Math.round(number) : null;
 }
@@ -432,7 +433,7 @@ function validateScheduleFields(start, end, dayTemperature, dayBrightness, dayGa
 // hour/minute/second units, converted to whole seconds inside the helper's
 // 10 s .. 24 h window. Returns null when the input cannot compose.
 function snoozeDurationSeconds(value, unit) {
-  if (value === null || value === undefined || typeof value === 'boolean') return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
   var number = Number(value);
   if (!isFinite(number) || number <= 0) return null;
   var factor = unit === 'hours' ? 3600 : (unit === 'minutes' ? 60 : (unit === 'seconds' ? 1 : null));
@@ -494,6 +495,9 @@ function mergeStatePatch(previous, patch) {
   }
   for (var patchKey in validPatch) {
     if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
+        && Array.isArray(validPatch[patchKey])) {
+      next[patchKey] = { available: false };
+    } else if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
         && validPatch[patchKey] && typeof validPatch[patchKey] === 'object'
         && current[patchKey] && typeof current[patchKey] === 'object') {
       next[patchKey] = {};
@@ -578,6 +582,7 @@ var ERROR_CODE_KEYS = {
   schedule_unavailable: 'errScheduleUnavailable',
   schedule_invalid: 'errScheduleInvalid',
   schedule_failed: 'errScheduleFailed',
+  schedule_disabled: 'errScheduleDisabled',
   state_unavailable: 'errStateFailed',
   state_failed: 'errStateFailed',
   unsafe_path: 'errUnsafePath',

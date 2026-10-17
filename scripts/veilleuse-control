@@ -916,6 +916,8 @@ def _read_schedule(path, schedule_module):
         return _schedule_result(None, False, str(caught))
     try:
         if not text.strip():
+            text = _paused_schedule_text() or text
+        if not text.strip():
             schedule = schedule_module.default_schedule()
             day_identity = False
             period_value = schedule_module.schedule_period(schedule)
@@ -974,6 +976,20 @@ def schedule_set(values):
                         "El gestor de recuperación de horario no está disponible",
                         error_code="helper_unavailable",
                     )
+            state_module = _state_module()
+            if state_module is None:
+                return _schedule_result(
+                    None, values.get("natural_day", True),
+                    "El gestor de estado no está disponible",
+                    error_code="helper_unavailable",
+                )
+            current_state = state_module.read_state()
+            if not current_state["schedule_enabled"] or current_state["schedule_disabled"] is not None:
+                return _schedule_result(
+                    None, values.get("natural_day", True),
+                    "Enable the schedule before saving changes.",
+                    error_code="schedule_disabled",
+                )
             if path.exists():
                 try:
                     mode_stat = os.lstat(path).st_mode

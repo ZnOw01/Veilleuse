@@ -74,6 +74,8 @@ Supply exactly one of `--minutes` or `--seconds`. Clearing snooze removes its ti
 
 `--minutes` accepts `1–1440`; `--seconds` accepts `10–86400`. Schedule times use 24-hour `HH:MM`; day temperatures accept `5900–6500 K` (at or above `6000 K` the day profile is written as natural color), night temperatures accept `2500–5000 K`, and the optional per-period `--*-brightness` (1–100) and `--*-gamma` (0–100) values are validated on save. Omitting optional display values leaves the corresponding period without scheduled brightness/gamma. After CLI schedule changes, run `reconcile` to apply the current profile; the panel queues reconciliation after its own successful schedule changes.
 
+A disabled schedule retains its saved values in `schedule get`. Enable it before running `schedule set`; saving while disabled returns `schedule_disabled` without applying the requested edits or replacing its backup or saved recovery transaction. As with other schedule operations, an interrupted toggle is recovered first; that recovery can repair the config and remove its pending journal before the save is rejected.
+
 ## Global shortcut management
 
 See the [README shortcut guide](README.md#global-shortcut) for `shortcut status`, `shortcut install --keys`, and `shortcut remove`, including the managed Lua block and backup/reload guarantees.
