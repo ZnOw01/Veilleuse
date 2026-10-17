@@ -2,6 +2,11 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.5.2 (2026-10-17)
+
+- Render all panel text explicitly as plain text, including helper errors, schedule validation, and feedback; markup in diagnostics is never interpreted as rich text.
+- Add a real, headless Qt 6 regression test for diagnostic rendering and run it in local checks and CI.
+
 ## v3.5.1 (2026-10-17)
 
 - Preserve non-default schedule values when disabling removes every profile from the config.

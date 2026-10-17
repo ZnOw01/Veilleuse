@@ -7,6 +7,7 @@ The repository has deterministic Python unit tests plus Node.js tests for the Ja
 - Python tests cover the helper CLI, automation, schedule parsing/toggling, shortcut handling, and state persistence.
 - `UiModel.test.js` exercises normalization, validation, navigation-model behavior, request commits, and modeled scenarios.
 - `layout.test.mjs` checks QML contracts by inspecting source text and executes selected panel JavaScript handlers in Node's VM for response, refresh, and timer regressions. It does not instantiate Qt objects.
+- `test_qml_text_safety.py` extracts the diagnostic text bindings from `Panel.qml` and evaluates them in real Qt 6 `Text` items with offscreen rendering. It checks literal rendering for markup, entities, links, image tags, and Spanish diagnostics. It does not instantiate the complete panel or its Omarchy components.
 - `transitions.test.mjs` checks route and request-bus behavior through JavaScript test logic.
 - `navigation_stress.test.mjs` uses a JavaScript harness to stress navigation and focus rules; it does not send input to a running panel.
 - `i18n.test.js`, `errorCodes.test.js`, and `icons.test.mjs` check translation and glyph contracts.
@@ -34,6 +35,8 @@ node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests
 ## Host-dependent validation
 
 `check.sh` runs `omarchy-plugin-validate` only when installed. It runs `qmllint` only when the command and `/usr/share/omarchy/shell` are both available; that invocation checks `BarWidget.qml`, `Panel.qml`, and `NerdIcon.qml`. The script prints `SKIP` when a validator cannot run. A generic Ubuntu CI runner without Omarchy does not establish that those checks passed. Use an Omarchy environment to verify the plugin manifest and QML imports before release.
+
+The diagnostic text regression uses `qmltestrunner6` or `/usr/lib/qt6/bin/qmltestrunner`; it is skipped explicitly when neither Qt 6 runner is installed. CI installs Qt 6 and the QtTest QML dependencies so this regression runs there rather than being skipped. It needs no display server or additional Python packages.
 
 ## Manual verification
 

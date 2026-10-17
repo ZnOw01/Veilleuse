@@ -26,6 +26,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Qt 6 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            qt6-declarative-dev-tools qml6-module-qttest qml6-module-qtquick \
+            qml6-module-qtquick-window qml6-module-qtqml-workerscript
+          test -x /usr/lib/qt6/bin/qmltestrunner
       - name: Run quality gates
         run: |
           chmod +x scripts/check.sh scripts/check_hygiene.sh scripts/veilleuse-control

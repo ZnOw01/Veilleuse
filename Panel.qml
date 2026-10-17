@@ -25,6 +25,7 @@ Panel {
         spacing: Style.spacing.md
 
         Text {
+            textFormat: Text.PlainText
             visible: optionalField.label !== ""
             text: optionalField.label
             color: Qt.darker(optionalField.foreground, 1.4)
@@ -996,6 +997,7 @@ Panel {
                     }
 
                     Text {
+                        textFormat: Text.PlainText
                         id: routeTitleText
 
                         anchors.left: prevRouteButton.right
@@ -1068,6 +1070,7 @@ Panel {
                         }
 
                         Text {
+                            textFormat: Text.PlainText
                             width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                             text: root.errorText
                             Accessible.name: root.errorText
@@ -1128,6 +1131,7 @@ Panel {
 
                         iconComponent: Component {
                             Text {
+                                textFormat: Text.PlainText
                                 text: root.heroGlyph
                                 color: root.foreground
                                 // Dim an idle light without presenting it as an error.
@@ -1237,6 +1241,7 @@ Panel {
                                 }
 
                                 Text {
+                                    textFormat: Text.PlainText
                                     id: brightnessLabel
 
                                     text: root.text("brightness")
@@ -1270,6 +1275,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         id: brightnessValue
 
                                         anchors.centerIn: parent
@@ -1345,6 +1351,7 @@ Panel {
                                 }
 
                                 Text {
+                                    textFormat: Text.PlainText
                                     id: temperatureLabel
 
                                     text: root.text("temperature")
@@ -1378,6 +1385,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         id: temperatureValue
 
                                         anchors.centerIn: parent
@@ -1453,6 +1461,7 @@ Panel {
                                 }
 
                                 Text {
+                                    textFormat: Text.PlainText
                                     id: gammaLabel
 
                                     text: root.text("gamma_short")
@@ -1486,6 +1495,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         id: gammaValue
 
                                         anchors.centerIn: parent
@@ -1631,6 +1641,7 @@ Panel {
                                     spacing: Style.spacing.xxs
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         text: root.text("schedule")
                                         color: root.foreground
@@ -1644,6 +1655,7 @@ Panel {
                                     // runs: the text carries the programmed window
                                     // only while it is enabled.
                                     Text {
+                                        textFormat: Text.PlainText
                                         visible: root.scheduleEnabled && root.scheduleReady
                                         width: parent.width
                                         text: (root.state.schedule.day_time || "06:00") + "  →  " + (root.state.schedule.night_time || "15:30")
@@ -1696,6 +1708,7 @@ Panel {
                                 spacing: Style.spacing.xs
 
                                 Text {
+                                    textFormat: Text.PlainText
                                     width: parent.width
                                     text: root.text("schedule_track")
                                     color: Qt.darker(root.foreground, 1.35)
@@ -1738,6 +1751,7 @@ Panel {
                                         model: ["00", "06", "12", "18", "24"]
 
                                         Text {
+                                            textFormat: Text.PlainText
                                             required property int index
                                             required property string modelData
                                             width: parent.width / 5
@@ -1769,6 +1783,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         text: root.text("day_period")
                                         color: root.foreground
                                         font.family: root.fontFamily
@@ -1790,6 +1805,7 @@ Panel {
                                     implicitWidth: dayDurationText.implicitWidth + Style.spacing.sm * 2
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         id: dayDurationText
                                         anchors.centerIn: parent
                                         text: root.scheduleDurationInfo && root.scheduleDurationInfo.dayFormatted ? root.scheduleDurationInfo.dayFormatted : ""
@@ -1810,6 +1826,7 @@ Panel {
                                     spacing: Style.spacing.md
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         text: root.text("start")
                                         color: Qt.darker(root.foreground, 1.4)
@@ -1940,6 +1957,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         text: root.text("night_period")
                                         color: root.foreground
                                         font.family: root.fontFamily
@@ -1961,6 +1979,7 @@ Panel {
                                     implicitWidth: nightDurationText.implicitWidth + Style.spacing.sm * 2
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         id: nightDurationText
                                         anchors.centerIn: parent
                                         text: root.scheduleDurationInfo && root.scheduleDurationInfo.nightFormatted ? root.scheduleDurationInfo.nightFormatted : ""
@@ -1981,6 +2000,7 @@ Panel {
                                     spacing: Style.spacing.md
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width
                                         text: root.text("end")
                                         color: Qt.darker(root.foreground, 1.4)
@@ -2126,6 +2146,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                                         text: root.scheduleValidationError
                                         Accessible.name: root.scheduleValidationError
@@ -2218,6 +2239,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         text: root.feedbackText
                                         Accessible.name: root.feedbackText
                                         onTextChanged: if (visible) root.announce(text, Accessible.Polite)
@@ -2296,6 +2318,7 @@ Panel {
                                         }
 
                                         Text {
+                                            textFormat: Text.PlainText
                                             width: parent.width - Style.font.body - Style.spacing.xs
                                             text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
                                             color: Color.urgent
@@ -2655,6 +2678,7 @@ Panel {
                                             anchors.verticalCenter: parent.verticalCenter
 
                                             Text {
+                                                textFormat: Text.PlainText
                                                 id: chipText
                                                 anchors.centerIn: parent
                                                 text: modelData
@@ -2666,6 +2690,7 @@ Panel {
                                         }
 
                                         Text {
+                                            textFormat: Text.PlainText
                                             visible: index < shortcutChipsRepeater.count - 1
                                             text: "+"
                                             color: Qt.darker(root.foreground, 1.4)
@@ -2774,6 +2799,7 @@ Panel {
                                     }
 
                                     Text {
+                                        textFormat: Text.PlainText
                                         text: root.feedbackText
                                         Accessible.name: root.feedbackText
                                         onTextChanged: if (visible) root.announce(text, Accessible.Polite)
@@ -2792,6 +2818,7 @@ Panel {
                 }
 
                 Text {
+                    textFormat: Text.PlainText
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.leftMargin: Style.spacing.rowPaddingX
