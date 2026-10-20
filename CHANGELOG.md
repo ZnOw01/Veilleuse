@@ -2,6 +2,11 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.5.3 (2026-10-19)
+
+- Rewrite the README around the shipped behavior: verified Omarchy command flags, per-view usage, the 6000 K natural-color threshold, and the diagnostics exit-code caveat.
+- Replace the August screenshots with Home, Automation, and Settings captures from the current panel.
+
 ## v3.5.2 (2026-10-17)
 
 - Render all panel text explicitly as plain text, including helper errors, schedule validation, and feedback; markup in diagnostics is never interpreted as rich text.
