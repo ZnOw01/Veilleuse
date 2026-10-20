@@ -472,13 +472,19 @@ class StateControlSliceBTests(HelperModuleTests):
         self.assertIn("backend", result)
         self.assertIn("checks", result)
         self.assertLessEqual(len(calls), 3)
-        self.assertTrue(all(timeout is not None and timeout <= vc.COMMAND_TIMEOUT for _, timeout in calls))
+        for command, timeout in calls:
+            self.assertIsNotNone(timeout, command)
+            self.assertLessEqual(timeout, vc.COMMAND_TIMEOUT, command)
         self.assertFalse(result["ok"])
         failed = [check for check in result["checks"] if not check["ok"]]
         self.assertTrue(failed)
-        self.assertTrue(all(check["error_code"] for check in failed))
-        self.assertTrue(all(check["error"] for check in failed))
-        self.assertTrue(all(any(token in check["error"] for token in ("Comando", "Backend", "Tiempo")) for check in failed))
+        for check in failed:
+            self.assertTrue(check["error_code"], check)
+            self.assertTrue(check["error"], check)
+            self.assertTrue(
+                any(token in check["error"] for token in ("Comando", "Backend", "Tiempo")),
+                check["error"],
+            )
 
     def test_preflight_uses_one_monitor_probe_when_backend_is_healthy(self):
         calls = []

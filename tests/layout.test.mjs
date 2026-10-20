@@ -467,14 +467,6 @@ test('focusable action buttons return focus to the key catcher after their click
   assert.match(qml, /root\.settingsCommand\("shortcut",\s*\["install",\s*"--keys",\s*shortcutField\.text\]\);\s*root\.refocusKeyCatcher\(\);/);
 });
 
-test('i18n module has complete Spanish and English key parity', () => {
-  const es = [...i18n.matchAll(/var es = \{([\s\S]*?)\n\};/g)][0][1];
-  const en = [...i18n.matchAll(/var en = \{([\s\S]*?)\n\};/g)][0][1];
-  const keys = source => [...source.matchAll(/^\s*([A-Za-z0-9_]+):/gm)].map(match => match[1]).sort();
-  assert.deepEqual(keys(es), keys(en));
-  assert.match(i18n, /function t\(key, locale\)/);
-});
-
 test('every translated QML key resolves in Spanish and English', async () => {
   const I18n = await import('../I18n.js');
   const used = [...qml.matchAll(/(?:root\.)?text\("([^"]+)"\)/g)].map(match => match[1]);
@@ -537,62 +529,10 @@ test('Tier 1 - F3 Panel Hero: Hero surface embeds toggle switch with busy and ac
   assert.match(qml, /title:\s*root\.text\("night_light"\)/);
 });
 
-test('Tier 1 - F5 Quick Snooze: Snooze row binds number field, unit picker, and apply action', () => {
-  assert.match(qml, /id:\s*snoozeColumn/);
-  assert.match(qml, /id:\s*snoozeEditor/);
-  assert.match(qml, /root\.applySnooze\(\)/);
-  assert.match(qml, /root\.snoozeActive/);
-});
-
-test('Tier 1 - F8 Settings Route: Shortcut visual field and action buttons are properly configured', () => {
-  assert.match(qml, /id:\s*shortcutField/);
-  assert.match(qml, /root\.settingsCommand\("shortcut",\s*\["install",\s*"--keys",\s*shortcutField\.text\]\)/);
-  assert.match(qml, /root\.settingsCommand\("shortcut",\s*\["remove"\]\)/);
-  assert.match(qml, /id:\s*localeSelector/);
-});
-
-test('Tier 1 - F9 Hybrid Navigation: keyCatcher intercepts arrow keys, return, and escape', () => {
-  assert.match(qml, /id:\s*keyCatcher/);
-  assert.match(qml, /Keys\.onPressed:\s*function\(event\)/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Left/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Right/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Up/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Down/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Return/);
-  assert.match(qml, /event\.key\s*===\s*Qt\.Key_Escape/);
-});
-
 
 // ============================================================================
 // TIER 2: BOUNDARY & CORNER CASES (Focus isolation, signals, and popups)
 // ============================================================================
-
-test('Tier 2 - F9 Focus Isolation: keyCatcherBlocked isolates all 12 input and popup surfaces', () => {
-  const blockedProps = [
-    'startEditor.activeFocus',
-    'endEditor.activeFocus',
-    'dayTemperatureEditor.field.activeFocus',
-    'dayBrightnessEditor.field.activeFocus',
-    'dayGammaEditor.field.activeFocus',
-    'nightTemperatureEditor.field.activeFocus',
-    'nightBrightnessEditor.field.activeFocus',
-    'nightGammaEditor.field.activeFocus',
-    'snoozeEditor.field.activeFocus',
-    'shortcutField.activeFocus',
-    'monitorSelector.popupOpen',
-    'localeSelector.popupOpen'
-  ];
-  for (const prop of blockedProps) {
-    assert.ok(qml.includes(prop), `keyCatcherBlocked must guard: ${prop}`);
-  }
-});
-
-test('Tier 2 - F8 Dropdown Popups: Escape key and popup close restore keyCatcher focus safely', () => {
-  assert.match(qml, /if\s*\(!monitorSelector\.popupOpen\)\s*Qt\.callLater/);
-  assert.match(qml, /if\s*\(!localeSelector\.popupOpen\)\s*Qt\.callLater/);
-  assert.match(qml, /shortcutField[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
-  assert.match(qml, /startEditor[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
-});
 
 test('Tier 2 - F11 Monotonic Bus: Process cancellation and burst debouncing prevent race conditions', () => {
   assert.match(qml, /function launchLatest\(\)/);

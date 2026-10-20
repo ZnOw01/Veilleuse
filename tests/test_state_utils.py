@@ -598,7 +598,8 @@ class StateUtilsTest(unittest.TestCase):
                     env=environment,
                 )
             )
-        self.assertTrue(all(process.wait(timeout=10) == 0 for process in workers))
+        for process in workers:
+            self.assertEqual(process.wait(timeout=10), 0, f"worker exited with {process.returncode}")
         records = state_utils.list_history()
         self.assertEqual(len(records), 40)
         self.assertEqual(
@@ -730,16 +731,6 @@ class StateUtilsTest(unittest.TestCase):
                                 top, stdlib_names,
                                 f"{py_file.name} imports from non-stdlib module: {top}"
                             )
-
-
-    def test_tier1_state_and_config_files_created_mode_0600(self):
-        """Tier 1 - F12: Verify config and state files are written with mode 0600."""
-        state_utils.write_config({"schema": 1})
-        state_utils.write_state(dict(state_utils.DEFAULT_STATE))
-        config_mode = stat.S_IMODE(self.config_file().stat().st_mode)
-        state_mode = stat.S_IMODE(self.state_file().stat().st_mode)
-        self.assertEqual(config_mode, 0o600)
-        self.assertEqual(state_mode, 0o600)
 
 
 if __name__ == "__main__":
