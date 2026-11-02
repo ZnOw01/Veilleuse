@@ -2426,7 +2426,10 @@ Panel {
                                     hasCursor: root.cursor.section === 2 && root.cursor.field === 7
                                     enabled: root.automationReady && !root.actionPending
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 7) }
-                                    onClicked: root.cycleSnoozeUnit()
+                                    onClicked: {
+                                        root.cycleSnoozeUnit();
+                                        root.refocusKeyCatcher();
+                                    }
                                 }
 
                                 Button {

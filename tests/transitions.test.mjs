@@ -399,7 +399,7 @@ test('All interactive buttons in Panel.qml call refocusKeyCatcher to prevent dea
   // Unit and manual snooze buttons refocus key catcher
   const snoozeBlock = qml.slice(qml.indexOf('id: snoozeEditor'), qml.indexOf('id: settingsRoute'));
   const snoozeRefocusMatches = snoozeBlock.match(/root\.refocusKeyCatcher\(\)/g) || [];
-  assert.equal(snoozeRefocusMatches.length, 5, 'Unit and manual snooze buttons must call refocusKeyCatcher');
+  assert.equal(snoozeRefocusMatches.length, 3, 'Unit, apply, and clear snooze buttons must call refocusKeyCatcher');
 });
 
 test('keyCatcherBlocked comprehensively guards all 12 input, editor, and popup focus surfaces', () => {
