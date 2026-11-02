@@ -36,7 +36,6 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-PLUGIN_ID = "io.github.znow01.veilleuse"
 FIXED_COMMAND = "omarchy-shell -q io.github.znow01.veilleuse toggleNightlight"
 MARKER_OPEN = "-- >>> Veilleuse shortcut >>>"
 MARKER_CLOSE = "-- <<< Veilleuse shortcut <<<"
@@ -145,11 +144,7 @@ def _atomic_write_text(path, text, mode, *, expected=_UNSET, require_durable=Fal
         os.replace(temporary, path)
         temporary = None
         try:
-            directory_fd = os.open(path.parent, os.O_DIRECTORY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            _fsync_parent(path)
         except OSError:
             if require_durable:
                 raise
@@ -770,6 +765,18 @@ def install_shortcut(keys_spec):
     }
 
 
+def _remove_payload(*, restored, exists, keys=None):
+    return {
+        "available": True,
+        "action": "remove",
+        "restored": restored,
+        "exists": exists,
+        "keys": keys,
+        "reload": None,
+        "error": None,
+    }
+
+
 def remove_shortcut():
     """Remove exactly the marker block, restoring the pre-install file.
 
@@ -780,39 +787,15 @@ def remove_shortcut():
     path = bindings_path()
     try:
         if not _validate_path(path):
-            return {
-                "available": True,
-                "action": "remove",
-                "restored": False,
-                "exists": False,
-                "keys": None,
-                "reload": None,
-                "error": None,
-            }
+            return _remove_payload(restored=False, exists=False)
         with _locked(path):
             if not _validate_path(path):
-                return {
-                    "available": True,
-                    "action": "remove",
-                    "restored": False,
-                    "exists": False,
-                    "keys": None,
-                    "reload": None,
-                    "error": None,
-                }
+                return _remove_payload(restored=False, exists=False)
             original = _read_bytes(path)
             text = original.decode("utf-8")
             new_text, found, keys = remove_block(text)
             if not found:
-                return {
-                    "available": True,
-                    "action": "remove",
-                    "restored": False,
-                    "exists": True,
-                    "keys": None,
-                    "reload": None,
-                    "error": None,
-                }
+                return _remove_payload(restored=False, exists=True)
             mode = stat.S_IMODE(os.lstat(path).st_mode)
             if not new_text:
                 _before_unlink(path)

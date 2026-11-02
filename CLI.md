@@ -36,6 +36,12 @@ Most read and write commands accept `--monitor`, which defaults to `focused` and
 # Toggle night light on/off
 ./scripts/veilleuse-control nightlight toggle
 
+# Toggle on with a chosen warm temperature
+./scripts/veilleuse-control nightlight toggle --temperature 3000
+
+# Toggle on with explicit warm values
+./scripts/veilleuse-control nightlight toggle --temperature 3000 --brightness 80 --gamma 90
+
 # Restore daylight natural color (identity)
 ./scripts/veilleuse-control nightlight natural
 
@@ -43,6 +49,8 @@ Most read and write commands accept `--monitor`, which defaults to `focused` and
 ./scripts/veilleuse-control nightlight temperature 3500
 ./scripts/veilleuse-control nightlight gamma 85
 ```
+
+The panel passes the schedule's Night temperature, brightness, and gamma to `toggle`. The flags are available for scripts and other callers.
 
 See the [README feature ranges](README.md#features) for temperature and gamma limits. Night light and gamma use the global `hyprsunset` backend; `--monitor` selects brightness readback and automation brightness, not a per-monitor color temperature.
 

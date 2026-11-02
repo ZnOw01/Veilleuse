@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import contextlib
 from datetime import datetime
+import errno
 import fcntl
 import json
 import math
@@ -215,6 +216,17 @@ def _name(value: object, field: str) -> str:
     return value
 
 
+def _iso_timestamp(value: object, field: str) -> str:
+    """Validate an ISO-like timestamp and return it unchanged."""
+    if not isinstance(value, str) or not value or _ISO_LIKE_PATTERN.fullmatch(value) is None:
+        raise StateError("invalid_state", f"{field} is invalid")
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise StateError("invalid_state", f"{field} is invalid") from error
+    return value
+
+
 def _schema(raw: object, kind: str) -> tuple[dict, int]:
     if not isinstance(raw, dict):
         raise StateError(f"invalid_{kind}", f"{kind} must be a JSON object")
@@ -306,13 +318,7 @@ def _validate_last_applied(value: object) -> dict | None:
         raise StateError("invalid_state", "last_applied is invalid")
     if not {"at", "origin", "operation"} <= set(value):
         raise StateError("invalid_state", "last_applied is invalid")
-    timestamp = value["at"]
-    if not isinstance(timestamp, str) or not timestamp or _ISO_LIKE_PATTERN.fullmatch(timestamp) is None:
-        raise StateError("invalid_state", "last_applied.at is invalid")
-    try:
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise StateError("invalid_state", "last_applied.at is invalid") from error
+    timestamp = _iso_timestamp(value["at"], "last_applied.at")
     if not isinstance(value["origin"], str) or value["origin"] not in _ORIGINS:
         raise StateError("invalid_state", "last_applied.origin is invalid")
     try:
@@ -350,21 +356,9 @@ def _validate_manual_override(value: object) -> dict | None:
         raise StateError("invalid_state", "manual_override is invalid")
     if not {"at", "operation", "profile"} <= set(value):
         raise StateError("invalid_state", "manual_override is invalid")
-    timestamp = value["at"]
-    if not isinstance(timestamp, str) or not timestamp or _ISO_LIKE_PATTERN.fullmatch(timestamp) is None:
-        raise StateError("invalid_state", "manual_override.at is invalid")
-    try:
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise StateError("invalid_state", "manual_override.at is invalid") from error
+    timestamp = _iso_timestamp(value["at"], "manual_override.at")
     if "until" in value:
-        until = value["until"]
-        if not isinstance(until, str) or not until or _ISO_LIKE_PATTERN.fullmatch(until) is None:
-            raise StateError("invalid_state", "manual_override.until is invalid")
-        try:
-            datetime.fromisoformat(until.replace("Z", "+00:00"))
-        except ValueError as error:
-            raise StateError("invalid_state", "manual_override.until is invalid") from error
+        until = _iso_timestamp(value["until"], "manual_override.until")
     try:
         operation = _name(value["operation"], "manual_override.operation")
     except StateError as error:
@@ -459,7 +453,13 @@ def _read_document(path: Path, kind: str, validator: Callable[[object], dict], d
     return validator(_parse_json(text, path))
 
 
-def _atomic_write(path: Path, data: object) -> None:
+def _atomic_write_stream(path: Path, write) -> None:
+    """Replace ``path`` atomically with text produced by ``write(stream)``.
+
+    The temporary file is flushed and fsynced before the rename, and the
+    containing directory is fsynced after it, so a crash leaves either the
+    previous document or the new one.
+    """
     _prepare_parent(path)
     directory = path.parent
     descriptor = None
@@ -471,8 +471,7 @@ def _atomic_write(path: Path, data: object) -> None:
         os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             descriptor = None
-            json.dump(data, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            stream.write("\n")
+            write(stream)
             stream.flush()
             os.fsync(stream.fileno())
         _before_replace(path)
@@ -496,6 +495,14 @@ def _atomic_write(path: Path, data: object) -> None:
                 os.unlink(temporary)
 
 
+def _atomic_write(path: Path, data: object) -> None:
+    def write(stream):
+        json.dump(data, stream, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        stream.write("\n")
+
+    _atomic_write_stream(path, write)
+
+
 @contextlib.contextmanager
 def _locked(document: Path):
     lock = _lock_path(document)
@@ -516,7 +523,7 @@ def _locked(document: Path):
         if descriptor is not None:
             with contextlib.suppress(OSError):
                 os.close(descriptor)
-        raise StateError("unsafe_path" if error.errno in {40, 62} else "io_error", "Unable to lock document") from error
+        raise StateError("unsafe_path" if error.errno == errno.ELOOP else "io_error", "Unable to lock document") from error
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         yield
@@ -678,40 +685,12 @@ def append_history(record: Mapping) -> list[dict]:
 
 
 def _atomic_write_lines(path: Path, records: list[dict]) -> None:
-    _prepare_parent(path)
-    descriptor = None
-    temporary = None
-    try:
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-        )
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            descriptor = None
-            for record in records:
-                stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-                stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        _before_replace(path)
-        _check_destination(path)
-        os.replace(temporary, path)
-        temporary = None
-        directory_descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_descriptor)
-        finally:
-            os.close(directory_descriptor)
-    except StateError:
-        raise
-    except OSError as error:
-        raise StateError("io_error", f"Unable to write {path}") from error
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        if temporary is not None:
-            with contextlib.suppress(OSError):
-                os.unlink(temporary)
+    def write(stream):
+        for record in records:
+            stream.write(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+            stream.write("\n")
+
+    _atomic_write_stream(path, write)
 
 
 def list_history() -> list[dict]:
@@ -749,18 +728,10 @@ def _check_destination(path: Path) -> None:
         _raise_path_error(f"Non-regular document: {path}")
 
 
-# Explicit aliases keep the persistence API easy to discover for callers that
-# use load/save terminology.
-load_config = read_config
-save_config = write_config
-load_state = read_state
-save_state = write_state
-
-
 __all__ = [
     "DEFAULT_CONFIG", "DEFAULT_STATE", "MAX_HISTORY",
     "StateError", "append_history", "clear_history", "config_path",
-    "history_path", "list_history", "read_config", "read_state", "save_config",
-    "save_state", "state_path", "update_config", "update_state",
+    "history_path", "list_history", "read_config", "read_state",
+    "state_path", "update_config", "update_state",
     "validate_history_record", "write_config", "write_state",
 ]

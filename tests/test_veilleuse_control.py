@@ -81,6 +81,7 @@ class SimulatedCommands:
         self.hyprsunset_available = True
         self.fail_identity_read = False
         self.fail_identity_write = False
+        self.fail_gamma_write = False
         self.brightness_output = None
 
     def __call__(self, args, *, timeout=None):
@@ -140,6 +141,8 @@ class SimulatedCommands:
             if command == "gamma" and len(tokens) == 3:
                 return cp(tokens, 0, f"{self.gamma}\n", "")
             if command == "gamma" and len(tokens) == 4:
+                if self.fail_gamma_write:
+                    return cp(tokens, 1, "", "hyprsunset gamma failed")
                 self.gamma = int(tokens[3])
                 return cp(tokens, 0, "", "")
             return cp(tokens, 1, "", "unexpected hyprsunset command")
@@ -787,6 +790,71 @@ class NightlightTests(HelperModuleTests):
         result = json.loads(output)
         self.assertFalse(result["nightlight"]["identity"])
         self.assertTrue(result["nightlight"]["enabled"])
+
+    def test_toggle_uses_the_requested_warm_temperature(self):
+        self.sim.identity = True
+        self.sim.temperature = 6500
+        code, output = self.run_cli("nightlight", "toggle", "--temperature", "3000")
+        self.assertEqual(code, 0)
+        result = json.loads(output)
+        self.assertEqual(result["nightlight"]["temperature"], 3000)
+        self.assertIn(["hyprctl", "hyprsunset", "temperature", "3000"], self.sim.hyprsunset_sets())
+
+    def test_toggle_applies_brightness_and_gamma_defaults(self):
+        self.sim.identity = True
+        self.sim.temperature = 6500
+        code, output = self.run_cli(
+            "nightlight", "toggle",
+            "--temperature", "3000", "--brightness", "80", "--gamma", "90",
+        )
+        self.assertEqual(code, 0)
+        result = json.loads(output)
+        self.assertEqual(result["nightlight"]["temperature"], 3000)
+        self.assertEqual(result["nightlight"]["gamma"], 90)
+        self.assertEqual(result["brightness"]["percent"], 80)
+        self.assertIn(["hyprctl", "hyprsunset", "temperature", "3000"], self.sim.hyprsunset_sets())
+        self.assertIn(["hyprctl", "hyprsunset", "gamma", "90"], self.sim.hyprsunset_sets())
+        self.assertEqual(self.sim.brightness_writes()[0][4], "80%")
+
+    def test_toggle_rejects_out_of_range_brightness_and_gamma(self):
+        code, _ = self.run_cli("nightlight", "toggle", "--brightness", "0")
+        self.assertNotEqual(code, 0)
+        code, _ = self.run_cli("nightlight", "toggle", "--gamma", "150")
+        self.assertNotEqual(code, 0)
+
+    def test_toggle_rejects_an_out_of_range_temperature(self):
+        code, _ = self.run_cli("nightlight", "toggle", "--temperature", "1000")
+        self.assertNotEqual(code, 0)
+
+    def test_toggle_rejects_a_non_warm_temperature(self):
+        code, _ = self.run_cli("nightlight", "toggle", "--temperature", "6500")
+        self.assertNotEqual(code, 0)
+
+    def test_toggle_rejects_toggle_only_flags_on_other_operations(self):
+        code, _ = self.run_cli("nightlight", "natural", "--brightness", "0")
+        self.assertNotEqual(code, 0)
+
+    def test_nightlight_help_exits_zero(self):
+        code, output = self.run_cli("nightlight", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("--temperature", output)
+        self.assertIn("--brightness", output)
+        self.assertIn("--gamma", output)
+
+    def test_toggle_persists_confirmed_temperature_when_gamma_fails(self):
+        module = vc._state_module()
+        self.sim.identity = True
+        self.sim.temperature = 6500
+        self.sim.fail_gamma_write = True
+        with patch.object(vc, "_current_profile", return_value={"available": True, "kind": "identity"}):
+            code, output = self.run_cli(
+                "nightlight", "toggle", "--temperature", "3000", "--gamma", "90"
+            )
+        self.assertNotEqual(code, 0)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "gamma_readback_failed")
+        state = module.read_state()
+        self.assertEqual(state["last_applied"]["values"]["temperature"], 3000)
 
     def test_nightlight_unavailable_fails_cleanly(self):
         self.sim.hyprsunset_available = False

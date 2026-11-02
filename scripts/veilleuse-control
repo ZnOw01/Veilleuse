@@ -57,10 +57,15 @@ HYPRSUNSET_COMMAND = ("hyprctl", "hyprsunset")
 
 _PERCENT_PATTERN = re.compile(r"\s*([0-9]{1,3})\s*")
 _INTEGER_PATTERN = re.compile(r"\s*([0-9]{1,10})\s*")
-_SCHEDULE_MODULE_CACHE = {}
-_SHORTCUT_MODULE_CACHE = {}
-_STATE_MODULE_CACHE = {}
-_UTILITY_MODULE_CACHE = {}
+_MODULE_CACHE = {}
+# Modules that import siblings at exec time.  They are loaded first and
+# published in ``sys.modules`` so a bare ``import schedule_utils`` inside the
+# plugin keeps working both from the helper and from a direct script run.
+_MODULE_DEPENDENCIES = {
+    "automation_utils": ("state_utils", "schedule_utils"),
+    "schedule_toggle_utils": ("state_utils", "schedule_utils"),
+}
+_CONFIG_RELOAD_MODULES = frozenset({"schedule_utils", "schedule_toggle_utils"})
 
 
 # ---------------------------------------------------------------------------
@@ -97,109 +102,72 @@ def _report_module_load_failure(path: Path, caught: BaseException) -> None:
     )
 
 
-def _schedule_module():
-    """Import the shared conservative parser when it is part of the plugin."""
-    root = resolve_plugin_root()
-    source = root / "scripts"
-    path = source / "schedule_utils.py"
-    if path.is_file():
-        cached = _SCHEDULE_MODULE_CACHE.get(path)
-        if cached is not None:
-            cached.HYPRSUNSET_CONFIG = config_path()
-            return cached
-        try:
-            module = types.ModuleType("schedule_utils")
-            module.__file__ = str(path)
-            code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
-            exec(code, module.__dict__)
-            module.HYPRSUNSET_CONFIG = config_path()
-            _SCHEDULE_MODULE_CACHE[path] = module
-            return module
-        except Exception as caught:
-            _report_module_load_failure(path, caught)
-            return None
-    return None
+def _load_module(name):
+    """Load one sibling module from ``scripts/`` without writing bytecode.
 
-
-def _shortcut_module():
-    """Import the reversible shortcut manager when it ships with the plugin."""
-    root = resolve_plugin_root()
-    path = root / "scripts" / "shortcut_utils.py"
-    if path.is_file():
-        cached = _SHORTCUT_MODULE_CACHE.get(path)
-        if cached is not None:
-            return cached
-        try:
-            module = types.ModuleType("shortcut_utils")
-            module.__file__ = str(path)
-            code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
-            exec(code, module.__dict__)
-            _SHORTCUT_MODULE_CACHE[path] = module
-            return module
-        except Exception as caught:
-            _report_module_load_failure(path, caught)
-            return None
-    return None
-
-
-def _state_module():
-    """Load the safe XDG persistence module without creating bytecode files."""
-    root = resolve_plugin_root()
-    path = root / "scripts" / "state_utils.py"
-    if path.is_file():
-        cached = _STATE_MODULE_CACHE.get(path)
-        if cached is not None:
-            return cached
-        try:
-            module = types.ModuleType("state_utils")
-            module.__file__ = str(path)
-            code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
-            exec(code, module.__dict__)
-            _STATE_MODULE_CACHE[path] = module
-            return module
-        except Exception as caught:
-            _report_module_load_failure(path, caught)
-            return None
-    return None
-
-
-def _utility_module(name):
-    """Load one existing utility module without creating package bytecode."""
+    The helper runs as a bare script, so it compiles each module from source
+    instead of importing a package.  Modules are cached per name, path and XDG
+    environment; modules that import siblings get those siblings published in
+    ``sys.modules`` before they execute, and schedule modules receive the
+    resolved hyprsunset config path because it depends on the environment.
+    """
     root = resolve_plugin_root()
     path = root / "scripts" / f"{name}.py"
-    cache_key = (path, str(os.environ.get("XDG_CONFIG_HOME", "")), str(os.environ.get("XDG_STATE_HOME", "")))
-    cached = _UTILITY_MODULE_CACHE.get((name, cache_key))
+    key = (
+        name,
+        path,
+        os.environ.get("XDG_CONFIG_HOME", ""),
+        os.environ.get("XDG_STATE_HOME", ""),
+    )
+    cached = _MODULE_CACHE.get(key)
     if cached is not None:
-        if name == "schedule_toggle_utils":
+        if name in _CONFIG_RELOAD_MODULES:
             cached.HYPRSUNSET_CONFIG = config_path()
         return cached
     if not path.is_file():
         return None
     try:
-        source = root / "scripts"
         package = sys.modules.get("scripts")
         if package is None:
             package = types.ModuleType("scripts")
-            package.__path__ = [str(source)]
+            package.__path__ = [str(path.parent)]
             sys.modules["scripts"] = package
-        state = _state_module()
-        if state is not None:
-            sys.modules["scripts.state_utils"] = state
-            sys.modules["state_utils"] = state
-        schedule = _schedule_module()
-        if schedule is not None:
-            sys.modules["schedule_utils"] = schedule
+        for dependency in _MODULE_DEPENDENCIES.get(name, ()):
+            module = _load_module(dependency)
+            if module is not None:
+                sys.modules[dependency] = module
+                sys.modules[f"scripts.{dependency}"] = module
         module = types.ModuleType(name)
         module.__file__ = str(path)
         code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
         exec(code, module.__dict__)
-        _UTILITY_MODULE_CACHE[(name, cache_key)] = module
-        if name == "schedule_toggle_utils":
+        if name in _CONFIG_RELOAD_MODULES:
             module.HYPRSUNSET_CONFIG = config_path()
+        _MODULE_CACHE[key] = module
         return module
     except Exception as caught:
         _report_module_load_failure(path, caught)
         return None
+
+
+def _schedule_module():
+    """Import the shared conservative parser when it is part of the plugin."""
+    return _load_module("schedule_utils")
+
+
+def _shortcut_module():
+    """Import the reversible shortcut manager when it ships with the plugin."""
+    return _load_module("shortcut_utils")
+
+
+def _state_module():
+    """Load the safe XDG persistence module without creating bytecode files."""
+    return _load_module("state_utils")
+
+
+def _utility_module(name):
+    """Load one existing utility module without creating package bytecode."""
+    return _load_module(name)
 
 
 def config_path() -> Path:
@@ -268,6 +236,14 @@ def _percent_or_none(output) -> int | None:
 # ---------------------------------------------------------------------------
 # monitor state
 
+def _monitor_lines(output):
+    """The eight fixed lines of ``omarchy-monitor-state``, padded when short."""
+    lines = _text(output).splitlines()
+    while len(lines) < 8:
+        lines.append("")
+    return lines
+
+
 def read_monitor_state():
     """Run omarchy-monitor-state and parse the shell's monitor summary.
 
@@ -284,9 +260,7 @@ def read_monitor_state():
             "external": None,
             "monitors": [],
         }
-    lines = _text(result.stdout).splitlines()
-    while len(lines) < 8:
-        lines.append("")
+    lines = _monitor_lines(result.stdout)
     return {
         "brightness": _percent_or_none(lines[0]),
         "monitor": lines[5].strip() or None,
@@ -596,20 +570,37 @@ def _nightlight_failure(message):
     return state
 
 
-def toggle_nightlight():
-    """Toggle between warm light and natural color using observed state."""
+def toggle_nightlight(temperature=None, gamma=None, brightness=None, monitor="focused"):
+    """Toggle between warm light and natural color using observed state.
+
+    When turning on, the caller may pass the user's configured defaults.
+    Temperature and gamma share the native night-light registers; brightness
+    is a per-monitor write. A failed brightness write reports its own error
+    without discarding the confirmed temperature/gamma state.
+    """
     current = read_nightlight()
     if not current["available"]:
         return _nightlight_failure("La luz nocturna no está disponible")
     if current["enabled"] is True and not current["identity"]:
         return _apply_natural()
-    # Currently natural or reading stale: apply a warm temperature.  A
-    # temperature register that still holds a non-warm value is unreliable
-    # while identity was active, so fall back to the default warm selection.
-    temperature = current["temperature"] or DEFAULT_TEMP
-    if not (TEMPERATURE_MIN <= temperature <= TEMPERATURE_MAX and temperature < DAY_TEMPERATURE_THRESHOLD):
-        temperature = DEFAULT_TEMP
-    return _apply_temperature(temperature)
+    if temperature is not None:
+        target = max(TEMPERATURE_MIN, min(TEMPERATURE_MAX, int(temperature)))
+        temperature = target if target < DAY_TEMPERATURE_THRESHOLD else None
+    if temperature is None:
+        temperature = current["temperature"] or DEFAULT_TEMP
+        if not (TEMPERATURE_MIN <= temperature <= TEMPERATURE_MAX and temperature < DAY_TEMPERATURE_THRESHOLD):
+            temperature = DEFAULT_TEMP
+    state = _native_apply_values(temperature, gamma) if gamma is not None else _apply_temperature(temperature)
+    if not state["available"] or state.get("error"):
+        return state
+    if brightness is not None:
+        brightness_state = _apply_monitor_brightness(brightness, monitor)
+        if not brightness_state.get("available") or brightness_state.get("error"):
+            state["available"] = False
+            state["error"] = brightness_state.get("error") or "No se pudo aplicar el brillo"
+            state["error_code"] = brightness_state.get("error_code", "brightness_write_failed")
+            return state
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -1014,45 +1005,13 @@ def schedule_set(values):
                     return _schedule_result(None, values.get("natural_day", True), str(caught))
             else:
                 updated = _render_schedule(schedule, values.get("natural_day", True))
-            backup_path = path.with_suffix(path.suffix + ".bak")
-            backup_bytes = None
-            backup_mode = None
             if original_bytes is not None:
-                schedule_module._check_write_path(backup_path)
-                try:
-                    backup_bytes = schedule_module._read_regular_bytes(backup_path)
-                    backup_mode = stat.S_IMODE(os.lstat(backup_path).st_mode)
-                except FileNotFoundError:
-                    pass
-            if original_bytes is not None:
-                # Flush the backup before changing the config.
-                published_backup = existing.encode("utf-8")
-                try:
-                    schedule_module.atomic_write_text(
-                        backup_path,
-                        existing,
-                        original_mode,
-                        expected=backup_bytes,
-                        require_durable=True,
+                backup_path = path.with_suffix(path.suffix + ".bak")
+                backup_bytes, backup_mode, published_backup, backup_identity = (
+                    _publish_schedule_backup(
+                        schedule_module, backup_path, existing, original_mode
                     )
-                except schedule_module.AtomicWriteDurabilityError as caught:
-                    if caught.published_identity is not None:
-                        try:
-                            _restore_schedule_backup(
-                                schedule_module,
-                                backup_path,
-                                backup_bytes,
-                                backup_mode,
-                                published_backup,
-                                caught.published_identity,
-                            )
-                        except (OSError, ValueError) as rollback_error:
-                            raise ValueError(
-                                f"{caught}; no se pudo restaurar el backup: {rollback_error}"
-                            ) from caught
-                    raise
-                backup_stat = os.lstat(backup_path)
-                backup_identity = (backup_stat.st_dev, backup_stat.st_ino)
+                )
                 try:
                     schedule_module.atomic_write_text(
                         path, updated, original_mode, expected=original_bytes
@@ -1074,7 +1033,7 @@ def schedule_set(values):
                     raise
             else:
                 schedule_module.atomic_write_text(
-                    path, updated, original_mode, expected=original_bytes
+                    path, updated, original_mode, expected=None
                 )
     except (OSError, ValueError) as caught:
         return _schedule_result(
@@ -1094,6 +1053,50 @@ def schedule_set(values):
             error_code=error_code,
         )
     return schedule_get()
+
+
+def _publish_schedule_backup(schedule_module, path, existing, mode):
+    """Flush ``hyprsunset.conf.bak`` before the config changes.
+
+    Returns the backup's previous bytes and mode, the bytes this call
+    published and its identity, so a later config failure can undo exactly
+    this publication and nothing else.
+    """
+    previous_bytes = None
+    previous_mode = None
+    schedule_module._check_write_path(path)
+    try:
+        previous_bytes = schedule_module._read_regular_bytes(path)
+        previous_mode = stat.S_IMODE(os.lstat(path).st_mode)
+    except FileNotFoundError:
+        pass
+    published = existing.encode("utf-8")
+    try:
+        schedule_module.atomic_write_text(
+            path,
+            existing,
+            mode,
+            expected=previous_bytes,
+            require_durable=True,
+        )
+    except schedule_module.AtomicWriteDurabilityError as caught:
+        if caught.published_identity is not None:
+            try:
+                _restore_schedule_backup(
+                    schedule_module,
+                    path,
+                    previous_bytes,
+                    previous_mode,
+                    published,
+                    caught.published_identity,
+                )
+            except (OSError, ValueError) as rollback_error:
+                raise ValueError(
+                    f"{caught}; no se pudo restaurar el backup: {rollback_error}"
+                ) from caught
+        raise
+    backup_stat = os.lstat(path)
+    return previous_bytes, previous_mode, published, (backup_stat.st_dev, backup_stat.st_ino)
 
 
 def _restore_schedule_backup(
@@ -1176,8 +1179,9 @@ def _failed_section(error, fields):
     return result
 
 
-def _automation_status(module):
-    fields = {
+def _automation_fields():
+    """Empty automation section used before the state document is read."""
+    return {
         "schedule_enabled": None,
         "snooze_until": None,
         "snoozed": False,
@@ -1189,6 +1193,10 @@ def _automation_status(module):
         "schedule_display": None,
         "schedule_period_applied": None,
     }
+
+
+def _automation_status(module):
+    fields = _automation_fields()
     try:
         state = module.read_state()
     except Exception as error:
@@ -1293,6 +1301,15 @@ def _preflight_check(name, ok, error_code=None, error=None):
     }
 
 
+def _check_from_available(name, available):
+    """Build a preflight entry from an already-read backend state."""
+    if available:
+        return _preflight_check(name, True)
+    return _preflight_check(
+        name, False, "backend_unavailable", f"Backend no disponible: {name}"
+    )
+
+
 def _probe_failure(name, result):
     kind = getattr(result, "_veilleuse_error_kind", None)
     stderr = _text(getattr(result, "stderr", "")).strip()
@@ -1307,10 +1324,7 @@ def _run_preflight_probe(name, command):
     try:
         result = run_command(command, timeout=COMMAND_TIMEOUT)
     except Exception:
-        return (
-            _preflight_check(name, False, "backend_unavailable", f"Backend no disponible: {name}"),
-            None,
-        )
+        return _check_from_available(name, False), None
     if result.returncode == 0:
         return _preflight_check(name, True), result
     error_code, error = _probe_failure(name, result)
@@ -1336,16 +1350,10 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
             "omarchy-monitor-state", MONITOR_STATE_COMMAND
         )
         if monitor_check["ok"] and monitor_result is not None:
-            lines = _text(monitor_result.stdout).splitlines()
-            while len(lines) < 8:
-                lines.append("")
-            monitor_state = {"monitor": lines[5].strip() or None}
+            monitor_state = {"monitor": _monitor_lines(monitor_result.stdout)[5].strip() or None}
     else:
-        monitor_check = _preflight_check(
-            "omarchy-monitor-state",
-            bool(monitor_state.get("monitor")),
-            None if monitor_state.get("monitor") else "backend_unavailable",
-            None if monitor_state.get("monitor") else "Backend no disponible: omarchy-monitor-state",
+        monitor_check = _check_from_available(
+            "omarchy-monitor-state", bool(monitor_state.get("monitor"))
         )
 
     monitor_name = monitor_state.get("monitor") if isinstance(monitor_state, dict) else None
@@ -1355,27 +1363,18 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
                 "omarchy-brightness-display",
                 [*BRIGHTNESS_COMMAND, monitor_name],
             )
+        elif shutil.which(BRIGHTNESS_COMMAND[0]) is None:
+            brightness_check = _preflight_check(
+                "omarchy-brightness-display",
+                False,
+                "missing_command",
+                "Comando ausente: omarchy-brightness-display",
+            )
         else:
-            if shutil.which(BRIGHTNESS_COMMAND[0]) is None:
-                brightness_check = _preflight_check(
-                    "omarchy-brightness-display",
-                    False,
-                    "missing_command",
-                    "Comando ausente: omarchy-brightness-display",
-                )
-            else:
-                brightness_check = _preflight_check(
-                    "omarchy-brightness-display",
-                    False,
-                    "backend_unavailable",
-                    "Backend no disponible: omarchy-brightness-display",
-                )
+            brightness_check = _check_from_available("omarchy-brightness-display", False)
     else:
-        brightness_check = _preflight_check(
-            "omarchy-brightness-display",
-            brightness.get("available") is True,
-            None if brightness.get("available") is True else "backend_unavailable",
-            None if brightness.get("available") is True else "Backend no disponible: omarchy-brightness-display",
+        brightness_check = _check_from_available(
+            "omarchy-brightness-display", brightness.get("available") is True
         )
 
     if nightlight is None:
@@ -1384,11 +1383,8 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
             [*HYPRSUNSET_COMMAND, "identity", "get"],
         )
     else:
-        nightlight_check = _preflight_check(
-            "hyprctl/hyprsunset",
-            nightlight.get("available") is True,
-            None if nightlight.get("available") is True else "backend_unavailable",
-            None if nightlight.get("available") is True else "Backend no disponible: hyprctl/hyprsunset",
+        nightlight_check = _check_from_available(
+            "hyprctl/hyprsunset", nightlight.get("available") is True
         )
 
     checks = [helper, monitor_check, brightness_check, nightlight_check]
@@ -1442,18 +1438,7 @@ def read_status(*, nightlight=None, monitor_name=None):
     module = _state_module()
     if module is None:
         state_error = RuntimeError("state_utils unavailable")
-        automation = _failed_section(state_error, {
-            "schedule_enabled": None,
-            "snooze_until": None,
-            "snoozed": False,
-            "transition_seconds": None,
-            "origin": "unknown",
-            "last_applied": None,
-            "schedule_disabled": None,
-            "manual_override": None,
-            "schedule_display": None,
-            "schedule_period_applied": None,
-        })
+        automation = _failed_section(state_error, _automation_fields())
     else:
         automation = _automation_status(module)
     root = resolve_plugin_root()
@@ -1521,6 +1506,14 @@ def _operation_success(result, *, monitor_name=None):
     payload["result"] = result
     if isinstance(result, dict) and result.get("operation"):
         payload["operation"] = result["operation"]
+    return payload
+
+
+def _operation_payload(operation, result, monitor_name):
+    """Success payload for a schedule action: full status plus its result."""
+    payload = read_status(monitor_name=monitor_name)
+    payload["ok"] = True
+    payload["result"] = {"operation": operation, **result}
     return payload
 
 
@@ -1634,9 +1627,29 @@ def _persist_manual_intent(operation, values):
 
 def cmd_nightlight(args):
     operation = args.operation
+    if operation != "toggle" and any(
+        getattr(args, name, None) is not None for name in ("temperature", "brightness", "gamma")
+    ):
+        return _abort("Las opciones --temperature, --brightness y --gamma solo se usan con toggle")
     requested = None
     if operation == "toggle":
-        state = toggle_nightlight()
+        kelvin = None
+        if getattr(args, "temperature", None) is not None:
+            kelvin = _bounded(args.temperature, TEMPERATURE_MIN, 5000, "La temperatura")
+        gamma = None
+        if getattr(args, "gamma", None) is not None:
+            gamma = _bounded(args.gamma, GAMMA_MIN, GAMMA_MAX, "La gamma")
+        brightness = None
+        if getattr(args, "brightness", None) is not None:
+            brightness = _bounded(args.brightness, BRIGHTNESS_MIN, BRIGHTNESS_MAX, "El brillo")
+        state = toggle_nightlight(kelvin, gamma, brightness, args.monitor)
+        if state.get("enabled") is True and state.get("identity") is not True:
+            requested = {}
+            if kelvin is not None:
+                requested["temperature"] = kelvin
+            if gamma is not None:
+                requested["gamma"] = gamma
+            requested = requested or None
     elif operation == "natural":
         state = _apply_natural()
     elif operation == "temperature":
@@ -1654,12 +1667,25 @@ def cmd_nightlight(args):
     if ok:
         persist_error = _persist_manual_intent(operation, requested)
         run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
+    elif operation == "toggle":
+        confirmed = {}
+        if kelvin is not None and state.get("temperature") == kelvin:
+            confirmed["temperature"] = kelvin
+        if gamma is not None and state.get("gamma") == gamma:
+            confirmed["gamma"] = gamma
+        if confirmed:
+            persist_error = _persist_manual_intent(operation, confirmed)
+            run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
     status = read_status(nightlight=state, monitor_name=_selected_monitor_name(args))
-    if not ok:
-        _emit({"error": state["error"], "error_code": "apply_failed", "state": status})
-        return 1
     if persist_error:
         status["manual_persist_error"] = persist_error
+    if not ok:
+        _emit({
+            "error": state["error"],
+            "error_code": state.get("error_code") or "apply_failed",
+            "state": status,
+        })
+        return 1
     _emit(status)
     return 0
 
@@ -1705,60 +1731,57 @@ def _persist_schedule_display(display):
     return None
 
 
-def cmd_schedule(args):
-    monitor_name = _selected_monitor_name(args)
-    if args.action in ("status", "get"):
-        if args.action == "status":
-            toggle = _utility_module("schedule_toggle_utils")
-            try:
-                if toggle is not None and config_path().is_file():
-                    toggle.HYPRSUNSET_CONFIG = config_path()
-                    toggle_state = toggle.schedule_status(config_path())
-                else:
-                    state_mod = _state_module()
-                    if state_mod is None:
-                        _emit(_operation_failure("helper_unavailable", "El gestor de estado no está disponible"))
-                        return 1
-                    toggle_state = state_mod.read_state()
-                payload = read_status(monitor_name=monitor_name)
-                payload["ok"] = True
-                payload["result"] = {"operation": "schedule_status", **toggle_state}
-                _emit(payload)
-                return 0
-            except Exception as error:
-                _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
-                return 1
-        state = schedule_get()
-        _emit(state)
-        return 0 if state["available"] else 1
-    if args.action in ("enable", "disable"):
-        toggle = _utility_module("schedule_toggle_utils")
-        if toggle is None:
-            _emit(_operation_failure("helper_unavailable", "El gestor de horario no está disponible"))
-            return 1
-        try:
-            toggle.HYPRSUNSET_CONFIG = config_path()
-            operation = toggle.enable_schedule if args.action == "enable" else toggle.disable_schedule
-            toggle_state = operation(config_path())
-            payload = read_status(monitor_name=monitor_name)
-            payload["ok"] = True
-            payload["result"] = {"operation": f"schedule_{args.action}", **toggle_state}
-            _emit(payload)
-            return 0
-        except Exception as error:
-            _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
-            return 1
-    values = {
-        "day_time": args.day_time,
-        "day_temp": args.day_temp,
-        "night_time": args.night_time,
-        "night_temp": args.night_temp,
-    }
+def _schedule_status(monitor_name):
+    toggle = _utility_module("schedule_toggle_utils")
     try:
-        values["day_time"] = _clock(args.day_time, "Hora diurna")
-        values["night_time"] = _clock(args.night_time, "Hora nocturna")
-        values["day_temp"] = _bounded(args.day_temp, 5900, 6500, "Temperatura diurna")
-        values["night_temp"] = _bounded(args.night_temp, 2500, 5000, "Temperatura nocturna")
+        if toggle is not None and config_path().is_file():
+            toggle.HYPRSUNSET_CONFIG = config_path()
+            toggle_state = toggle.schedule_status(config_path())
+        else:
+            state_mod = _state_module()
+            if state_mod is None:
+                _emit(_operation_failure("helper_unavailable", "El gestor de estado no está disponible"))
+                return 1
+            toggle_state = state_mod.read_state()
+        payload = _operation_payload("schedule_status", toggle_state, monitor_name)
+        _emit(payload)
+        return 0
+    except Exception as error:
+        _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
+        return 1
+
+
+def _schedule_get():
+    state = schedule_get()
+    _emit(state)
+    return 0 if state["available"] else 1
+
+
+def _schedule_toggle(action, monitor_name):
+    toggle = _utility_module("schedule_toggle_utils")
+    if toggle is None:
+        _emit(_operation_failure("helper_unavailable", "El gestor de horario no está disponible"))
+        return 1
+    try:
+        toggle.HYPRSUNSET_CONFIG = config_path()
+        operation = toggle.enable_schedule if action == "enable" else toggle.disable_schedule
+        toggle_state = operation(config_path())
+        payload = _operation_payload(f"schedule_{action}", toggle_state, monitor_name)
+        _emit(payload)
+        return 0
+    except Exception as error:
+        _emit(_operation_failure(getattr(error, "error_code", "schedule_failed"), str(error)))
+        return 1
+
+
+def _schedule_save(args, monitor_name):
+    try:
+        values = {
+            "day_time": _clock(args.day_time, "Hora diurna"),
+            "night_time": _clock(args.night_time, "Hora nocturna"),
+            "day_temp": _bounded(args.day_temp, 5900, 6500, "Temperatura diurna"),
+            "night_temp": _bounded(args.night_temp, 2500, 5000, "Temperatura nocturna"),
+        }
         display = _schedule_display_values(args)
     except ValueError as error:
         return _abort(str(error))
@@ -1766,22 +1789,32 @@ def cmd_schedule(args):
     # the day profile as identity = true instead of a numeric temperature.
     values["natural_day"] = values["day_temp"] >= IDENTITY_TEMPERATURE
     state = schedule_set(values)
-    ok = state["available"] and state["error"] is None
-    if ok:
-        persist_error = _persist_schedule_display(display)
-        payload = read_status(monitor_name=monitor_name)
-        if persist_error:
-            payload["state_persist_error"] = persist_error
-        _emit(payload)
-        return 0
-    _emit(
-        {
-            "error": state["error"],
-            "error_code": state.get("error_code", "schedule_failed"),
-            "state": read_status(monitor_name=monitor_name),
-        }
-    )
-    return 0 if ok else 1
+    if not (state["available"] and state["error"] is None):
+        _emit(
+            {
+                "error": state["error"],
+                "error_code": state.get("error_code", "schedule_failed"),
+                "state": read_status(monitor_name=monitor_name),
+            }
+        )
+        return 1
+    persist_error = _persist_schedule_display(display)
+    payload = read_status(monitor_name=monitor_name)
+    if persist_error:
+        payload["state_persist_error"] = persist_error
+    _emit(payload)
+    return 0
+
+
+def cmd_schedule(args):
+    monitor_name = _selected_monitor_name(args)
+    if args.action == "status":
+        return _schedule_status(monitor_name)
+    if args.action == "get":
+        return _schedule_get()
+    if args.action in ("enable", "disable"):
+        return _schedule_toggle(args.action, monitor_name)
+    return _schedule_save(args, monitor_name)
 
 
 def cmd_shortcut(args):
@@ -1858,6 +1891,21 @@ def build_parser():
         help="Operation to run",
     )
     nightlight.add_argument("value", nargs="?", type=str, help="Target temperature/gamma")
+    nightlight.add_argument(
+        "--temperature",
+        type=int,
+        help="Warm temperature to apply when toggle turns the light on",
+    )
+    nightlight.add_argument(
+        "--brightness",
+        type=int,
+        help="Brightness to apply when toggle turns the light on",
+    )
+    nightlight.add_argument(
+        "--gamma",
+        type=int,
+        help="Gamma to apply when toggle turns the light on",
+    )
     _add_monitor_argument(nightlight)
     nightlight.set_defaults(handler=cmd_nightlight)
 
@@ -1930,8 +1978,8 @@ def main(argv=None):
     parser = build_parser()
     try:
         args = parser.parse_args(argv)
-    except SystemExit:
-        return 2
+    except SystemExit as error:
+        return int(error.code) if isinstance(error.code, int) else 2
     try:
         return args.handler(args)
     except (OSError, ValueError) as error:

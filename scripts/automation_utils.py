@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import datetime
 import sys
-import threading
 import time
 from collections.abc import Mapping
 
@@ -43,8 +42,6 @@ GAMMA_MIN = 0
 GAMMA_MAX = 100
 BRIGHTNESS_MIN = 1
 BRIGHTNESS_MAX = 100
-TRANSITION_SECONDS_MIN = 0
-TRANSITION_SECONDS_MAX = 1800
 STEP_INTERVAL_SECONDS = 1.0
 # Bounded grace for the final exact-target step: a slow environment must
 # never drop the requested target, only genuinely expired ramps report
@@ -66,24 +63,6 @@ class AutomationError(Exception):
     def __init__(self, error_code: str, message: str):
         super().__init__(message)
         self.error_code = error_code
-
-
-class CancellationToken:
-    """Dismissable in-process cancellation flag.
-
-    A running transition checks ``is_set()`` before every step; the caller
-    cancels the previous token when a newer operation replaces it
-    (latest-wins / process replacement).
-    """
-
-    def __init__(self):
-        self._event = threading.Event()
-
-    def is_set(self) -> bool:
-        return self._event.is_set()
-
-    def cancel(self) -> None:
-        self._event.set()
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +114,6 @@ def _iso_epoch(value) -> float | None:
         ).timestamp()
     except ValueError:
         return None
-
-
-def _default_local_now() -> datetime.datetime:
-    return datetime.datetime.now().astimezone()
 
 
 def snooze_status(state: Mapping, now: float) -> dict:
@@ -400,7 +375,6 @@ def default_env() -> dict:
     """Default injectables: real persistence and wall clock, fail-closed IO."""
     return {
         "now": time.time,
-        "local_now": _default_local_now,
         "monotonic": time.monotonic,
         "sleep": time.sleep,
         "read_state": _state_utils().read_state,
@@ -684,31 +658,22 @@ def _run_ramp(
         now = env["monotonic"]()
         if now >= (deadline + RAMP_FINAL_GRACE_SECONDS
                    if index == last_index else deadline):
-            return False, _failure(
+            return False, _ramp_failure(
                 "deadline", "El plazo de la transición ha expirado",
-                operation=operation, applied=False,
-                temperature=applied[-1][0] if applied else None,
-                gamma=applied[-1][1] if applied else None,
-                applied_steps=list(applied), seconds=seconds,
+                applied, seconds, operation,
             )
         if token is not None and token.is_set():
-            return False, _failure(
+            return False, _ramp_failure(
                 "cancelled", "La transición fue cancelada",
-                operation=operation, applied=False,
-                temperature=applied[-1][0] if applied else None,
-                gamma=applied[-1][1] if applied else None,
-                applied_steps=list(applied), seconds=seconds,
+                applied, seconds, operation,
             )
         if values != last_values:
             state = env["apply_values"](*values)
             if not state.get("available") or state.get("error"):
-                return False, _failure(
+                return False, _ramp_failure(
                     _failure_code(state, "apply_failed"),
                     state.get("error") or "No se pudo aplicar un paso de la transición",
-                    operation=operation, applied=False,
-                    temperature=applied[-1][0] if applied else None,
-                    gamma=applied[-1][1] if applied else None,
-                    applied_steps=list(applied), seconds=seconds,
+                    applied, seconds, operation,
                 )
             applied.append(values)
             last_values = values
@@ -901,185 +866,44 @@ def _reset_display_period(env: dict, state: Mapping, profile: Mapping) -> None:
     )
 
 
-def reconcile(env=None) -> dict:
-    """Idempotent enforcement of snooze and schedule.
-
-    * While snoozed: enforce natural identity (no-op once natural).
-    * On expiry: clear the snooze first, then apply the current schedule
-      profile once (even without drift) using the configured transition.
-    * Otherwise: honor manual intent; apply on drift or pending display values.
-    """
-    env = _resolve_env(env)
+def _clear_override(env: dict, message: str, *, snoozed: bool = False, detail: bool = False) -> dict | None:
+    """Drop the manual-intent override; return a failure payload on error."""
     try:
-        state = env["read_state"]()
+        env["update_state"](
+            lambda current: {**current, "manual_override": None}
+        )
     except Exception as error:
         return _failure(
             "state_failed",
-            str(error) if str(error) else "No se pudo leer el estado",
-            operation="reconcile", applied=False, snoozed=False,
+            str(error) if detail and str(error) else message,
+            operation="reconcile", applied=False, snoozed=snoozed,
         )
-    now = env["now"]()
-    snooze_until = state.get("snooze_until")
-    snoozed = snooze_until is not None and now < snooze_until
-    token = _token(env)
+    return None
 
-    if snoozed:
-        current = env["read_nightlight"]()
-        if not current.get("available"):
-            return _failure(
-                _failure_code(current, "read_failed"),
-                current.get("error") or "No se pudo leer el estado de la luz nocturna",
-                operation="reconcile", applied=False, snoozed=True,
-            )
-        if current.get("identity") is True:
-            if state.get("manual_override") is not None:
-                try:
-                    env["update_state"](
-                        lambda current_state: {
-                            **current_state,
-                            "manual_override": None,
-                        }
-                    )
-                except Exception:
-                    return _failure(
-                        "state_failed",
-                        "No se pudo limpiar el modo manual durante la posposición",
-                        operation="reconcile", applied=False, snoozed=True,
-                    )
-            return _success(operation="reconcile", applied=False, snoozed=True)
-        natural = env["apply_natural"]()
-        if not natural.get("available") or natural.get("error"):
-            return _failure(
-                _failure_code(natural, "apply_failed"),
-                natural.get("error") or "No se pudo aplicar el color natural",
-                operation="reconcile", applied=False, snoozed=True,
-            )
-        values = _natural_values(natural)
-        now = env["now"]()
-        try:
-            env["update_state"](
-                lambda current_state: {
-                    **current_state,
-                    "manual_override": None,
-                    "last_applied": {
-                        "at": _iso_timestamp(now),
-                        "origin": "snooze",
-                        "operation": "reconcile_snooze",
-                        "values": values,
-                    },
-                }
-            )
-        except Exception as error:
-            return _failure(
-                "state_failed",
-                str(error) if str(error) else "No se pudo guardar el estado",
-                operation="reconcile", applied=False, snoozed=True,
-            )
-        history_error = _append_history(
-            env,
-            _history_record(
-                "reconcile_snooze", "snooze", now, values=values, success=True
-            ),
-        )
-        return _success(
-            operation="reconcile", applied=True, snoozed=True,
-            history_error=history_error,
-        )
 
-    if snooze_until is not None and now >= snooze_until:
-        # Expiry: clear the snooze (one-shot) and any manual intent recorded
-        # during the snooze (snooze_set always clears it, so an override here
-        # cannot predate the snooze), then apply the profile once.
-        try:
-            env["update_state"](
-                lambda current: {
-                    **current,
-                    "snooze_until": None,
-                    "manual_override": None,
-                }
-            )
-        except Exception as error:
-            return _failure(
-                "state_failed",
-                str(error) if str(error) else "No se pudo limpiar la posposición",
-                operation="reconcile", applied=False, snoozed=False,
-            )
-        if state.get("schedule_enabled") is not True:
-            return _success(operation="reconcile", applied=False, snoozed=False)
+def _read_nightlight_or_failure(env: dict, *, snoozed: bool):
+    current = env["read_nightlight"]()
+    if current.get("available"):
+        return current, None
+    return None, _failure(
+        _failure_code(current, "read_failed"),
+        current.get("error") or "No se pudo leer el estado de la luz nocturna",
+        operation="reconcile", applied=False, snoozed=snoozed,
+    )
 
-        profile = env["current_profile"]()
-        if not profile.get("available"):
-            return _failure(
-                _failure_code(profile, "schedule_unavailable"),
-                profile.get("error") or "El perfil de horario no está disponible",
-                operation="reconcile", applied=False, snoozed=False,
-            )
-        current = env["read_nightlight"]()
-        if not current.get("available"):
-            return _failure(
-                _failure_code(current, "read_failed"),
-                current.get("error") or "No se pudo leer el estado de la luz nocturna",
-                operation="reconcile", applied=False, snoozed=False,
-            )
-        try:
-            _reset_display_period(env, state, profile)
-        except Exception:
-            return _failure(
-                "state_failed", "No se pudo guardar el cambio de período",
-                operation="reconcile", applied=False, snoozed=False,
-            )
-        scheduled = _pending_display(state, profile)
-        result, values = _apply_profile(
-            env, profile, current, state.get("transition_seconds", 0), token,
-            scheduled=scheduled,
-        )
-        if not result.get("success"):
-            return result
-        committed, history_error = _commit_reconcile(
-            env, values,
-            period_applied=profile.get("period") if scheduled is not None else None,
-        )
-        if not committed:
-            return _failure(
-                "state_failed", "No se pudo guardar el perfil aplicado",
-                operation="reconcile", applied=False, snoozed=False,
-                temperature=values.get("temperature"),
-                gamma=values.get("gamma"),
-            )
-        return _success(
-            operation="reconcile", applied=True, snoozed=False,
-            temperature=values.get("temperature"),
-            gamma=values.get("gamma"),
-            brightness=values.get("brightness"),
-            history_error=history_error,
-        )
 
-    # Otherwise: apply the current period only when drift exists, honoring a
-    # manual intent recorded in the same schedule period.
-    if state.get("schedule_enabled") is not True:
-        if state.get("manual_override") is not None:
-            try:
-                env["update_state"](
-                    lambda current_state: {
-                        **current_state,
-                        "manual_override": None,
-                    }
-                )
-            except Exception as error:
-                return _failure(
-                    "state_failed",
-                    str(error) if str(error) else "No se pudo limpiar el modo manual con el horario desactivado",
-                    operation="reconcile", applied=False, snoozed=False,
-                )
-        return _success(operation="reconcile", applied=False, snoozed=False)
-
+def _current_profile_or_failure(env: dict):
     profile = env["current_profile"]()
-    if not profile.get("available"):
-        return _failure(
-            _failure_code(profile, "schedule_unavailable"),
-            profile.get("error") or "El perfil de horario no está disponible",
-            operation="reconcile", applied=False, snoozed=False,
-        )
+    if profile.get("available"):
+        return profile, None
+    return None, _failure(
+        _failure_code(profile, "schedule_unavailable"),
+        profile.get("error") or "El perfil de horario no está disponible",
+        operation="reconcile", applied=False, snoozed=False,
+    )
+
+
+def _reset_period_or_failure(env: dict, state: Mapping, profile: Mapping):
     try:
         _reset_display_period(env, state, profile)
     except Exception:
@@ -1087,32 +911,165 @@ def reconcile(env=None) -> dict:
             "state_failed", "No se pudo guardar el cambio de período",
             operation="reconcile", applied=False, snoozed=False,
         )
+    return None
+
+
+def _ramp_failure(code, message, applied, seconds, operation):
+    return _failure(
+        code, message,
+        operation=operation, applied=False,
+        temperature=applied[-1][0] if applied else None,
+        gamma=applied[-1][1] if applied else None,
+        applied_steps=list(applied), seconds=seconds,
+    )
+
+
+def _reconcile_snoozed(env: dict, state: Mapping) -> dict:
+    """Enforce natural identity while a snooze is active."""
+    current, failure = _read_nightlight_or_failure(env, snoozed=True)
+    if failure is not None:
+        return failure
+    if current.get("identity") is True:
+        if state.get("manual_override") is not None:
+            failure = _clear_override(
+                env,
+                "No se pudo limpiar el modo manual durante la posposición",
+                snoozed=True,
+            )
+            if failure is not None:
+                return failure
+        return _success(operation="reconcile", applied=False, snoozed=True)
+    natural = env["apply_natural"]()
+    if not natural.get("available") or natural.get("error"):
+        return _failure(
+            _failure_code(natural, "apply_failed"),
+            natural.get("error") or "No se pudo aplicar el color natural",
+            operation="reconcile", applied=False, snoozed=True,
+        )
+    values = _natural_values(natural)
+    now = env["now"]()
+    try:
+        env["update_state"](
+            lambda current_state: {
+                **current_state,
+                "manual_override": None,
+                "last_applied": {
+                    "at": _iso_timestamp(now),
+                    "origin": "snooze",
+                    "operation": "reconcile_snooze",
+                    "values": values,
+                },
+            }
+        )
+    except Exception as error:
+        return _failure(
+            "state_failed",
+            str(error) if str(error) else "No se pudo guardar el estado",
+            operation="reconcile", applied=False, snoozed=True,
+        )
+    history_error = _append_history(
+        env,
+        _history_record(
+            "reconcile_snooze", "snooze", now, values=values, success=True
+        ),
+    )
+    return _success(
+        operation="reconcile", applied=True, snoozed=True,
+        history_error=history_error,
+    )
+
+
+def _reconcile_expired(env: dict, state: Mapping, token) -> dict:
+    """Clear an expired snooze, then apply the profile once."""
+    try:
+        env["update_state"](
+            lambda current: {
+                **current,
+                "snooze_until": None,
+                "manual_override": None,
+            }
+        )
+    except Exception as error:
+        return _failure(
+            "state_failed",
+            str(error) if str(error) else "No se pudo limpiar la posposición",
+            operation="reconcile", applied=False, snoozed=False,
+        )
+    if state.get("schedule_enabled") is not True:
+        return _success(operation="reconcile", applied=False, snoozed=False)
+
+    profile, failure = _current_profile_or_failure(env)
+    if failure is not None:
+        return failure
+    current, failure = _read_nightlight_or_failure(env, snoozed=False)
+    if failure is not None:
+        return failure
+    failure = _reset_period_or_failure(env, state, profile)
+    if failure is not None:
+        return failure
+    scheduled = _pending_display(state, profile)
+    result, values = _apply_profile(
+        env, profile, current, state.get("transition_seconds", 0), token,
+        scheduled=scheduled,
+    )
+    if not result.get("success"):
+        return result
+    committed, history_error = _commit_reconcile(
+        env, values,
+        period_applied=profile.get("period") if scheduled is not None else None,
+    )
+    if not committed:
+        return _failure(
+            "state_failed", "No se pudo guardar el perfil aplicado",
+            operation="reconcile", applied=False, snoozed=False,
+            temperature=values.get("temperature"),
+            gamma=values.get("gamma"),
+        )
+    return _success(
+        operation="reconcile", applied=True, snoozed=False,
+        temperature=values.get("temperature"),
+        gamma=values.get("gamma"),
+        brightness=values.get("brightness"),
+        history_error=history_error,
+    )
+
+
+def _reconcile_active(env: dict, state: Mapping, token) -> dict:
+    """Apply the current period on drift, honoring manual intent."""
+    if state.get("schedule_enabled") is not True:
+        if state.get("manual_override") is not None:
+            failure = _clear_override(
+                env,
+                "No se pudo limpiar el modo manual con el horario desactivado",
+                detail=True,
+            )
+            if failure is not None:
+                return failure
+        return _success(operation="reconcile", applied=False, snoozed=False)
+
+    profile, failure = _current_profile_or_failure(env)
+    if failure is not None:
+        return failure
+    failure = _reset_period_or_failure(env, state, profile)
+    if failure is not None:
+        return failure
     override = state.get("manual_override")
     if _manual_override_active(override, profile, env["now"]()):
         return _success(
             operation="reconcile", applied=False, snoozed=False,
             manual_override=True,
         )
-    current = env["read_nightlight"]()
-    if not current.get("available"):
-        return _failure(
-            _failure_code(current, "read_failed"),
-            current.get("error") or "No se pudo leer el estado de la luz nocturna",
-            operation="reconcile", applied=False, snoozed=False,
-        )
+    current, failure = _read_nightlight_or_failure(env, snoozed=False)
+    if failure is not None:
+        return failure
     scheduled = _pending_display(state, profile)
     if not _profile_drift(profile, current):
         if override is not None:
-            try:
-                env["update_state"](
-                    lambda current_state: {**current_state, "manual_override": None}
-                )
-            except Exception:
-                return _failure(
-                    "state_failed",
-                    "No se pudo limpiar el modo manual del período anterior",
-                    operation="reconcile", applied=False, snoozed=False,
-                )
+            failure = _clear_override(
+                env, "No se pudo limpiar el modo manual del período anterior"
+            )
+            if failure is not None:
+                return failure
         if scheduled is None:
             return _success(operation="reconcile", applied=False, snoozed=False)
         # Freshly saved schedule on an already-correct temperature: apply the
@@ -1161,13 +1118,39 @@ def reconcile(env=None) -> dict:
     )
 
 
+def reconcile(env=None) -> dict:
+    """Idempotent enforcement of snooze and schedule.
+
+    * While snoozed: enforce natural identity (no-op once natural).
+    * On expiry: clear the snooze first, then apply the current schedule
+      profile once (even without drift) using the configured transition.
+    * Otherwise: honor manual intent; apply on drift or pending display values.
+    """
+    env = _resolve_env(env)
+    try:
+        state = env["read_state"]()
+    except Exception as error:
+        return _failure(
+            "state_failed",
+            str(error) if str(error) else "No se pudo leer el estado",
+            operation="reconcile", applied=False, snoozed=False,
+        )
+    now = env["now"]()
+    snooze_until = state.get("snooze_until")
+    token = _token(env)
+    if snooze_until is not None and now < snooze_until:
+        return _reconcile_snoozed(env, state)
+    if snooze_until is not None:
+        return _reconcile_expired(env, state, token)
+    return _reconcile_active(env, state, token)
+
+
 __all__ = [
-    "AutomationError", "CancellationToken",
+    "AutomationError",
     "SNOOZE_MINUTES_MIN", "SNOOZE_MINUTES_MAX",
     "SNOOZE_SECONDS_MIN", "SNOOZE_SECONDS_MAX",
     "TEMPERATURE_MIN", "TEMPERATURE_MAX", "GAMMA_MIN", "GAMMA_MAX",
     "BRIGHTNESS_MIN", "BRIGHTNESS_MAX",
-    "TRANSITION_SECONDS_MIN", "TRANSITION_SECONDS_MAX",
     "STEP_INTERVAL_SECONDS", "IDENTITY_TEMPERATURE",
     "DRIFT_TOLERANCE_TEMPERATURE", "IDENTITY_OVERRIDE_DURATION_SECONDS",
     "build_manual_override", "commit_manual_apply",

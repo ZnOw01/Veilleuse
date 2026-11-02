@@ -7,8 +7,10 @@ require explicit Veilleuse day/night markers so unrelated profiles survive.
 
 from __future__ import annotations
 
-import contextlib
 import base64
+import contextlib
+import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -25,7 +27,6 @@ import state_utils
 
 
 HYPRSUNSET_CONFIG = schedule_utils.HYPRSUNSET_CONFIG
-LOCK_NAME = schedule_utils.SCHEDULE_LOCK_NAME
 PENDING_SUFFIX = ".veilleuse-toggle.pending"
 
 
@@ -97,11 +98,10 @@ def _read_bytes(path: Path) -> tuple[bytes, int, os.stat_result]:
             os.close(descriptor)
 
 
-def _assert_same_file(path: Path, expected: bytes) -> tuple[int, os.stat_result]:
-    current, mode, metadata = _read_bytes(path)
+def _assert_same_file(path: Path, expected: bytes) -> None:
+    current, _mode, _metadata = _read_bytes(path)
     if current != expected:
         raise _error("conflict", "Schedule changed during the transaction")
-    return mode, metadata
 
 
 def _atomic_write_bytes(
@@ -359,7 +359,7 @@ def _recover_pending(path: Path) -> None:
 @contextlib.contextmanager
 def _locked(path: Path):
     _check_parent(path)
-    lock_path = path.parent / LOCK_NAME
+    lock_path = path.parent / schedule_utils.SCHEDULE_LOCK_NAME
     descriptor = None
     try:
         descriptor = os.open(
@@ -370,21 +370,17 @@ def _locked(path: Path):
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise _error("unsafe_path", "Schedule lock is not a regular file")
         os.fchmod(descriptor, 0o600)
-        import fcntl
-
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         _recover_pending(path)
         yield
     except ScheduleToggleError:
         raise
     except OSError as caught:
-        code = "unsafe_path" if getattr(caught, "errno", None) in {40, 62} else "io_error"
+        code = "unsafe_path" if getattr(caught, "errno", None) == errno.ELOOP else "io_error"
         raise _error(code, "Unable to lock schedule", caught)
     finally:
         if descriptor is not None:
             with contextlib.suppress(OSError):
-                import fcntl
-
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
 
@@ -396,7 +392,7 @@ def _hash(data: bytes) -> str:
 def _managed_ranges(text: str) -> list[tuple[int, int]]:
     try:
         blocks = list(schedule_utils.iter_profile_blocks(text))
-        records = schedule_utils._profile_records(text, strict_temperatures=True)
+        records = schedule_utils.profile_records(text, strict_temperatures=True)
     except (AttributeError, ValueError) as caught:
         raise _error("malformed_config", "Schedule contains malformed profiles", caught)
     if len(blocks) != len(records):

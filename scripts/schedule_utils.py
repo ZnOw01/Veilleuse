@@ -260,7 +260,12 @@ def profile_kind(info):
     return "day" if temperature >= DAY_TEMP_MIN else "night"
 
 
-def _profile_records(text, strict_temperatures=False):
+def _clock_minutes(value):
+    hour, minute = value.split(":")
+    return int(hour) * 60 + int(minute)
+
+
+def profile_records(text, strict_temperatures=False):
     if not isinstance(text, str):
         raise ValueError("La configuración debe ser texto")
     blocks = list(iter_profile_blocks(text))
@@ -344,7 +349,7 @@ def parse_schedule_text(text, strict=False):
             raise ValueError("La configuración no contiene perfiles")
         return default_schedule()
 
-    records = _profile_records(text, strict_temperatures=strict)
+    records = profile_records(text, strict_temperatures=strict)
     schedule = {}
     found_day = False
     found_night = False
@@ -371,7 +376,7 @@ def parse_schedule_text(text, strict=False):
 
 
 def day_profile_is_identity(text):
-    for info, kind in _profile_records(text):
+    for info, kind in profile_records(text):
         if kind == "day":
             return info["identity"] is True
     raise ValueError("La configuración no contiene un perfil day válido")
@@ -384,14 +389,8 @@ def schedule_period(schedule, now=None):
     if not isinstance(now, datetime.time):
         raise ValueError("La hora actual debe ser datetime.time")
     current = now.hour * 60 + now.minute
-    night = sum(
-        int(part) * factor
-        for part, factor in zip(schedule["night_time"].split(":"), (60, 1))
-    )
-    day = sum(
-        int(part) * factor
-        for part, factor in zip(schedule["day_time"].split(":"), (60, 1))
-    )
+    night = _clock_minutes(schedule["night_time"])
+    day = _clock_minutes(schedule["day_time"])
     return "night" if (current - night) % 1440 < (current - day) % 1440 else "day"
 
 
