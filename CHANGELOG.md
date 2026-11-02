@@ -2,6 +2,11 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.6.1 (2026-11-02)
+
+- Replace the panel screenshots with clean captures of the full Home, Automation, and Settings views.
+- Compact the Automation snooze controls into one row so the full panel fits without clipping.
+
 ## v3.6.0 (2026-11-02)
 
 - The manual night-light switch now applies the schedule's Night temperature, brightness, and gamma. Warm-light values live in one place.

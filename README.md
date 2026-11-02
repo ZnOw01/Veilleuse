@@ -12,6 +12,12 @@ Brightness, night light, and day/night schedules for the Omarchy Quattro bar.
 
 Veilleuse is a native Omarchy Quattro shell plugin. Its bar widget opens a panel with three views: **Home** for brightness and night light, **Automation** for the day/night schedule and snooze, and **Settings** for language and an optional keyboard shortcut.
 
+## Screenshots
+
+| Home | Automation | Settings |
+| :--: | :--------: | :------: |
+| <img src="preview.png" width="250" alt="Home view: night light toggle, brightness, temperature, gamma, and monitor selector"> | <img src="assets/automation.png" width="250" alt="Automation view: schedule toggle, day and night times, temperatures, brightness, gamma, and snooze controls"> | <img src="assets/settings.png" width="250" alt="Settings view: language selector and keyboard shortcut installer"> |
+
 ## Features
 
 - Brightness from 1 to 100% for the focused display or a named monitor, through `omarchy-brightness-display`.
