@@ -2,6 +2,21 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.6.0 (2026-11-02)
+
+- The manual night-light switch now applies the schedule's Night temperature, brightness, and gamma. Warm-light values live in one place.
+- `nightlight toggle` accepts `--temperature`, `--brightness`, and `--gamma` for scripts.
+- Reject non-warm toggle temperatures and toggle-only flags on other night-light operations.
+- Propagate the underlying error code instead of flattening every failure to `apply_failed`.
+- Persist the values that were confirmed when a later step fails.
+- Hide the `Manual` and `Automatic` pill while the light is on. Snoozed, unavailable, and natural-color states still show.
+- Use the theme-native `PanelSlider` and plain hero text. The custom gradients, halo, and colored hairline are gone.
+- Align the value badges, consolidate the quick-snooze buttons, add a current-time marker to the schedule track, and respect reduced motion.
+- Shorten the quick-snooze night-start label to Night/Noche so it no longer elides.
+- Clean up `BarWidget.qml` and remove the repeated locale expression.
+- Remove backend duplication in the module loader, atomic writer, timestamp validation, reconcile, and schedule dispatch.
+- Fix `veilleuse-control nightlight --help` to exit 0 instead of 2.
+
 ## v3.5.3 (2026-10-19)
 
 - Rewrite the README around the shipped behavior: verified Omarchy command flags, per-view usage, the 6000 K natural-color threshold, and the diagnostics exit-code caveat.
