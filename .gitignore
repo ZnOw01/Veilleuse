@@ -12,8 +12,14 @@ CLAUDE.md
 .aider*
 .cline/
 .gemini/
+.codex/
+.opencode/
+.hermes/
 scratch/
 brain/
+
+# Local scratch directories
+/random/
 
 # Internal planning/spec material — never shipped
 docs/
@@ -26,6 +32,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # Virtual environments and build outputs
@@ -41,12 +49,19 @@ build/
 .env.*
 !.env.example
 !.env.*.example
+.envrc
+.direnv/
+.netrc
+.pypirc
+.npmrc
 *.pem
 *.key
 
 # Node / JS tooling
 node_modules/
 .npm/
+.eslintcache
+.stylelintcache
 
 # Editors, IDEs, and OS metadata
 .vscode/
@@ -56,10 +71,14 @@ node_modules/
 *~
 .DS_Store
 Thumbs.db
+desktop.ini
+.directory
 *.log
 
 # Backups, scratch files, and local screenshots
 *.bak
 *.tmp
-*.png.bak
+*.tmp.*
+*.orig
+*.rej
 screenshots/
