@@ -53,6 +53,7 @@ var en = {
   unitSeconds: 'Seconds',
   sunset: 'Sunset',
   nightStart: 'Night start',
+  nightStartShort: 'Night',
   quickSnooze: 'Quick snooze',
   // Settings.
   settingsTitle: 'Settings',
@@ -155,6 +156,7 @@ var es = {
   unitSeconds: 'Segundos',
   sunset: 'Atardecer',
   nightStart: 'Inicio de noche',
+  nightStartShort: 'Noche',
   quickSnooze: 'Posposición rápida',
   settingsTitle: 'Ajustes',
   language: 'Idioma',

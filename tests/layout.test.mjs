@@ -104,7 +104,7 @@ test('view switching is the two chevrons plus the current view name', () => {
 test('the hero shows the title and switch only, with no schedule meta line', () => {
   const hero = qml.slice(qml.indexOf('id: heroSurface'), qml.indexOf('id: homeRoute'));
   assert.match(hero, /title:\s*root\.text\("night_light"\)/);
-  assert.match(hero, /onToggled:\s*root\.request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)/);
+  assert.match(hero, /onToggled:\s*root\.request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)/);
   assert.doesNotMatch(hero, /meta:/);
   assert.doesNotMatch(hero, /periodText|period_day|period_night|manual_override/);
 });
@@ -282,7 +282,7 @@ test('panel reconciles once after load, retrying until idle so an expired snooze
 });
 
 test('global IPC toggleNightlight queues through the latest-wins request bus instead of silently dropping while busy or unavailable', () => {
-  assert.match(qml, /function toggleNightlight\(\)\s*\{\s*root\.request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)\s*;\s*\}/);
+  assert.match(qml, /function toggleNightlight\(\)\s*\{\s*root\.request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)\s*;\s*\}/);
 });
 
 test('v2 panel exposes three native routes and route navigation preserves context', () => {
@@ -307,7 +307,7 @@ test('route sections match the three compact views', () => {
 
 test('keyboard activation opens the pickers, focuses editors and runs actions', () => {
   const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('moduleName:'));
-  assert.match(activate, /section\s*===\s*"nightLight"[\s\S]*?\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\]/);
+  assert.match(activate, /section\s*===\s*"nightLight"[\s\S]*?request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)/);
   assert.match(activate, /section\s*===\s*"monitor"\)\s*\{\s*monitorSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"scheduleToggle"[\s\S]*?root\.toggleSchedule\(!root\.scheduleEnabled\)/);
   assert.match(activate, /section\s*===\s*"schedule"\)[\s\S]*?scheduleEditors\s*=\s*\[startEditor,\s*startEditor[\s\S]*?scheduleEditor\.forceActiveFocus\(\)/);
@@ -354,9 +354,9 @@ test('a superseded helper exit cancels the stale burst debounce before relaunchi
 
 test('a superseded helper exit still adopts the state of the write that physically applied', () => {
   assert.match(qml, /function mergeStaleResponse\(exitCode\)/);
-  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\s*\)\s*\{[\s\S]*?Qt\.callLater\(root\.launchLatest\);\s*root\.mergeStaleResponse\(exitCode\);\s*return ;\s*\}/);
+  assert.match(qml, /if\s*\(\s*requestId\s*!==\s*latestRequestId\s*\)\s*\{[\s\S]*?Qt\.callLater\(root\.launchLatest\);\s*root\.mergeStaleResponse\(exitCode\);\s*return\s*;\s*\}/);
   const merge = qml.slice(qml.indexOf('function mergeStaleResponse(exitCode)'), qml.indexOf('function handleExit(exitCode)'));
-  assert.match(merge, /if\s*\(exitCode\s*!==\s*0\)\s*return ;/);
+  assert.match(merge, /if\s*\(exitCode\s*!==\s*0\)\s*return\s*;/);
   assert.match(merge, /JSON\.parse\(processOutput\)/);
   assert.match(merge, /Model\.mergeStatePatch\(state,\s*patch\)/);
 });
@@ -375,8 +375,18 @@ test('combined helper actions keep the selected monitor through every readback',
   assert.match(qml, /function queueMutation\(section,\s*value\)[\s\S]*?\["nightlight",\s*section,[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /function queueSchedule\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /\["schedule",\s*"status",\s*"--monitor",\s*root\.selectedMonitor\]/);
-  assert.match(qml, /\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\]/);
+  assert.match(qml, /function nightlightToggleCommand\(\)[\s\S]*?\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\][\s\S]*?schedule\.night_temp/);
   assert.match(qml, /function settingsCommand\(name,\s*args\)[\s\S]*?name\s*===\s*"snooze"[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
+});
+
+test('the night light toggle applies the schedule night values when present', () => {
+  const command = qml.slice(qml.indexOf('function nightlightToggleCommand()'), qml.indexOf('function issue('));
+  assert.match(command, /schedule\.night_temp/);
+  assert.match(command, /night\.brightness/);
+  assert.match(command, /night\.gamma/);
+  assert.match(command, /command\.push\("--temperature"/);
+  assert.match(command, /command\.push\("--brightness"/);
+  assert.match(command, /command\.push\("--gamma"/);
 });
 
 test('snooze actions require available automation and idle helper state', () => {
@@ -483,7 +493,7 @@ test('every translated QML key resolves in Spanish and English', async () => {
 test('global shortcut IPC endpoint performs a real helper toggle', () => {
   assert.match(qml, /manageIpc:\s*false/);
   assert.match(qml, /function toggleNightlight\(\)/);
-  assert.match(qml, /request\(\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\],\s*"toggle"\)/);
+  assert.match(qml, /request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)/);
   assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
   for (const method of ['open', 'close', 'show', 'hide', 'toggle']) {
     assert.match(qml, new RegExp(`function ${method}\\(\\)`));
@@ -540,16 +550,16 @@ test('Tier 2 - F11 Monotonic Bus: Process cancellation and burst debouncing prev
   assert.match(qml, /id:\s*debounce[\s\S]*?interval:\s*90/);
 });
 
-test('Tier 1 - F6 Route Transitions: Panel.qml defines animated cross-fade, directional slide, and container height morphing', () => {
+test('Tier 1 - F6 Route Transitions: Panel.qml uses the named motion token for cross-fade, directional slide, and container height morphing', () => {
   assert.match(qml, /property int transitionDirection:\s*1/);
-  assert.match(qml, /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180[\s\S]*?easing\.type:\s*Easing\.OutCubic/);
+  assert.match(qml, /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*root\.motionNormal[\s\S]*?easing\.type:\s*Easing\.OutCubic/);
   assert.match(qml, /if\s*\(panelFlick\)\s*panelFlick\.contentY\s*=\s*0;/);
 
   for (const containerId of ['heroSurface', 'homeRoute', 'automationRoute', 'settingsRoute']) {
     const block = qml.slice(qml.indexOf(`id: ${containerId}`), qml.indexOf(`id: ${containerId}`) + 1200);
     assert.match(block, /opacity:\s*root\.route\s*===\s*"\w+"\s*\?\s*1\.0\s*:\s*0\.0/);
-    assert.match(block, /Behavior on opacity\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180/);
-    assert.match(block, /transform:\s*Translate\s*\{[\s\S]*?Behavior on x\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*180/);
+    assert.match(block, /Behavior on opacity\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*root\.motionNormal/);
+    assert.match(block, /transform:\s*Translate\s*\{[\s\S]*?Behavior on x\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*root\.motionNormal/);
   }
 });
 

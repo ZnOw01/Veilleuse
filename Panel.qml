@@ -22,6 +22,7 @@ Panel {
         property alias validator: input.validator
         property alias inputMethodHints: input.inputMethodHints
         property string accessibleName: label
+        property bool hasCursor: false
         spacing: Style.spacing.md
 
         Text {
@@ -41,8 +42,51 @@ Panel {
             inputMethodHints: Qt.ImhDigitsOnly
             foreground: optionalField.foreground
             font.family: optionalField.fontFamily
+            hasCursor: optionalField.hasCursor
             Accessible.name: optionalField.accessibleName + " " + root.text("optional")
             Accessible.role: Accessible.EditableText
+        }
+    }
+
+    component ValueBadge: BorderSurface {
+        id: badge
+
+        property string text: ""
+        property bool active: false
+        property color foreground: root.foreground
+        property int minimumWidth: Style.space(48)
+
+        implicitWidth: Math.max(valueText.implicitWidth + Style.space(12), minimumWidth)
+        implicitHeight: valueText.implicitHeight + Style.space(4)
+        radius: Style.cornerRadius
+        color: badge.active
+            ? Style.selectedFillFor(badge.foreground, Color.accent)
+            : Style.normalFillFor(badge.foreground, Color.accent)
+        borderSpec: Border.flat(
+            badge.active
+                ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
+                : Util.alpha(badge.foreground, Style.normalBorderAlpha),
+            Style.spacing.hairline
+        )
+
+        Behavior on color {
+            ColorAnimation { duration: root.motionMicro }
+        }
+
+        Text {
+            id: valueText
+
+            textFormat: Text.PlainText
+            anchors.centerIn: parent
+            text: badge.text
+            color: badge.active ? Color.accent : badge.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+
+            Behavior on color {
+                ColorAnimation { duration: root.motionMicro }
+            }
         }
     }
 
@@ -69,6 +113,7 @@ Panel {
     // Touched by snoozeTickTimer so the countdown binding re-evaluates
     // between helper refreshes.
     property int snoozeTick: 0
+    property int nowTick: 0
     property int latestRequestId: 0
     property int queuedRequestId: 0
     property int processRequestId: 0
@@ -100,6 +145,15 @@ Panel {
     readonly property int controlIconSlot: Style.space(20)
     readonly property int panelWidth: Style.space(330)
     readonly property int panelMaxHeight: Style.space(560)
+    readonly property int motionMicro: Style.duration(120)
+    readonly property int motionFast: Style.duration(160)
+    readonly property int motionNormal: Style.duration(180)
+    readonly property real nowFraction: {
+        // nowTick is read only so the schedule marker re-evaluates every minute.
+        var tick = root.nowTick;
+        var now = new Date();
+        return (now.getHours() * 60 + now.getMinutes()) / 1440;
+    }
     readonly property int sectionPad: Style.space(6)
     readonly property int headerPad: Style.space(16)
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
@@ -124,7 +178,7 @@ Panel {
         if (root.snoozeActive)
             return root.text("snooze_active");
         if (root.state.enabled === true)
-            return root.provenanceText;
+            return "";
         return root.text("disabled");
     }
     readonly property int snoozeRemainingMinutes: {
@@ -303,6 +357,24 @@ Panel {
         root.persistInline(values);
     }
 
+    function nightlightToggleCommand() {
+        var schedule = root.state.schedule || {};
+        var display = root.state.automation && root.state.automation.schedule_display
+            ? root.state.automation.schedule_display : {};
+        var night = display.night || {};
+        var command = ["nightlight", "toggle", "--monitor", root.selectedMonitor];
+        var temperature = Number(schedule.night_temp);
+        if (isFinite(temperature) && temperature >= 2500 && temperature <= 5000)
+            command.push("--temperature", String(Math.round(temperature)));
+        var brightness = Number(night.brightness);
+        if (isFinite(brightness) && brightness >= 1 && brightness <= 100)
+            command.push("--brightness", String(Math.round(brightness)));
+        var gamma = Number(night.gamma);
+        if (isFinite(gamma) && gamma >= 0 && gamma <= 100)
+            command.push("--gamma", String(Math.round(gamma)));
+        return command;
+    }
+
     function issue(command, operation) {
         return root.request(command, operation);
     }
@@ -315,7 +387,7 @@ Panel {
 
     function applySnooze() {
         if (root.snoozeSeconds === null || !root.automationReady || root.actionPending)
-            return ;
+            return;
         root.issue(["snooze", "set", "--seconds", String(root.snoozeSeconds), "--monitor", root.selectedMonitor], "snooze");
     }
 
@@ -402,9 +474,9 @@ Panel {
 
     function queueMutation(section, value) {
         if (section === "brightness" && !brightnessReady)
-            return ;
+            return;
         if ((section === "temperature" || section === "gamma") && !nightlightReady)
-            return ;
+            return;
 
         if (section === "brightness")
             request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], section);
@@ -434,7 +506,7 @@ Panel {
 
     function queueSchedule() {
         if (!scheduleReady || actionPending || !scheduleFieldsValid())
-            return ;
+            return;
 
         var command = ["schedule", "set", "--monitor", root.selectedMonitor, "--day-time", editStart,
                        "--night-time", editEnd, "--day-temp", editDayTemperature,
@@ -458,10 +530,10 @@ Panel {
     function launchLatest() {
         if (helperProcess.running) {
             if (!Model.maySupersedeOperation(processOperation, queuedOperation))
-                return ;
+                return;
             stoppingForLatest = true;
             helperProcess.running = false;
-            return ;
+            return;
         }
         processRequestId = queuedRequestId;
         processOperation = queuedOperation;
@@ -475,7 +547,7 @@ Panel {
     // without replacing unrelated sections or the newest drag target.
     function mergeStaleResponse(exitCode) {
         if (exitCode !== 0)
-            return ;
+            return;
 
         var payload = null;
         try {
@@ -485,7 +557,7 @@ Panel {
         }
         var patch = payload && payload.state && typeof payload.state === "object" && !Array.isArray(payload.state) ? payload.state : null;
         if (!patch)
-            return ;
+            return;
 
         state = root.mergeCombined(Model.mergeStatePatch(state, patch), patch);
     }
@@ -497,7 +569,7 @@ Panel {
             if (processOperation === "schedule-reconcile" && Model.shouldRetryScheduleReconcile(queuedOperation))
                 scheduleReconcilePending = true;
             Qt.callLater(root.launchLatest);
-            return ;
+            return;
         }
         if (requestId !== latestRequestId) {
             debounce.stop();
@@ -516,7 +588,7 @@ Panel {
             }
             Qt.callLater(root.launchLatest);
             root.mergeStaleResponse(exitCode);
-            return ;
+            return;
         }
         snoozeExpiryRefreshPending = false;
         var payload = null;
@@ -539,7 +611,7 @@ Panel {
                 feedbackTimer.restart();
             }
             root.queueScheduleReconcile();
-            return ;
+            return;
         }
         var responseState = payload && payload.state ? payload.state : payload;
         var result = Model.commitResponse(root.state, {
@@ -580,7 +652,7 @@ Panel {
                 root.queueScheduleReconcile();
             }
 
-            return ;
+            return;
         }
         actionPending = false;
         root.dragTarget = Model.dragTargetEmpty();
@@ -674,7 +746,7 @@ Panel {
     function reconcilePending() {
         if (root.route !== "home") {
             root.dragTarget = Model.dragTargetEmpty();
-            return ;
+            return;
         }
         var drag = Model.reconcileDragTargets(state, root.state, root.dragTarget, root.queuedOperation);
         root.dragTarget = drag.target;
@@ -709,19 +781,19 @@ Panel {
         var section = Model.routeSections(root.route)[cursor.section];
         if (section === "nightLight") {
             if (nightlightReady && !actionPending)
-                request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle");
+                request(root.nightlightToggleCommand(), "toggle");
 
-            return ;
+            return;
         }
         if (section === "monitor") {
             monitorSelector.open();
-            return ;
+            return;
         }
         if (section === "scheduleToggle") {
             if (automationReady && !actionPending)
                 root.toggleSchedule(!root.scheduleEnabled);
 
-            return ;
+            return;
         }
         if (section === "schedule") {
             if (cursor.field === 9) {
@@ -739,7 +811,7 @@ Panel {
             var scheduleEditor = scheduleEditors[cursor.field];
             if (scheduleEditor)
                 scheduleEditor.forceActiveFocus();
-            return ;
+            return;
         }
         if (section === "snooze") {
             if (cursor.field >= 1 && cursor.field <= 5) {
@@ -755,21 +827,22 @@ Panel {
             } else if (cursor.field === 11 && root.snoozeActive && !root.actionPending) {
                 root.settingsCommand("snooze", ["clear"]);
             }
-            return ;
+            return;
         }
         if (section === "locale") {
             localeSelector.open();
-            return ;
+            return;
         }
         if (section === "shortcut") {
             shortcutField.forceActiveFocus();
-            return ;
+            return;
         }
         if (section === "shortcutActions") {
             if (cursor.field === 2 && !root.actionPending)
                 root.settingsCommand("shortcut", ["remove"]);
             else if (cursor.field <= 1 && !root.actionPending && shortcutField.text.trim() !== "")
                 root.settingsCommand("shortcut", ["install", "--keys", shortcutField.text]);
+            return;
         }
     }
 
@@ -787,14 +860,15 @@ Panel {
         function toggle() { root.toggle(); }
 
         function toggleNightlight() {
-            root.request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle");
+            root.request(root.nightlightToggleCommand(), "toggle");
         }
     }
 
     onOpenedChanged: {
-        if (opened)
+        if (opened) {
             requestStatus();
-
+            root.refocusKeyCatcher();
+        }
     }
     Component.onCompleted: {
         // QML cannot use the model's CommonJS bootstrap; inject its locale library.
@@ -846,6 +920,15 @@ Panel {
     }
 
     Timer {
+        id: clockTimer
+
+        interval: 60000
+        repeat: true
+        running: root.opened
+        onTriggered: root.nowTick += 1
+    }
+
+    Timer {
         id: initialReconcileTimer
 
         interval: 1000
@@ -854,7 +937,7 @@ Panel {
         onTriggered: {
             if (root.actionPending) {
                 initialReconcileTimer.restart();
-                return ;
+                return;
             }
             root.reconcile();
         }
@@ -901,7 +984,7 @@ Panel {
 
         Behavior on contentHeight {
             NumberAnimation {
-                duration: 180
+                duration: root.motionNormal
                 easing.type: Easing.OutCubic
             }
         }
@@ -918,38 +1001,38 @@ Panel {
             Keys.priority: Keys.BeforeItem
             Keys.onPressed: function(event) {
                 if (root.keyCatcherBlocked)
-                    return ;
+                    return;
                 if (event.key === Qt.Key_Escape) {
                     root.handleCloseRequested();
                     event.accepted = true;
-                    return ;
+                    return;
                 }
                 if (event.key === Qt.Key_Left) {
                     if (!root.adjustSliderBy(-1))
                         root.switchRouteBy(-1);
                     event.accepted = true;
-                    return ;
+                    return;
                 }
                 if (event.key === Qt.Key_Right) {
                     if (!root.adjustSliderBy(1))
                         root.switchRouteBy(1);
                     event.accepted = true;
-                    return ;
+                    return;
                 }
                 if (event.key === Qt.Key_Up) {
                     root.moveCursorVertically(-1);
                     event.accepted = true;
-                    return ;
+                    return;
                 }
                 if (event.key === Qt.Key_Down) {
                     root.moveCursorVertically(1);
                     event.accepted = true;
-                    return ;
+                    return;
                 }
                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
                     root.activateCursor();
                     event.accepted = true;
-                    return ;
+                    return;
                 }
             }
         }
@@ -1050,7 +1133,7 @@ Panel {
 
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 160
+                            duration: root.motionFast
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -1098,7 +1181,7 @@ Panel {
                         x: root.route === "home" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
                         Behavior on x {
                             NumberAnimation {
-                                duration: 180
+                                duration: root.motionNormal
                                 easing.type: Easing.OutCubic
                             }
                         }
@@ -1106,7 +1189,7 @@ Panel {
 
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 180
+                            duration: root.motionNormal
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -1144,19 +1227,18 @@ Panel {
 
                                 Behavior on opacity {
                                     NumberAnimation {
-                                        duration: 160
+                                        duration: root.motionFast
                                         easing.type: Easing.OutCubic
                                     }
                                 }
 
                                 Behavior on color {
                                     ColorAnimation {
-                                        duration: 160
+                                        duration: root.motionFast
                                         easing.type: Easing.OutCubic
                                     }
                                 }
                             }
-
                         }
 
                         trailingControl: Component {
@@ -1166,7 +1248,7 @@ Panel {
                                 trackHeight: Math.max(22, Style.space(24))
                                 foreground: root.foreground
                                 Accessible.name: root.text("night_light")
-                                onToggled: root.request(["nightlight", "toggle", "--monitor", root.selectedMonitor], "toggle")
+                                onToggled: root.request(root.nightlightToggleCommand(), "toggle")
                             }
 
                         }
@@ -1186,7 +1268,7 @@ Panel {
                         x: root.route === "home" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
                         Behavior on x {
                             NumberAnimation {
-                                duration: 180
+                                duration: root.motionNormal
                                 easing.type: Easing.OutCubic
                             }
                         }
@@ -1194,7 +1276,7 @@ Panel {
 
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 180
+                            duration: root.motionNormal
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -1236,7 +1318,7 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     Behavior on iconColor {
-                                        ColorAnimation { duration: 120 }
+                                        ColorAnimation { duration: root.motionMicro }
                                     }
                                 }
 
@@ -1249,53 +1331,22 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - brightnessBadge.implicitWidth - brightnessIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - brightnessValue.implicitWidth - brightnessIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                BorderSurface {
-                                    id: brightnessBadge
+                                ValueBadge {
+                                    id: brightnessValue
 
-                                    implicitWidth: brightnessValue.implicitWidth + Style.space(12)
-                                    implicitHeight: brightnessValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
-                                    radius: Style.cornerRadius
-                                    color: root.cursor.section === 1
-                                        ? Style.selectedFillFor(root.foreground, Color.accent)
-                                        : Style.normalFillFor(root.foreground, Color.accent)
-                                    borderSpec: Border.flat(
-                                        root.cursor.section === 1
-                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
-                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
-                                        Style.spacing.hairline
-                                    )
-
-                                    Behavior on color {
-                                        ColorAnimation { duration: 120 }
-                                    }
-
-                                    Text {
-                                        textFormat: Text.PlainText
-                                        id: brightnessValue
-
-                                        anchors.centerIn: parent
-                                        text: root.brightnessReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
-                                        color: root.cursor.section === 1 ? Color.accent : root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        font.bold: true
-
-                                        Behavior on color {
-                                            ColorAnimation { duration: 120 }
-                                        }
-                                    }
+                                    active: root.cursor.section === 1
+                                    text: root.brightnessReady ? root.displayValue("brightness", root.state.brightness.percent) + "%" : "—"
                                 }
                             }
 
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
-                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("brightness", root.state.brightness.percent === null ? 1 : root.state.brightness.percent)
                                 minimum: 1
                                 maximum: 100
@@ -1346,7 +1397,7 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     Behavior on iconColor {
-                                        ColorAnimation { duration: 120 }
+                                        ColorAnimation { duration: root.motionMicro }
                                     }
                                 }
 
@@ -1359,53 +1410,22 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - temperatureBadge.implicitWidth - temperatureIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - temperatureValue.implicitWidth - temperatureIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                BorderSurface {
-                                    id: temperatureBadge
+                                ValueBadge {
+                                    id: temperatureValue
 
-                                    implicitWidth: temperatureValue.implicitWidth + Style.space(12)
-                                    implicitHeight: temperatureValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
-                                    radius: Style.cornerRadius
-                                    color: root.cursor.section === 2
-                                        ? Style.selectedFillFor(root.foreground, Color.accent)
-                                        : Style.normalFillFor(root.foreground, Color.accent)
-                                    borderSpec: Border.flat(
-                                        root.cursor.section === 2
-                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
-                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
-                                        Style.spacing.hairline
-                                    )
-
-                                    Behavior on color {
-                                        ColorAnimation { duration: 120 }
-                                    }
-
-                                    Text {
-                                        textFormat: Text.PlainText
-                                        id: temperatureValue
-
-                                        anchors.centerIn: parent
-                                        text: root.nightlightReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
-                                        color: root.cursor.section === 2 ? Color.accent : root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        font.bold: true
-
-                                        Behavior on color {
-                                            ColorAnimation { duration: 120 }
-                                        }
-                                    }
+                                    active: root.cursor.section === 2
+                                    text: root.nightlightReady ? root.displayValue("temperature", root.state.temperature) + " K" : "—"
                                 }
                             }
 
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
-                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("temperature", root.state.temperature === null ? 2500 : root.state.temperature)
                                 minimum: 2500
                                 maximum: 6500
@@ -1456,7 +1476,7 @@ Panel {
                                     anchors.verticalCenter: parent.verticalCenter
 
                                     Behavior on iconColor {
-                                        ColorAnimation { duration: 120 }
+                                        ColorAnimation { duration: root.motionMicro }
                                     }
                                 }
 
@@ -1469,53 +1489,22 @@ Panel {
                                     font.family: root.fontFamily
                                     font.pixelSize: Style.font.body
                                     elide: Text.ElideRight
-                                    width: Math.max(0, parent.width - gammaBadge.implicitWidth - gammaIcon.width - 2 * Style.spacing.controlGap)
+                                    width: Math.max(0, parent.width - gammaValue.implicitWidth - gammaIcon.width - 2 * Style.spacing.controlGap)
                                     anchors.verticalCenter: parent.verticalCenter
                                 }
 
-                                BorderSurface {
-                                    id: gammaBadge
+                                ValueBadge {
+                                    id: gammaValue
 
-                                    implicitWidth: gammaValue.implicitWidth + Style.space(12)
-                                    implicitHeight: gammaValue.implicitHeight + Style.space(4)
                                     anchors.verticalCenter: parent.verticalCenter
-                                    radius: Style.cornerRadius
-                                    color: root.cursor.section === 3
-                                        ? Style.selectedFillFor(root.foreground, Color.accent)
-                                        : Style.normalFillFor(root.foreground, Color.accent)
-                                    borderSpec: Border.flat(
-                                        root.cursor.section === 3
-                                            ? Util.alpha(Color.accent, Style.hoverBorderAlpha)
-                                            : Util.alpha(root.foreground, Style.normalBorderAlpha),
-                                        Style.spacing.hairline
-                                    )
-
-                                    Behavior on color {
-                                        ColorAnimation { duration: 120 }
-                                    }
-
-                                    Text {
-                                        textFormat: Text.PlainText
-                                        id: gammaValue
-
-                                        anchors.centerIn: parent
-                                        text: root.nightlightReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
-                                        color: root.cursor.section === 3 ? Color.accent : root.foreground
-                                        font.family: root.fontFamily
-                                        font.pixelSize: Style.font.bodySmall
-                                        font.bold: true
-
-                                        Behavior on color {
-                                            ColorAnimation { duration: 120 }
-                                        }
-                                    }
+                                    active: root.cursor.section === 3
+                                    text: root.nightlightReady ? root.displayValue("gamma", root.state.gamma) + "%" : "—"
                                 }
                             }
 
                             PanelSlider {
                                 width: parent.width
                                 bar: root.bar
-                                knobSize: Math.max(16, Style.space(16))
                                 value: root.displayValue("gamma", root.state.gamma === null ? 0 : root.state.gamma)
                                 minimum: 0
                                 maximum: 100
@@ -1577,7 +1566,7 @@ Panel {
                         x: root.route === "automation" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
                         Behavior on x {
                             NumberAnimation {
-                                duration: 180
+                                duration: root.motionNormal
                                 easing.type: Easing.OutCubic
                             }
                         }
@@ -1585,7 +1574,7 @@ Panel {
 
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 180
+                            duration: root.motionNormal
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -1727,7 +1716,11 @@ Panel {
                                     Rectangle {
                                         anchors.fill: parent
                                         radius: Style.space(4)
-                                        color: Style.normalFillFor(root.foreground, Color.accent)
+                                        gradient: Gradient {
+                                            GradientStop { position: 0.0; color: Util.alpha(root.foreground, 0.10) }
+                                            GradientStop { position: 0.5; color: Util.alpha(root.foreground, 0.04) }
+                                            GradientStop { position: 1.0; color: Util.alpha(root.foreground, 0.10) }
+                                        }
                                     }
 
                                     Repeater {
@@ -1741,6 +1734,17 @@ Panel {
                                             radius: Style.space(4)
                                             color: Color.accent
                                         }
+                                    }
+
+                                    Rectangle {
+                                        id: scheduleNowMarker
+
+                                        width: Math.max(1, Style.spacing.hairline)
+                                        height: parent.height + Style.space(4)
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        x: Math.max(0, Math.min(parent.width - width, root.nowFraction * parent.width))
+                                        color: root.foreground
+                                        opacity: 0.85
                                     }
                                 }
 
@@ -2126,7 +2130,7 @@ Panel {
 
                                 Behavior on opacity {
                                     NumberAnimation {
-                                        duration: 160
+                                        duration: root.motionFast
                                         easing.type: Easing.OutCubic
                                     }
                                 }
@@ -2220,7 +2224,7 @@ Panel {
 
                                 Behavior on opacity {
                                     NumberAnimation {
-                                        duration: 160
+                                        duration: root.motionFast
                                         easing.type: Easing.OutCubic
                                     }
                                 }
@@ -2337,90 +2341,35 @@ Panel {
                                 width: parent.width
                                 spacing: Style.spacing.xs
 
-                                Button {
-                                    id: snooze15Button
+                                Repeater {
+                                    model: [
+                                        { amount: 15, unit: "minutes", label: "15m", field: 1 },
+                                        { amount: 1, unit: "hours", label: "1h", field: 2 },
+                                        { amount: 2, unit: "hours", label: "2h", field: 3 },
+                                        { amount: 4, unit: "hours", label: "4h", field: 4 },
+                                        { amount: -1, unit: "minutes", labelKey: "nightStartShort", field: 5 }
+                                    ]
 
-                                    width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: "15m"
-                                    fontSize: Style.font.bodySmall
-                                    selected: root.snoozeAmount === 15 && root.snoozeUnit === "minutes"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 1
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 1) }
-                                    onClicked: root.applyQuickSnooze(15, "minutes")
-                                }
+                                    Button {
+                                        required property var modelData
 
-                                Button {
-                                    id: snooze1hButton
-
-                                    width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: "1h"
-                                    fontSize: Style.font.bodySmall
-                                    selected: root.snoozeAmount === 1 && root.snoozeUnit === "hours"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 2
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 2) }
-                                    onClicked: root.applyQuickSnooze(1, "hours")
-                                }
-
-                                Button {
-                                    id: snooze2hButton
-
-                                    width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: "2h"
-                                    fontSize: Style.font.bodySmall
-                                    selected: root.snoozeAmount === 2 && root.snoozeUnit === "hours"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 3
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 3) }
-                                    onClicked: root.applyQuickSnooze(2, "hours")
-                                }
-
-                                Button {
-                                    id: snooze4hButton
-
-                                    width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: "4h"
-                                    fontSize: Style.font.bodySmall
-                                    selected: root.snoozeAmount === 4 && root.snoozeUnit === "hours"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 4
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 4) }
-                                    onClicked: root.applyQuickSnooze(4, "hours")
-                                }
-
-                                Button {
-                                    id: snoozeNightStartButton
-
-                                    width: (parent.width - 4 * Style.spacing.xs) / 5
-                                    text: root.text("night_start")
-                                    fontSize: Style.font.bodySmall
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 5
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 5) }
-                                    onClicked: {
-                                        var mins = root.minutesUntilNightStart();
-                                        root.applyQuickSnooze(mins, "minutes");
+                                        width: (parent.width - 4 * Style.spacing.xs) / 5
+                                        text: modelData.labelKey ? root.text(modelData.labelKey) : modelData.label
+                                        fontSize: Style.font.bodySmall
+                                        selected: modelData.amount > 0 && root.snoozeAmount === modelData.amount && root.snoozeUnit === modelData.unit
+                                        focusable: true
+                                        bordered: true
+                                        leftAlign: false
+                                        foreground: root.foreground
+                                        hasCursor: root.cursor.section === 2 && root.cursor.field === modelData.field
+                                        enabled: root.automationReady && !root.actionPending
+                                        HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, modelData.field) }
+                                        onClicked: {
+                                            if (modelData.amount < 0)
+                                                root.applyQuickSnooze(root.minutesUntilNightStart(), "minutes");
+                                            else
+                                                root.applyQuickSnooze(modelData.amount, modelData.unit);
+                                        }
                                     }
                                 }
                             }
@@ -2528,6 +2477,7 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    accent: Color.accent
                                     enabled: root.automationReady && root.snoozeSeconds !== null && !root.actionPending
                                     hasCursor: root.cursor.section === 2 && root.cursor.field === 10
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 10) }
@@ -2572,7 +2522,7 @@ Panel {
                         x: root.route === "settings" ? 0 : (root.transitionDirection > 0 ? 12 : -12)
                         Behavior on x {
                             NumberAnimation {
-                                duration: 180
+                                duration: root.motionNormal
                                 easing.type: Easing.OutCubic
                             }
                         }
@@ -2580,7 +2530,7 @@ Panel {
 
                     Behavior on opacity {
                         NumberAnimation {
-                            duration: 180
+                            duration: root.motionNormal
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -2738,6 +2688,7 @@ Panel {
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    accent: Color.accent
                                     hasCursor: root.cursor.section === 2 && root.cursor.field === 1
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 1) }
                                     enabled: !root.actionPending && shortcutField.text.trim() !== ""
@@ -2780,7 +2731,7 @@ Panel {
 
                                 Behavior on opacity {
                                     NumberAnimation {
-                                        duration: 160
+                                        duration: root.motionFast
                                         easing.type: Easing.OutCubic
                                     }
                                 }
@@ -2815,6 +2766,7 @@ Panel {
                         }
 
                     }
+
                 }
 
                 Text {

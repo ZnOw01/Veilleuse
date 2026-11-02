@@ -350,11 +350,11 @@ test('Schedule draft state resets cleanly on route switch and reset button click
 // Tier 5: QML Kinetic Transitions, Height Morphing, and Focus Contracts
 // ---------------------------------------------------------------------------
 
-test('Panel.qml defines 180ms Easing.OutCubic animations for height, opacity, and translate', () => {
+test('Panel.qml uses the named motion token for Easing.OutCubic height, opacity, and translate animations', () => {
   // Container height morphing
   assert.match(
     qml,
-    /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{\s*duration:\s*180[\s\S]*?easing\.type:\s*Easing\.OutCubic/
+    /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{\s*duration:\s*root\.motionNormal[\s\S]*?easing\.type:\s*Easing\.OutCubic/
   );
 
   // Cross-fade and translate on all route views
@@ -364,8 +364,8 @@ test('Panel.qml defines 180ms Easing.OutCubic animations for height, opacity, an
     assert.ok(idx !== -1, `Container ${cid} must exist`);
     const slice = qml.slice(idx, idx + 1000);
 
-    assert.match(slice, /Behavior on opacity\s*\{\s*NumberAnimation\s*\{\s*duration:\s*180[\s\S]*?easing\.type:\s*Easing\.OutCubic/, `${cid} must animate opacity with 180ms OutCubic`);
-    assert.match(slice, /transform:\s*Translate\s*\{[\s\S]*?Behavior on x\s*\{\s*NumberAnimation\s*\{\s*duration:\s*180[\s\S]*?easing\.type:\s*Easing\.OutCubic/, `${cid} must animate translate x with 180ms OutCubic`);
+    assert.match(slice, /Behavior on opacity\s*\{\s*NumberAnimation\s*\{\s*duration:\s*root\.motionNormal[\s\S]*?easing\.type:\s*Easing\.OutCubic/, `${cid} must animate opacity with the panel motion token`);
+    assert.match(slice, /transform:\s*Translate\s*\{[\s\S]*?Behavior on x\s*\{\s*NumberAnimation\s*\{\s*duration:\s*root\.motionNormal[\s\S]*?easing\.type:\s*Easing\.OutCubic/, `${cid} must animate translate x with the panel motion token`);
   }
 });
 

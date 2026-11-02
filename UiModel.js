@@ -79,6 +79,7 @@ var DEFAULT_COPY = {
   unitSeconds: 'Seconds',
   sunset: 'Sunset',
   nightStart: 'Night start',
+  nightStartShort: 'Night',
   quickSnooze: 'Quick snooze',
   settingsTitle: 'Settings',
   language: 'Language',
