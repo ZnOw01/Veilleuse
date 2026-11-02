@@ -12,7 +12,7 @@ var ROUTE_SECTIONS = {
 
 var CONTROL_FIELD_LIMITS = {
   home: [0, 0, 0, 0, 0],
-  automation: [0, 10, 11],
+  automation: [0, 10, 9],
   settings: [0, 0, 2]
 };
 

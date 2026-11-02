@@ -69,7 +69,7 @@ test('mouse hover moves the panel cursor onto the hovered row', () => {
       `section ${index} must set the cursor when hovered`);
   }
   assert.match(qml, /root\.cursorToSection\(1,\s*10\)/, 'schedule actions expose their own cursor field');
-  assert.match(qml, /root\.cursorToSection\(2,\s*11\)/, 'snooze clear has its own cursor field');
+  assert.match(qml, /root\.cursorToSection\(2,\s*9\)/, 'snooze clear has its own cursor field');
   assert.match(qml, /root\.cursorToSection\(2,\s*2\)/, 'shortcut removal has its own cursor field');
 });
 
@@ -169,8 +169,8 @@ test('the transition section and its config command are gone', () => {
 test('snooze composes a number, a unit and one apply action', () => {
   const snooze = qml.slice(qml.indexOf('id: snoozeColumn'), qml.indexOf('id: settingsRoute'));
   assert.match(snooze, /id:\s*snoozeEditor/);
-  for (const unit of ['unit_hours', 'unit_minutes', 'unit_seconds'])
-    assert.match(snooze, new RegExp(`text:\\s*root\\.text\\("${unit}"\\)`));
+  assert.match(snooze, /text:\s*root\.text\("unit_" \+ root\.snoozeUnit\)/);
+  assert.match(qml, /function cycleSnoozeUnit\(\)[\s\S]*?\["minutes",\s*"hours",\s*"seconds"\]/);
   assert.match(snooze, /text:\s*root\.text\("snooze_set"\)/);
   assert.match(snooze, /enabled:\s*root\.automationReady\s*&&\s*root\.snoozeSeconds !== null\s*&&\s*!root\.actionPending/);
   assert.match(qml, /\["snooze",\s*"set",\s*"--seconds",\s*String\(root\.snoozeSeconds\),\s*"--monitor",\s*root\.selectedMonitor\]/);
@@ -311,8 +311,8 @@ test('keyboard activation opens the pickers, focuses editors and runs actions', 
   assert.match(activate, /section\s*===\s*"monitor"\)\s*\{\s*monitorSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"scheduleToggle"[\s\S]*?root\.toggleSchedule\(!root\.scheduleEnabled\)/);
   assert.match(activate, /section\s*===\s*"schedule"\)[\s\S]*?scheduleEditors\s*=\s*\[startEditor,\s*startEditor[\s\S]*?scheduleEditor\.forceActiveFocus\(\)/);
-  assert.match(activate, /cursor\.field\s*===\s*0\s*\|\|\s*cursor\.field\s*===\s*10[\s\S]*?root\.applySnooze\(\)/);
-  assert.match(activate, /cursor\.field\s*===\s*11[\s\S]*?settingsCommand\("snooze",\s*\["clear"\]\)/);
+  assert.match(activate, /cursor\.field\s*===\s*0\s*\|\|\s*cursor\.field\s*===\s*8[\s\S]*?root\.applySnooze\(\)/);
+  assert.match(activate, /cursor\.field\s*===\s*9[\s\S]*?settingsCommand\("snooze",\s*\["clear"\]\)/);
   assert.match(activate, /section\s*===\s*"locale"\)\s*\{\s*localeSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"shortcut"\)\s*\{\s*shortcutField\.forceActiveFocus\(\);/);
   assert.match(activate, /section\s*===\s*"shortcutActions"[\s\S]*?install",\s*"--keys",\s*shortcutField\.text/);
@@ -521,9 +521,9 @@ test('Tier 1 - F1 Design Tokens: Panel.qml and BarWidget.qml import qs.Commons a
 
 test('Tier 1 - F1 Design Tokens: Named panel geometry and spacing use Style.space tokens', () => {
   assert.match(qml, /readonly property int panelWidth:\s*Style\.space\(330\)/);
-  assert.match(qml, /readonly property int panelMaxHeight:\s*Style\.space\(560\)/);
+  assert.match(qml, /readonly property int panelMaxHeight:\s*Style\.space\(615\)/);
   assert.match(qml, /readonly property int controlIconSlot:\s*Style\.space\(20\)/);
-  assert.match(qml, /readonly property int sectionPad:\s*Style\.space\(6\)/);
+  assert.match(qml, /readonly property int sectionPad:\s*Style\.space\(4\)/);
   assert.match(qml, /readonly property int headerPad:\s*Style\.space\(16\)/);
 });
 

@@ -823,7 +823,7 @@ test('Tier 2 - F9 Navigation Boundary: moveCursor clamps at limits without wrap-
 
 test('cursorAtControl preserves the hovered control field and clamps by route section', () => {
   assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 1, 10, 'automation'), { section: 1, field: 10 });
-  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 2, 99, 'automation'), { section: 2, field: 11 });
+  assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 2, 99, 'automation'), { section: 2, field: 9 });
   assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 2, 2, 'settings'), { section: 2, field: 2 });
   assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 0, 4, 'home'), { section: 0, field: 0 });
 });

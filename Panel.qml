@@ -144,7 +144,7 @@ Panel {
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
     readonly property int controlIconSlot: Style.space(20)
     readonly property int panelWidth: Style.space(330)
-    readonly property int panelMaxHeight: Style.space(560)
+    readonly property int panelMaxHeight: Style.space(615)
     readonly property int motionMicro: Style.duration(120)
     readonly property int motionFast: Style.duration(160)
     readonly property int motionNormal: Style.duration(180)
@@ -154,7 +154,7 @@ Panel {
         var now = new Date();
         return (now.getHours() * 60 + now.getMinutes()) / 1440;
     }
-    readonly property int sectionPad: Style.space(6)
+    readonly property int sectionPad: Style.space(4)
     readonly property int headerPad: Style.space(16)
     readonly property string helperPath: root.normalizedPath(root.setting("helperPath", ""))
     readonly property bool brightnessReady: Boolean(root.state.brightness && root.state.brightness.available === true)
@@ -383,6 +383,13 @@ Panel {
         if (!root.automationReady || root.actionPending)
             return;
         root.issue(["schedule", enabled ? "enable" : "disable", "--monitor", root.selectedMonitor], "schedule-toggle");
+    }
+
+    function cycleSnoozeUnit() {
+        var units = ["minutes", "hours", "seconds"];
+        var index = units.indexOf(root.snoozeUnit);
+        root.snoozeUnit = units[(index + 1) % units.length];
+        root.refocusKeyCatcher();
     }
 
     function applySnooze() {
@@ -820,11 +827,11 @@ Panel {
                 root.applyQuickSnooze(quickAmounts[cursor.field - 1], quickUnits[cursor.field - 1]);
             } else if (cursor.field === 6) {
                 snoozeEditor.field.forceActiveFocus();
-            } else if (cursor.field >= 7 && cursor.field <= 9) {
-                root.snoozeUnit = ["hours", "minutes", "seconds"][cursor.field - 7];
-            } else if (cursor.field === 0 || cursor.field === 10) {
+            } else if (cursor.field === 7) {
+                root.cycleSnoozeUnit();
+            } else if (cursor.field === 0 || cursor.field === 8) {
                 root.applySnooze();
-            } else if (cursor.field === 11 && root.snoozeActive && !root.actionPending) {
+            } else if (cursor.field === 9 && root.snoozeActive && !root.actionPending) {
                 root.settingsCommand("snooze", ["clear"]);
             }
             return;
@@ -1052,7 +1059,7 @@ Panel {
                 id: contentColumn
 
                 width: panelFlick.width
-                spacing: Style.spacing.panelGap
+                spacing: Style.spacing.panelGap - 2
 
                 Item {
                     anchors.left: parent.left
@@ -2374,104 +2381,58 @@ Panel {
                                 }
                             }
 
-                            NumberField {
-                                id: snoozeEditor
-
-                                width: parent.width
-                                fieldWidth: width
-                                value: root.snoozeAmount
-                                from: 1
-                                to: 86400
-                                stepSize: 1
-                                foreground: root.foreground
-                                fontFamily: root.fontFamily
-                                Accessible.name: root.text("snooze")
-                                enabled: root.automationReady && !root.actionPending
-                                HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 6) }
-                                onModified: value => root.snoozeAmount = value
-                                field.Keys.priority: Keys.BeforeItem
-                                field.Keys.onPressed: function(event) {
-                                    if (event.key === Qt.Key_Escape) {
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                        root.applySnooze();
-                                        keyCatcher.forceActiveFocus();
-                                        event.accepted = true;
-                                    }
-                                }
-                            }
-
                             Row {
                                 width: parent.width
-                                spacing: Style.spacing.controlGap
+                                spacing: Style.spacing.xs
+
+                                NumberField {
+                                    id: snoozeEditor
+
+                                    width: 84
+                                    fieldWidth: width
+                                    value: root.snoozeAmount
+                                    from: 1
+                                    to: 86400
+                                    stepSize: 1
+                                    foreground: root.foreground
+                                    fontFamily: root.fontFamily
+                                    Accessible.name: root.text("snooze")
+                                    enabled: root.automationReady && !root.actionPending
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 6) }
+                                    onModified: value => root.snoozeAmount = value
+                                    field.Keys.priority: Keys.BeforeItem
+                                    field.Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Escape) {
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            root.applySnooze();
+                                            keyCatcher.forceActiveFocus();
+                                            event.accepted = true;
+                                        }
+                                    }
+                                }
 
                                 Button {
-                                    id: snoozeHoursButton
+                                    id: snoozeUnitButton
 
-                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
-                                    text: root.text("unit_hours")
-                                    selected: root.snoozeUnit === "hours"
+                                    width: 58
+                                    text: root.text("unit_" + root.snoozeUnit)
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.foreground
+                                    Accessible.name: root.text("unit_" + root.snoozeUnit)
                                     hasCursor: root.cursor.section === 2 && root.cursor.field === 7
                                     enabled: root.automationReady && !root.actionPending
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 7) }
-                                    onClicked: {
-                                        root.snoozeUnit = "hours";
-                                        root.refocusKeyCatcher();
-                                    }
+                                    onClicked: root.cycleSnoozeUnit()
                                 }
-
-                                Button {
-                                    id: snoozeMinutesButton
-
-                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
-                                    text: root.text("unit_minutes")
-                                    selected: root.snoozeUnit === "minutes"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 8
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 8) }
-                                    onClicked: {
-                                        root.snoozeUnit = "minutes";
-                                        root.refocusKeyCatcher();
-                                    }
-                                }
-
-                                Button {
-                                    id: snoozeSecondsButton
-
-                                    width: (parent.width - 2 * Style.spacing.controlGap) / 3
-                                    text: root.text("unit_seconds")
-                                    selected: root.snoozeUnit === "seconds"
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.foreground
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 9
-                                    enabled: root.automationReady && !root.actionPending
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 9) }
-                                    onClicked: {
-                                        root.snoozeUnit = "seconds";
-                                        root.refocusKeyCatcher();
-                                    }
-                                }
-                            }
-
-                            Row {
-                                width: parent.width
-                                spacing: Style.spacing.controlGap
 
                                 Button {
                                     id: snoozeApplyButton
 
-                                    width: root.snoozeActive ? (parent.width - Style.spacing.controlGap) / 2 : parent.width
+                                    width: root.snoozeActive ? 62 : parent.width - 84 - 58 - 2 * Style.spacing.xs
                                     text: root.text("snooze_set")
                                     focusable: true
                                     bordered: true
@@ -2479,8 +2440,8 @@ Panel {
                                     foreground: root.foreground
                                     accent: Color.accent
                                     enabled: root.automationReady && root.snoozeSeconds !== null && !root.actionPending
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 10
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 10) }
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 8
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 8) }
                                     onClicked: {
                                         root.applySnooze();
                                         root.refocusKeyCatcher();
@@ -2491,15 +2452,15 @@ Panel {
                                     id: snoozeClearButton
 
                                     visible: root.snoozeActive
-                                    width: (parent.width - Style.spacing.controlGap) / 2
+                                    width: 82
                                     text: root.text("clear_snooze")
                                     focusable: true
                                     bordered: true
                                     leftAlign: false
                                     foreground: root.snoozeActive ? Color.urgent : root.foreground
                                     enabled: root.automationReady && !root.actionPending
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 11
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 11) }
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 9
+                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 9) }
                                     onClicked: {
                                         root.settingsCommand("snooze", ["clear"]);
                                         root.refocusKeyCatcher();
