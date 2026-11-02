@@ -41,10 +41,10 @@ Paths follow absolute `XDG_CONFIG_HOME` and `XDG_STATE_HOME` values, with the de
 
 ### Core invariants
 
-1. **Non-destructive parsing** — Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` are preserved during schedule updates.
-2. **Request ordering** — Request IDs increase monotonically. Only the current request ID is accepted as the current response. A stale successful readback may still be merged to reflect a write that completed; a running non-supersedable mutation is allowed to finish before the latest queued request launches.
-3. **Fail-closed normalization** — Unavailable readings are marked explicitly and their controls are disabled; independent controls remain usable. Errors map to English and Spanish messages. This does not guarantee that a failed physical write can restore the display.
-4. **Zero daemon policy** — The loaded panel starts reconciliation after initialization and every 30 seconds when no request is pending, even when closed. Each helper call exits after completion. Veilleuse automation does not run while its panel/shell is unloaded; `hyprsunset` remains a separate system component.
+1. **Non-destructive parsing.** Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` survive schedule updates.
+2. **Request ordering.** Request IDs increase monotonically. Only the current request ID is accepted as the current response. A stale successful readback may still be merged to reflect a write that completed. A running non-supersedable mutation finishes before the latest queued request launches.
+3. **Fail-closed normalization.** Unavailable readings are marked explicitly, and their controls are disabled. Independent controls remain usable. Errors map to English and Spanish messages. This does not guarantee that a failed physical write can restore the display.
+4. **Zero daemon policy.** The loaded panel starts reconciliation after initialization and every 30 seconds when no request is pending, even when closed. Each helper call exits after completion. Veilleuse automation does not run while its panel or shell is unloaded. `hyprsunset` remains a separate system component.
 
 ## Localization
 

@@ -22,7 +22,7 @@ Veilleuse is a native Omarchy Quattro shell plugin. Its bar widget opens a panel
 
 - Brightness from 1 to 100% for the focused display or a named monitor, through `omarchy-brightness-display`.
 - Global night light temperature from 2500 to 6500 K and gamma from 0 to 100%, through `hyprsunset`.
-- Day/night schedule with optional brightness and gamma for each period, plus timed snooze.
+- Day/night schedule with optional brightness and gamma for each period, plus timed snooze. The Night values also drive the manual night-light switch.
 - Keyboard navigation, pointer hover focus, and English or Spanish interface text.
 - Optional Hyprland shortcut with collision checks and a one-time backup of `bindings.lua`.
 - Python standard library only. Private state uses atomic replacement and mode `0600`, and no extra daemon runs in the background.
@@ -93,20 +93,20 @@ Relative XDG bases fall back to the home-directory defaults. Shell IPC uses the 
 
 ### Home
 
-Night light, brightness, temperature, and gamma. Monitor selection changes the brightness target; color temperature and gamma are global `hyprsunset` controls.
+Night light, brightness, temperature, and gamma. Monitor selection changes the brightness target; color temperature and gamma are global `hyprsunset` controls. The night-light switch applies the Night block's temperature, brightness, and gamma from Automation.
 
 ### Automation
 
 Edits day/night times in 24-hour `HH:MM` format:
 
 - Day temperature accepts 5900 to 6500 K. Values at or above 6000 K are written to `hyprsunset.conf` as natural color (`identity = true`).
-- Night temperature accepts 2500 to 5000 K.
+- Night temperature accepts 2500 to 5000 K. The manual night-light switch uses this temperature, together with the night brightness and gamma.
 - Brightness (1 to 100%) and gamma (0 to 100%) are optional per period. Leave a field blank to omit that period's scheduled display value.
 - Snooze applies natural color for the selected duration.
 
 Enable a disabled schedule before saving edits. Its saved values remain visible while disabled.
 
-Veilleuse reconciles schedule and snooze state every 30 seconds while the panel component is loaded, including when the panel is closed. Pending requests defer reconciliation. If the shell or plugin stops, Veilleuse does not apply scheduled brightness or gamma and does not process snooze expiration until reconciliation resumes. Native `hyprsunset` scheduling is separate.
+Veilleuse reconciles schedule and snooze state every 30 seconds while the panel component is loaded, even when the panel is closed. Pending requests defer reconciliation. If the shell or plugin stops, Veilleuse does not apply scheduled brightness or gamma. It also does not process snooze expiration until reconciliation resumes. Native `hyprsunset` scheduling is separate.
 
 ### Settings
 

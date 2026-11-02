@@ -1,4 +1,4 @@
-# Technical audit — 2026-10-01
+# Technical audit, 2026-10-01
 
 This is the historical record of the review accompanying commit
 `cf4570c` (`fix(control): repair scheduling and harden UI integration`).
