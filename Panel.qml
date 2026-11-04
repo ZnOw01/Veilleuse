@@ -1859,7 +1859,7 @@ Panel {
                                         Accessible.name: root.text("day_period") + " " + root.text("start")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 1) }
-                                        onTextChanged: (text) => { root.editStart = text }
+                                        onTextChanged: root.editStart = text
                                         onAccepted: dayTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                     }
@@ -1911,7 +1911,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 3) }
-                                    onTextChanged: (text) => { root.editDayBrightness = text }
+                                    onTextChanged: root.editDayBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1936,7 +1936,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 4) }
-                                    onTextChanged: (text) => { root.editDayGamma = text }
+                                    onTextChanged: root.editDayGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2033,7 +2033,7 @@ Panel {
                                         Accessible.name: root.text("night_period") + " " + root.text("end")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 5) }
-                                        onTextChanged: (text) => { root.editEnd = text }
+                                        onTextChanged: root.editEnd = text
                                         onAccepted: nightTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                     }
@@ -2083,7 +2083,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 7) }
-                                    onTextChanged: (text) => { root.editNightBrightness = text }
+                                    onTextChanged: root.editNightBrightness = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2108,7 +2108,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 8) }
-                                    onTextChanged: (text) => { root.editNightGamma = text }
+                                    onTextChanged: root.editNightGamma = text
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {

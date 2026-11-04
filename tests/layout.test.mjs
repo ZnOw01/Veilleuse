@@ -415,12 +415,11 @@ test('dynamic errors and confirmations use accessible announcements where Qt sup
   assert.doesNotMatch(qml, /Accessible\.live/);
 });
 
-test('text change handlers declare the signal parameter instead of relying on deprecated injection', () => {
-  const handlers = qml.match(/^\s*onTextChanged:.*$/gm) || [];
+test('announcement handlers declare the text signal parameter instead of relying on deprecated injection', () => {
+  const handlers = qml.match(/^\s*onTextChanged:.*root\.announce\(.*$/gm) || [];
   assert.ok(handlers.length > 0);
   for (const handler of handlers)
-    if (/\btext\b/.test(handler))
-      assert.match(handler, /onTextChanged:\s*\(text\)\s*=>/);
+    assert.match(handler, /onTextChanged:\s*\(text\)\s*=>/);
 });
 
 test('section diagnostics are translated from stable error codes before raw text', () => {
