@@ -1164,7 +1164,7 @@ Panel {
                             width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                             text: root.errorText
                             Accessible.name: root.errorText
-                            onTextChanged: if (visible) root.announce(text, Accessible.Assertive)
+                            onTextChanged: (text) => { if (visible) root.announce(text, Accessible.Assertive) }
                             onVisibleChanged: if (visible) root.announce(text, Accessible.Assertive)
                             color: Color.urgent
                             font.family: root.fontFamily
@@ -1859,7 +1859,7 @@ Panel {
                                         Accessible.name: root.text("day_period") + " " + root.text("start")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 1) }
-                                        onTextChanged: root.editStart = text
+                                        onTextChanged: (text) => { root.editStart = text }
                                         onAccepted: dayTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                     }
@@ -1911,7 +1911,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 3) }
-                                    onTextChanged: root.editDayBrightness = text
+                                    onTextChanged: (text) => { root.editDayBrightness = text }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1936,7 +1936,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("day_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 4) }
-                                    onTextChanged: root.editDayGamma = text
+                                    onTextChanged: (text) => { root.editDayGamma = text }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2033,7 +2033,7 @@ Panel {
                                         Accessible.name: root.text("night_period") + " " + root.text("end")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 5) }
-                                        onTextChanged: root.editEnd = text
+                                        onTextChanged: (text) => { root.editEnd = text }
                                         onAccepted: nightTemperatureEditor.field.forceActiveFocus()
                                         Keys.onEscapePressed: keyCatcher.forceActiveFocus()
                                     }
@@ -2083,7 +2083,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 7) }
-                                    onTextChanged: root.editNightBrightness = text
+                                    onTextChanged: (text) => { root.editNightBrightness = text }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2108,7 +2108,7 @@ Panel {
                                     fontFamily: root.fontFamily
                                     accessibleName: root.text("night_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 8) }
-                                    onTextChanged: root.editNightGamma = text
+                                    onTextChanged: (text) => { root.editNightGamma = text }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2161,7 +2161,7 @@ Panel {
                                         width: parent.width - (Style.font.bodySmall + Style.spacing.sm)
                                         text: root.scheduleValidationError
                                         Accessible.name: root.scheduleValidationError
-                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onTextChanged: (text) => { if (visible) root.announce(text, Accessible.Polite) }
                                         onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: Color.urgent
                                         font.family: root.fontFamily
@@ -2253,7 +2253,7 @@ Panel {
                                         textFormat: Text.PlainText
                                         text: root.feedbackText
                                         Accessible.name: root.feedbackText
-                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onTextChanged: (text) => { if (visible) root.announce(text, Accessible.Polite) }
                                         onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: root.foreground
                                         font.family: root.fontFamily
@@ -2717,7 +2717,7 @@ Panel {
                                         textFormat: Text.PlainText
                                         text: root.feedbackText
                                         Accessible.name: root.feedbackText
-                                        onTextChanged: if (visible) root.announce(text, Accessible.Polite)
+                                        onTextChanged: (text) => { if (visible) root.announce(text, Accessible.Polite) }
                                         onVisibleChanged: if (visible) root.announce(text, Accessible.Polite)
                                         color: root.foreground
                                         font.family: root.fontFamily

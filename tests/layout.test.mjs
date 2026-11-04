@@ -410,9 +410,17 @@ test('settings cursor resets on the shortcut field and scrolls to all route sect
 
 test('dynamic errors and confirmations use accessible announcements where Qt supports them', () => {
   assert.match(qml, /function announce\(message,\s*priority\)[\s\S]*?if\s*\(message\s*&&\s*Accessible\.announce\)[\s\S]*?Accessible\.announce\(message,\s*priority\)/);
-  assert.match(qml, /text:\s*root\.errorText[\s\S]*?onTextChanged:\s*if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Assertive\)/);
-  assert.match(qml, /text:\s*root\.scheduleValidationError[\s\S]*?onTextChanged:\s*if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Polite\)/);
+  assert.match(qml, /text:\s*root\.errorText[\s\S]*?onTextChanged:\s*(?:\(text\)\s*=>\s*\{\s*)?if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Assertive\)/);
+  assert.match(qml, /text:\s*root\.scheduleValidationError[\s\S]*?onTextChanged:\s*(?:\(text\)\s*=>\s*\{\s*)?if\s*\(visible\)\s*root\.announce\(text,\s*Accessible\.Polite\)/);
   assert.doesNotMatch(qml, /Accessible\.live/);
+});
+
+test('text change handlers declare the signal parameter instead of relying on deprecated injection', () => {
+  const handlers = qml.match(/^\s*onTextChanged:.*$/gm) || [];
+  assert.ok(handlers.length > 0);
+  for (const handler of handlers)
+    if (/\btext\b/.test(handler))
+      assert.match(handler, /onTextChanged:\s*\(text\)\s*=>/);
 });
 
 test('section diagnostics are translated from stable error codes before raw text', () => {
