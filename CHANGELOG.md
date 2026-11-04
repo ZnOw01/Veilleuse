@@ -2,9 +2,10 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
-## Unreleased
+## v3.6.2 (2026-11-04)
 
 - Hide the hero status pill in the natural color state; the bar tooltip still reports it.
+- Declare the `text` parameter in the panel announcement handlers, which removes the Qt 6.9 deprecation warning at panel load.
 
 ## v3.6.1 (2026-11-02)
 
