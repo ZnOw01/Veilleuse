@@ -2,6 +2,10 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## Unreleased
+
+- Hide the hero status pill in the natural color state; the bar tooltip still reports it.
+
 ## v3.6.1 (2026-11-02)
 
 - Replace the panel screenshots with clean captures of the full Home, Automation, and Settings views.

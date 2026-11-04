@@ -177,9 +177,7 @@ Panel {
             return root.text("unavailable");
         if (root.snoozeActive)
             return root.text("snooze_active");
-        if (root.state.enabled === true)
-            return "";
-        return root.text("disabled");
+        return "";
     }
     readonly property int snoozeRemainingMinutes: {
         // snoozeTick is read only so this binding re-evaluates every 30 s

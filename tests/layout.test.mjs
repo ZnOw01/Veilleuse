@@ -109,6 +109,12 @@ test('the hero shows the title and switch only, with no schedule meta line', () 
   assert.doesNotMatch(hero, /periodText|period_day|period_night|manual_override/);
 });
 
+test('the hero status pill does not repeat the natural color state', () => {
+  const detail = qml.slice(qml.indexOf('readonly property string heroStatusDetail'), qml.indexOf('readonly property int snoozeRemainingMinutes'));
+  assert.match(detail, /return "";/);
+  assert.doesNotMatch(detail, /"disabled"/);
+});
+
 test('the home summary box, presets, and history affordances are gone', () => {
   assert.doesNotMatch(qml, /id:\s*homeSummary/);
   assert.doesNotMatch(qml, /live_controls|live_now|view_history|last_applied|latest_event/);
