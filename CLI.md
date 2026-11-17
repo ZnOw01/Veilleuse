@@ -48,9 +48,13 @@ Most read and write commands accept `--monitor`, which defaults to `focused` and
 # Set custom temperature and gamma
 ./scripts/veilleuse-control nightlight temperature 3500
 ./scripts/veilleuse-control nightlight gamma 85
+
+# Fast path for temperature or gamma drags without probing monitor brightness
+./scripts/veilleuse-control nightlight temperature 3500 --skip-brightness
+./scripts/veilleuse-control nightlight gamma 85 --skip-brightness
 ```
 
-The panel passes the schedule's Night temperature, brightness, and gamma to `toggle`. The flags are available for scripts and other callers.
+The panel passes the schedule's Night temperature, brightness, and gamma to `toggle`. The flags are available for scripts and other callers. Passing `--skip-brightness` omits the trailing `omarchy-monitor-state` and `omarchy-brightness-display` readback when only `hyprsunset` registers changed.
 
 See the [README feature ranges](README.md#features) for temperature and gamma limits. Night light and gamma use the global `hyprsunset` backend; `--monitor` selects brightness readback and automation brightness, not a per-monitor color temperature.
 
@@ -76,11 +80,12 @@ See the [README feature ranges](README.md#features) for temperature and gamma li
 
 # Reconcile snooze expiration and schedule boundaries
 ./scripts/veilleuse-control reconcile
+./scripts/veilleuse-control reconcile --skip-brightness
 ```
 
-Supply exactly one of `--minutes` or `--seconds`. Clearing snooze removes its timer; run `reconcile` to apply the active profile immediately.
+Supply exactly one of `--minutes` or `--seconds`. Clearing snooze removes its timer; run `reconcile` to apply the active profile immediately. Passing `--skip-brightness` skips trailing monitor and brightness probes when reconciliation did not write display brightness.
 
-`--minutes` accepts `1–1440`; `--seconds` accepts `10–86400`. Schedule times use 24-hour `HH:MM`; day temperatures accept `5900–6500 K` (at or above `6000 K` the day profile is written as natural color), night temperatures accept `2500–5000 K`, and the optional per-period `--*-brightness` (1–100) and `--*-gamma` (0–100) values are validated on save. Omitting optional display values leaves the corresponding period without scheduled brightness/gamma. After CLI schedule changes, run `reconcile` to apply the current profile; the panel queues reconciliation after its own successful schedule changes.
+`--minutes` accepts `1` to `1440`; `--seconds` accepts `10` to `86400`. Schedule times use 24-hour `HH:MM`; day temperatures accept `5900` to `6500 K` (at or above `6000 K` the day profile is written as natural color), night temperatures accept `2500` to `5000 K`, and the optional per-period `--*-brightness` (`1` to `100`) and `--*-gamma` (`0` to `100`) values are validated on save. Omitting optional display values leaves the corresponding period without scheduled brightness or gamma. After CLI schedule changes, run `reconcile` to apply the current profile; the panel queues reconciliation after its own successful schedule changes.
 
 A disabled schedule retains its saved values in `schedule get`. Enable it before running `schedule set`; saving while disabled returns `schedule_disabled` without applying the requested edits or replacing its backup or saved recovery transaction. As with other schedule operations, an interrupted toggle is recovered first; that recovery can repair the config and remove its pending journal before the save is rejected.
 
@@ -88,7 +93,7 @@ A disabled schedule retains its saved values in `schedule get`. Enable it before
 
 See the [README shortcut guide](README.md#global-shortcut) for `shortcut status`, `shortcut install --keys`, and `shortcut remove`, including the managed Lua block and backup/reload guarantees.
 
-The CLI accepts comma notation such as `"SUPER SHIFT, N"`; the panel converts its plus notation before calling the helper. Modifiers are `SUPER`, `CTRL`, `ALT`, `SHIFT`, and `MOD1`–`MOD5`. Keys include single letters/digits, `F1`–`F24`, and named keys such as `SPACE`, `RETURN`, and the arrow keys. The backend rejects unsupported syntax and collisions.
+The CLI accepts comma notation such as `"SUPER SHIFT, V"`; the panel converts its plus notation before calling the helper. Modifiers are `SUPER`, `CTRL`, `ALT`, `SHIFT`, and `MOD1` through `MOD5` (`MOD4`, `MOD1`, and `CONTROL` normalize to `SUPER`, `ALT`, and `CTRL` during collision and duplicate checks). Keys include single letters/digits, `F1` through `F24`, and named keys such as `SPACE`, `RETURN`, and the arrow keys. The backend inspects `bind`, `rebind`, `bind_toggle`, `bind_hold`, and `unbind` calls in `bindings.lua` and rejects unsupported syntax and collisions.
 
 ## Shell IPC
 

@@ -71,11 +71,11 @@ No API keys or credentials are required. The panel stores preferences in Omarchy
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `locale` | `en` | Interface language (`en` or `es`) |
-| `monitor` | `focused` | Brightness target: focused display or an enabled monitor name |
-| `shortcutKeys` | `SUPER+SHIFT+N` | Shortcut editor value; does not install a binding by itself |
+| `monitor` | `focused` | Brightness target (`focused` or an enabled monitor name) |
+| `shortcutKeys` | `SUPER+SHIFT+V` | Shortcut editor value; does not install a binding by itself |
 | `helperPath` | Bundled `scripts/veilleuse-control` | Optional helper executable override, typically for development |
 
-These settings are separate from `~/.config/veilleuse/config.json`, which stores only the backend schema. Do not add language or monitor fields to that file.
+Runtime automation state and operation history live in `~/.local/state/veilleuse/` (`state.json` and `history.jsonl`).
 
 The helper reads these environment variables:
 
@@ -106,7 +106,7 @@ Edits day/night times in 24-hour `HH:MM` format:
 
 Enable a disabled schedule before saving edits. Its saved values remain visible while disabled.
 
-Veilleuse reconciles schedule and snooze state every 30 seconds while the panel component is loaded, even when the panel is closed. Pending requests defer reconciliation. If the shell or plugin stops, Veilleuse does not apply scheduled brightness or gamma. It also does not process snooze expiration until reconciliation resumes. Native `hyprsunset` scheduling is separate.
+Veilleuse reconciles schedule and snooze state every 30 seconds while the panel component is loaded, even when the panel is closed. On multi-monitor setups, only the active IPC leader runs background reconciliation, skipping monitor brightness probes unless a scheduled brightness transition applies. Pending requests defer reconciliation. If the shell or plugin stops, Veilleuse does not apply scheduled brightness or gamma, and it does not process snooze expiration until reconciliation resumes. Native `hyprsunset` scheduling is separate.
 
 ### Settings
 
@@ -131,7 +131,7 @@ Run these commands from the repository root or the installed plugin directory:
 
 ```bash
 ./scripts/veilleuse-control shortcut status
-./scripts/veilleuse-control shortcut install --keys "SUPER, V"
+./scripts/veilleuse-control shortcut install --keys "SUPER SHIFT, V"
 ./scripts/veilleuse-control shortcut remove
 ```
 
@@ -139,7 +139,7 @@ Installation manages only this block in `~/.config/hypr/bindings.lua`:
 
 ```lua
 -- >>> Veilleuse shortcut >>>
-o.bind("SUPER + V", "Veilleuse", "omarchy-shell -q io.github.znow01.veilleuse toggleNightlight")
+o.bind("SUPER + SHIFT + V", "Veilleuse", "omarchy-shell -q io.github.znow01.veilleuse toggleNightlight")
 -- <<< Veilleuse shortcut <<<
 ```
 

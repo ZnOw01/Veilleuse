@@ -9,8 +9,9 @@ Veilleuse is an Omarchy Quattro shell plugin for display brightness, hyprsunset 
 | Shell UI | `BarWidget.qml`, `Panel.qml`, `NerdIcon.qml` | Status widget, popout routes, controls, keyboard and pointer navigation |
 | UI logic | `UiModel.js`, `I18n.js`, `Icons.js` | State normalization, schedule validation, request ordering, translations, glyphs |
 | Backend | `scripts/veilleuse-control` | CLI entry point; calls Omarchy brightness and hyprsunset commands |
-| Automation and persistence | `scripts/automation_utils.py`, `scripts/state_utils.py` | Snooze, transitions, reconciliation, private XDG settings/state/history |
+| Automation and persistence | `scripts/automation_utils.py`, `scripts/state_utils.py` | Snooze, reconciliation, private XDG state and history |
 | User configuration | `scripts/schedule_utils.py`, `scripts/schedule_toggle_utils.py`, `scripts/shortcut_utils.py` | Schedule parsing and transactions; optional Hyprland binding management |
+| Release automation | `scripts/release.py`, `.github/workflows/release.yml` | SemVer bump inference, changelog updates, annotated tags, and GitHub Releases |
 
 ## Request flow
 
@@ -24,7 +25,7 @@ flowchart LR
     Helper -->|JSON readback| Panel
 ```
 
-The panel owns shell IPC and the latest-wins request queue. The helper owns synchronous CLI operations, bounded subprocesses, and diagnostics. It delegates schedule parsing to `schedule_utils.py`, enable/disable transactions to `schedule_toggle_utils.py`, bindings to `shortcut_utils.py`, reconciliation to `automation_utils.py`, and private storage to `state_utils.py`.
+The panel registers its IPC endpoint through Omarchy's `ShellIpc`, electing one active IPC and background-reconcile leader across multi-monitor bars, and owns the latest-wins request queue. The helper owns synchronous CLI operations, bounded subprocesses, and diagnostics. It delegates schedule parsing to `schedule_utils.py`, enable/disable transactions to `schedule_toggle_utils.py`, bindings to `shortcut_utils.py`, reconciliation to `automation_utils.py`, and private storage to `state_utils.py`.
 
 ## Storage and security
 
@@ -33,8 +34,7 @@ The panel owns shell IPC and the latest-wins request queue. The helper owns sync
 | `~/.config/hypr/hyprsunset.conf` | Night light temperature and schedule | Preserves the existing mode; a newly generated file uses `0600` | Atomic write under a shared lock; `.bak` when updating an existing file |
 | `~/.config/hypr/.hyprsunset.conf.veilleuse-toggle.pending` | Recovery record for an interrupted schedule enable/disable | `0600` | Written before changing the schedule; resolved under the shared lock on the next schedule operation |
 | `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | Preserves the existing mode; a newly created file uses `0644` | Collision checks and marker-block ownership; one-time `.bak` before install/update |
-| `~/.config/veilleuse/config.json` | Backend schema document; currently contains only `schema` | `0600` | Atomic replace, versioned schema, stripped legacy keys |
-| `~/.local/state/veilleuse/state.json` | Runtime state, snooze tokens, display values | `0600` | Atomic write, bounded validation |
+| `~/.local/state/veilleuse/state.json` | Runtime state, snooze expiry, manual override, display values | `0600` | Atomic write under `LOCK_EX`, orphaned temp-file reaper, bounded validation |
 | `~/.local/state/veilleuse/history.jsonl` | Audit history of operations | `0600` | Ring buffer capped at the last 50 entries |
 
 Paths follow absolute `XDG_CONFIG_HOME` and `XDG_STATE_HOME` values, with the defaults shown above. Private persistence rejects symlink path components and non-regular document files. See the [README configuration guide](README.md#configuration) for panel settings and environment variables.
@@ -52,4 +52,4 @@ Paths follow absolute `XDG_CONFIG_HOME` and `XDG_STATE_HOME` values, with the de
 
 ## Verification scope
 
-`tests/` contains Python unit tests and Node.js model/contract tests. Layout tests inspect QML source and navigation stress tests run a JavaScript harness; neither suite launches the real Quickshell UI. See [TEST_INFRA.md](TEST_INFRA.md) for coverage limits and [CONTRIBUTING.md](CONTRIBUTING.md) for local verification steps.
+`tests/` contains Python unit tests and Node.js model/contract tests. Layout tests inspect QML source and execute panel JavaScript handlers inside Node's VM; neither suite launches the full Quickshell UI. See [TEST_INFRA.md](TEST_INFRA.md) for coverage limits and [CONTRIBUTING.md](CONTRIBUTING.md) for local verification steps.

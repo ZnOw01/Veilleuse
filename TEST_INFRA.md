@@ -4,13 +4,11 @@ The repository has deterministic Python unit tests plus Node.js tests for the Ja
 
 ## Coverage
 
-- Python tests cover the helper CLI, automation, schedule parsing/toggling, shortcut handling, and state persistence.
+- Python tests cover the helper CLI, automation, schedule parsing/toggling, shortcut handling, state persistence, and release automation.
 - `UiModel.test.js` exercises normalization, validation, navigation-model behavior, request commits, and modeled scenarios.
-- `layout.test.mjs` checks QML contracts by inspecting source text and executes selected panel JavaScript handlers in Node's VM for response, refresh, and timer regressions. It does not instantiate Qt objects.
+- `layout.test.mjs` checks QML contracts by inspecting source text and executes panel JavaScript handlers in Node's VM for response, route navigation, drag deduplication, refresh, and timer regressions. It does not instantiate Qt objects.
 - `test_qml_text_safety.py` extracts the diagnostic text bindings from `Panel.qml` and evaluates them in real Qt 6 `Text` items with offscreen rendering. It checks literal rendering for markup, entities, links, image tags, and Spanish diagnostics. It does not instantiate the complete panel or its Omarchy components.
-- `transitions.test.mjs` checks route and request-bus behavior through JavaScript test logic.
-- `navigation_stress.test.mjs` uses a JavaScript harness to stress navigation and focus rules; it does not send input to a running panel.
-- `i18n.test.js`, `errorCodes.test.js`, and `icons.test.mjs` check translation and glyph contracts.
+- `i18n.test.js`, `errorCodes.test.js`, and `icons.test.mjs` check translation, error-code parity across all six runtime Python modules, and glyph contracts.
 
 No current test launches Quickshell, exercises real Qt focus/accessibility, or performs a GUI end-to-end workflow. Visual and real-device behavior still requires manual verification in Omarchy. Each run prints current test counts. Historical verification results are recorded in [AUDIT.md](AUDIT.md#verification-and-limits).
 
@@ -23,13 +21,13 @@ Run the required gates from the repository root:
 ./scripts/check_hygiene.sh
 ```
 
-`check.sh` compiles all six Python source files without writing bytecode, runs the Python and Node suites, parses the manifest JSON, runs available host validators, checks package hygiene, and runs `git diff --check`. The hygiene gate checks the helper's executable bit and manifest fields and rejects symlinks and Python bytecode outside excluded tool directories. It also accepts an optional package-directory argument.
+`check.sh` compiles all seven Python source files without writing bytecode, runs the Python and Node suites, parses the manifest JSON, runs available host validators, checks package hygiene, and runs `git diff --check`. The hygiene gate checks executable bits and SemVer manifest fields and rejects symlinks and Python bytecode outside excluded tool directories. It also accepts an optional package-directory argument.
 
 The test runners can be invoked independently:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
-node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs tests/transitions.test.mjs tests/navigation_stress.test.mjs
+node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs
 ```
 
 ## Host-dependent validation

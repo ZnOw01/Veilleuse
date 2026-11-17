@@ -49,7 +49,15 @@ The package validator rejects symlinks in the package. In a Git checkout, `check
 3. For QML, shell integration, or package-entry changes, run host validations in Omarchy and exercise the changed controls manually.
 4. In the pull request, describe the resulting behavior and the checks run, including optional validators that were skipped.
 
-Use Conventional Commit titles, for example `fix(control): ...`, `feat(panel): ...`, `style(panel): ...`, `docs: ...`, or `chore(repo): ...`. Keep documentation accurate when changing commands, settings, or behavior. Preserve dated release and audit records rather than replacing historical results with current test counts.
+Use Conventional Commit titles, for example `fix(control): ...`, `feat(panel): ...`, `perf(control): ...`, `refactor: ...`, `docs: ...`, or `ci: ...`. Keep documentation accurate when changing commands, settings, or behavior. Preserve dated release and audit records rather than replacing historical results with current test counts.
+
+## Releases
+
+Pushes to `main` run `.github/workflows/release.yml`. After `scripts/check.sh` passes, `scripts/release.py` inspects commits since the latest `v*` tag, computes the SemVer bump (`feat` -> minor, `fix`/`perf`/`refactor`/`style`/`revert` -> patch, `!` or `BREAKING CHANGE:` -> major), updates `manifest.json` and `CHANGELOG.md`, pushes an annotated `vX.Y.Z` tag, and publishes the GitHub Release. Pushes containing only `docs`, `ci`, `test`, `chore`, or `build` commits skip automatic version bumps unless triggered manually via `workflow_dispatch`. Preview the computed release plan locally with:
+
+```bash
+python3 scripts/release.py --dry-run
+```
 
 ## Safety contracts
 
