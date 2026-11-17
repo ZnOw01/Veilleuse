@@ -25,7 +25,7 @@ Text {
 
     Behavior on color {
         ColorAnimation {
-            duration: 160
+            duration: Style.duration(160)
             easing.type: Easing.OutCubic
         }
     }

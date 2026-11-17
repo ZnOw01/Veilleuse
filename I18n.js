@@ -18,7 +18,6 @@ var en = {
   notConfirmed: 'State not confirmed',
   disabled: 'Natural color',
   start: 'Start',
-  end: 'End',
   cancel: 'Cancel',
   // Routes.
   routeHome: 'Home',
@@ -114,7 +113,6 @@ var es = {
   notConfirmed: 'Estado no confirmado',
   disabled: 'Color natural',
   start: 'Inicio',
-  end: 'Fin',
   cancel: 'Cancelar',
   routeHome: 'Inicio',
   routeAutomation: 'Automatización',

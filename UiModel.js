@@ -86,6 +86,27 @@ function cursorAtControl(cursor, section, field, route) {
   return { section: sectionIndex, field: fieldIndex };
 }
 
+function moveCursorHorizontally(cursor, direction, route, options) {
+  var names = routeSections(route);
+  var section = boundedInteger(cursor && cursor.section, 0, names.length - 1);
+  if (section === null) return null;
+  var limits = CONTROL_FIELD_LIMITS[route];
+  var maxField = limits && limits[section] !== undefined ? limits[section] : 0;
+  if (route === 'automation' && section === 2 && !(options && options.snoozeActive === true))
+    maxField = Math.min(maxField, 8);
+  if (maxField <= 0) return null;
+  var step = direction < 0 ? -1 : 1;
+  var currentField = boundedInteger(cursor && cursor.field, 0, maxField);
+  if (currentField === null) currentField = 0;
+  if (route === 'settings' && section === 2 && currentField === 0) currentField = 1;
+  if (currentField === 0) {
+    return step > 0 ? { section: section, field: 1 } : null;
+  }
+  var nextField = currentField + step;
+  if (nextField < 1 || nextField > maxField) return null;
+  return { section: section, field: nextField };
+}
+
 // Wrap at the ends so either arrow can reach every route.
 function adjacentRoute(route, direction) {
   var index = ROUTES.indexOf(route);
@@ -98,12 +119,11 @@ function isSliderSection(section) {
   return DRAG_SECTIONS.indexOf(section) !== -1;
 }
 
-// Keep transactional writes intact while allowing absolute slider values and
-// read/reconcile work to yield to the newest request.
+// Keep transactional writes intact while allowing same-section slider values
+// and read/reconcile work to yield to the newest request.
 function maySupersedeOperation(operation, nextOperation) {
-  var sliders = ['brightness', 'temperature', 'gamma'];
-  if (sliders.indexOf(operation) !== -1)
-    return sliders.indexOf(nextOperation) !== -1;
+  if (isSliderSection(operation))
+    return operation === nextOperation;
   return ['status', 'schedule-status', 'reconcile', 'schedule-reconcile'].indexOf(operation) !== -1;
 }
 
@@ -170,19 +190,26 @@ function confirmedValue(state, section) {
   return null;
 }
 
-// Retry only an unsettled target for the operation just confirmed.
-// A foreign operation clears drag intent instead of replaying it.
+// Retry unsettled slider targets while slider mutations are active.
+// A non-slider operation clears drag intent instead of replaying it.
 function reconcileDragTargets(current, target, lastOperation) {
   var out = dragTargetEmpty();
   var src = target && typeof target === 'object' ? target : {};
   var requests = [];
+  if (!isSliderSection(lastOperation))
+    return { target: out, requests: requests };
   for (var i = 0; i < DRAG_SECTIONS.length; i++) {
     var section = DRAG_SECTIONS[i];
     var goal = src[section];
     if (typeof goal !== 'number' || !isFinite(goal)) continue;
-    if (lastOperation !== section) continue;
     var after = confirmedValue(current, section);
-    if (typeof after !== 'number') continue;
+    if (typeof after !== 'number') {
+      if (lastOperation !== section) {
+        out[section] = goal;
+        requests.push({ section: section, value: goal });
+      }
+      continue;
+    }
     if (Math.abs(after - goal) <= SECTION_TOLERANCE[section]) continue;
     out[section] = goal;
     requests.push({ section: section, value: goal });
@@ -362,16 +389,21 @@ function formatSnoozeRemaining(seconds, locale) {
 function mergeStatePatch(previous, patch) {
   var current = normalizeState(previous);
   var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
+  var brightnessSkipped = validPatch.brightness && typeof validPatch.brightness === 'object'
+    && !Array.isArray(validPatch.brightness) && validPatch.brightness.skipped === true;
   var next = {};
   for (var key in current) next[key] = current[key];
-  var fullStatus = Object.prototype.hasOwnProperty.call(validPatch, 'brightness')
+  var fullStatus = !brightnessSkipped
+    && Object.prototype.hasOwnProperty.call(validPatch, 'brightness')
     && Object.prototype.hasOwnProperty.call(validPatch, 'nightlight');
   if (fullStatus) {
     delete next.available;
     delete next.error;
   }
   for (var patchKey in validPatch) {
-    if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
+    if (patchKey === 'brightness' && brightnessSkipped) {
+      continue;
+    } else if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
         && Array.isArray(validPatch[patchKey])) {
       next[patchKey] = { available: false };
     } else if ((patchKey === 'brightness' || patchKey === 'nightlight' || patchKey === 'schedule')
@@ -383,6 +415,10 @@ function mergeStatePatch(previous, patch) {
     } else {
       next[patchKey] = validPatch[patchKey];
     }
+  }
+  if (brightnessSkipped) {
+    delete next.available;
+    if (next.error === copy.notConfirmed) delete next.error;
   }
   if (validPatch.enabled !== undefined && validPatch.nightlight === undefined) {
     next.nightlight = {};
@@ -582,6 +618,7 @@ if (typeof module !== 'undefined' && module.exports) {
     cursorStart: cursorStart,
     cursorAtControl: cursorAtControl,
     moveCursor: moveCursor,
+    moveCursorHorizontally: moveCursorHorizontally,
     adjacentRoute: adjacentRoute,
     isSliderSection: isSliderSection,
     maySupersedeOperation: maySupersedeOperation,

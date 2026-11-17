@@ -22,7 +22,10 @@ function glyphForState(value) {
   var input = value || {};
   var automation = input.automation || {};
   if (automation.snoozed === true) return ICONS.snooze;
-  if (input.available !== true) return ICONS.unavailable;
+  var available = input.nightlight && typeof input.nightlight === 'object'
+    ? input.nightlight.available === true
+    : input.available === true;
+  if (!available) return ICONS.unavailable;
   if (input.enabled === true) return automation.origin === 'preset' ? ICONS.palette : ICONS.weatherSunny;
   // An idle night light uses the moon; availability failures use their own glyph.
   return ICONS.weatherNight;

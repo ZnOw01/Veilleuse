@@ -279,9 +279,9 @@ test('bar tooltip reports natural color and uses night-light readiness independe
 test('closed panel reconciles periodically so snooze expiry and schedule boundaries physically apply', () => {
   assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
   const timer = qml.slice(qml.indexOf('id: backgroundStatusTimer'), qml.indexOf('Process {'));
-  assert.match(timer, /running:\s*true/);
+  assert.match(timer, /running:\s*root\.opened\s*\|\|\s*root\.leadsIpc/);
   assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.reconcile\(\)/);
-  assert.match(qml, /function reconcile\(\)\s*\{\s*root\.request\(\["reconcile",\s*"--monitor",\s*root\.selectedMonitor\],\s*"reconcile"\)\s*;/);
+  assert.match(qml, /function reconcile\(\)\s*\{[\s\S]*?"reconcile",\s*"--monitor",\s*root\.selectedMonitor[\s\S]*?"reconcile",\s*"--skip-brightness"/);
 });
 
 test('panel reconciles once after load, retrying until idle so an expired snooze applies even after a shell restart', () => {
@@ -369,9 +369,9 @@ test('a superseded helper exit still adopts the state of the write that physical
   assert.match(merge, /Model\.mergeStatePatch\(state,\s*patch\)/);
 });
 
-test('brightness and nightlight writes pass the selected monitor', () => {
+test('brightness writes pass the selected monitor and nightlight sliders use the skip-brightness fast path', () => {
   assert.match(qml, /request\(\["brightness",\s*String\(Math\.round\(value\)\),\s*"--monitor",\s*root\.selectedMonitor\],\s*section\)/);
-  assert.match(qml, /request\(\["nightlight",\s*section,\s*String\(Math\.round\(value\)\),\s*"--monitor",\s*root\.selectedMonitor\],\s*section\)/);
+  assert.match(qml, /request\(\["nightlight",\s*section,\s*String\(Math\.round\(value\)\),\s*"--skip-brightness"\],\s*section\)/);
 });
 
 test('combined helper actions keep the selected monitor through every readback', () => {
@@ -380,7 +380,6 @@ test('combined helper actions keep the selected monitor through every readback',
   assert.match(qml, /function requestStatus\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /function reconcile\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /function queueScheduleReconcile\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
-  assert.match(qml, /function queueMutation\(section,\s*value\)[\s\S]*?\["nightlight",\s*section,[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /function queueSchedule\(\)[\s\S]*?"--monitor",\s*root\.selectedMonitor/);
   assert.match(qml, /\["schedule",\s*"status",\s*"--monitor",\s*root\.selectedMonitor\]/);
   assert.match(qml, /function nightlightToggleCommand\(\)[\s\S]*?\["nightlight",\s*"toggle",\s*"--monitor",\s*root\.selectedMonitor\][\s\S]*?schedule\.night_temp/);
@@ -505,11 +504,11 @@ test('every translated QML key resolves in Spanish and English', async () => {
   assert.doesNotMatch(qml, /Model\.copy\./, 'QML must not bypass the active locale');
 });
 
-test('global shortcut IPC endpoint performs a real helper toggle', () => {
+test('global shortcut IPC endpoint performs a real helper toggle via native ShellIpc', () => {
   assert.match(qml, /manageIpc:\s*false/);
   assert.match(qml, /function toggleNightlight\(\)/);
   assert.match(qml, /request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)/);
-  assert.match(qml, /IpcHandler\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
+  assert.match(qml, /ShellIpc\s*\{[\s\S]*target:\s*root\.ipcTarget[\s\S]*function toggleNightlight\(\)/);
   for (const method of ['open', 'close', 'show', 'hide', 'toggle']) {
     assert.match(qml, new RegExp(`function ${method}\\(\\)`));
   }
@@ -536,7 +535,7 @@ test('Tier 1 - F1 Design Tokens: Panel.qml and BarWidget.qml import qs.Commons a
 
 test('Tier 1 - F1 Design Tokens: Named panel geometry and spacing use Style.space tokens', () => {
   assert.match(qml, /readonly property int panelWidth:\s*Style\.space\(330\)/);
-  assert.match(qml, /readonly property int panelMaxHeight:\s*Style\.space\(615\)/);
+  assert.match(qml, /readonly property int panelMaxHeight:\s*Style\.space\(680\)/);
   assert.match(qml, /readonly property int controlIconSlot:\s*Style\.space\(20\)/);
   assert.match(qml, /readonly property int sectionPad:\s*Style\.space\(4\)/);
   assert.match(qml, /readonly property int headerPad:\s*Style\.space\(16\)/);
@@ -565,9 +564,9 @@ test('Tier 2 - F11 Monotonic Bus: Process cancellation and burst debouncing prev
   assert.match(qml, /id:\s*debounce[\s\S]*?interval:\s*90/);
 });
 
-test('Tier 1 - F6 Route Transitions: Panel.qml uses the named motion token for cross-fade, directional slide, and container height morphing', () => {
+test('Tier 1 - F6 Route Transitions: Panel.qml uses the named motion token for cross-fade and directional slide', () => {
   assert.match(qml, /property int transitionDirection:\s*1/);
-  assert.match(qml, /KeyboardPanel\s*\{[\s\S]*?Behavior on contentHeight\s*\{\s*NumberAnimation\s*\{[\s\S]*?duration:\s*root\.motionNormal[\s\S]*?easing\.type:\s*Easing\.OutCubic/);
+  assert.doesNotMatch(qml, /Behavior on contentHeight/);
   assert.match(qml, /if\s*\(panelFlick\)\s*panelFlick\.contentY\s*=\s*0;/);
 
   for (const containerId of ['heroSurface', 'homeRoute', 'automationRoute', 'settingsRoute']) {
@@ -643,8 +642,8 @@ function responseHarness(operation, payload, requestId = 1, options = {}) {
   context.populateScheduleEditor = () => { context.draft = context.state.schedule.day_time; };
   context.mergeStaleResponse = () => {};
   vm.createContext(context);
-  const handler = qml.slice(qml.indexOf('function handleExit('), qml.indexOf('function moveCursorVertically('));
-  vm.runInContext(combined + handler + '\nhandleExit(0);', context);
+  const handler = qml.slice(qml.indexOf('function extractStatePatch('), qml.indexOf('function moveCursorVertically('));
+  vm.runInContext(combined + handler + `\nhandleExit(${options.exitCode || 0});`, context);
   return context;
 }
 
@@ -681,16 +680,19 @@ test('schedule status response populates drafts from the fresh readback', () => 
   assert.equal(context.draft, '08:00');
 });
 
-test('periodic reconcile remains active while the panel is open and yields to mutations', () => {
+test('periodic reconcile runs only on IPC leader when closed, runs when open, and yields to mutations', () => {
   const timer = qml.slice(qml.indexOf('id: backgroundStatusTimer'), qml.indexOf('Process {'));
   const running = timer.match(/running:\s*([^\n]+)/)[1];
   const triggered = timer.match(/onTriggered:\s*([^\n]+)/)[1];
-  for (const opened of [false, true]) {
-    for (const actionPending of [false, true]) {
-      let reconciles = 0;
-      const root = { opened, actionPending, reconcile() { reconciles++; } };
-      if (vm.runInNewContext(running, { root })) vm.runInNewContext(triggered, { root });
-      assert.equal(reconciles, actionPending ? 0 : 1);
+  for (const leadsIpc of [false, true]) {
+    for (const opened of [false, true]) {
+      for (const actionPending of [false, true]) {
+        let reconciles = 0;
+        const root = { leadsIpc, opened, actionPending, reconcile() { reconciles++; } };
+        if (vm.runInNewContext(running, { root })) vm.runInNewContext(triggered, { root });
+        const expected = (!opened && !leadsIpc) || actionPending ? 0 : 1;
+        assert.equal(reconciles, expected);
+      }
     }
   }
 });
@@ -699,8 +701,86 @@ test('shortcut submission converts the displayed default before invoking the hel
   let submitted;
   const root = { issue(command) { submitted = command; } };
   const handler = qml.slice(qml.indexOf('function settingsCommand('), qml.indexOf('function requestStatus('));
-  vm.runInNewContext(handler + '\nsettingsCommand("shortcut", ["install", "--keys", "SUPER+SHIFT+N"]);', { root, Model });
-  assert.deepEqual(Array.from(submitted), ['shortcut', 'install', '--keys', 'SUPER SHIFT, N']);
+  vm.runInNewContext(handler + '\nsettingsCommand("shortcut", ["install", "--keys", "SUPER+SHIFT+V"]);', { root, Model });
+  assert.deepEqual(Array.from(submitted), ['shortcut', 'install', '--keys', 'SUPER SHIFT, V']);
+});
+
+test('superseded root-level status payload merges without wiping monitors or automation', () => {
+  const initial = {
+    ...Model.normalizeState({
+      brightness: { available: true, percent: 62, monitor: 'eDP-2', error: null },
+      nightlight: { available: true, enabled: true, temperature: 5900, gamma: 100, error: null }
+    }),
+    automation: { available: true, origin: 'manual', schedule_enabled: true, snoozed: false, snooze_until: null },
+    monitors: [{ name: 'eDP-2', enabled: true, focused: true }]
+  };
+  const context = {
+    Model,
+    exitCode: 0,
+    processOutput: JSON.stringify({
+      brightness: { available: false, percent: null, monitor: null, error: null, skipped: true },
+      nightlight: { available: true, enabled: true, identity: false, temperature: 4300, gamma: 95, error: null },
+      automation: { available: true, origin: 'manual', schedule_enabled: true, snoozed: false, snooze_until: null },
+      monitors: []
+    }),
+    state: initial
+  };
+  context.root = context;
+  const combined = qml.slice(qml.indexOf('function normalizeCombined('), qml.indexOf('function navigateToRoute('));
+  const merge = qml.slice(qml.indexOf('function extractStatePatch('), qml.indexOf('function handleExit('));
+  vm.createContext(context);
+  vm.runInContext(combined + merge + '\nmergeStaleResponse(0);', context);
+  assert.equal(context.state.temperature, 4300);
+  assert.equal(context.state.brightness.percent, 62);
+  assert.equal(context.state.monitors.length, 1);
+  assert.equal(context.state.automation.origin, 'manual');
+});
+
+test('non-zero helper exit adopts partial hardware state before surfacing error', () => {
+  const initial = {
+    ...Model.normalizeState({
+      brightness: { available: true, percent: 50, monitor: 'eDP-2', error: null },
+      nightlight: { available: true, enabled: false, identity: true, temperature: 6000, gamma: 100, error: null }
+    }),
+    automation: { available: true, origin: 'automatic', schedule_enabled: true },
+    monitors: [{ name: 'eDP-2', enabled: true, focused: true }]
+  };
+  const context = responseHarness('toggle', {
+    error: 'brightness write failed',
+    error_code: 'brightness_write_failed',
+    state: {
+      brightness: { available: false, percent: null, monitor: 'eDP-2', error: 'write failed', error_code: 'brightness_write_failed' },
+      nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100, error: null },
+      automation: { available: true, origin: 'manual', schedule_enabled: true }
+    }
+  }, 1, { state: initial, exitCode: 1, locale: 'en' });
+  assert.equal(context.state.nightlight.available, true);
+  assert.equal(context.state.enabled, true);
+  assert.equal(context.state.temperature, 3500);
+  assert.equal(context.state.automation.origin, 'manual');
+  assert.equal(context.lastError, Model.errorCodeMessage('brightness_write_failed', 'en'));
+});
+
+test('queueDragMutation ignores sub-pixel moves that round to the active integer', () => {
+  const mutations = [];
+  const context = {
+    Model,
+    dragTarget: Model.dragTargetEmpty(),
+    state: { brightness: { percent: 50 }, temperature: 4500, gamma: 100 },
+    queueMutation(section, value) { mutations.push([section, value]); }
+  };
+  context.root = context;
+  const helpers = qml.slice(qml.indexOf('function queueDragMutation('), qml.indexOf('function scheduleDisplayDraft('))
+    + '\n' + qml.slice(qml.indexOf('function sliderCurrentValue('), qml.indexOf('function reconcilePending('));
+  vm.createContext(context);
+  vm.runInContext(helpers, context);
+
+  context.queueDragMutation('temperature', 4500.3);
+  assert.equal(mutations.length, 0);
+  context.queueDragMutation('temperature', 4501.2);
+  assert.equal(mutations.length, 1);
+  context.queueDragMutation('temperature', 4501.4);
+  assert.equal(mutations.length, 1);
 });
 
 test('schedule readback preserves edits made while the refresh was pending', () => {

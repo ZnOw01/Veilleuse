@@ -51,7 +51,7 @@ test('superseding respects active slider writes while preserving slider latest-w
   for (const slider of ['brightness', 'temperature', 'gamma']) {
     assert.equal(Model.maySupersedeOperation(slider, 'status'), false, `${slider} -> status`);
     for (const nextSlider of ['brightness', 'temperature', 'gamma'])
-      assert.equal(Model.maySupersedeOperation(slider, nextSlider), true, `${slider} -> ${nextSlider}`);
+      assert.equal(Model.maySupersedeOperation(slider, nextSlider), slider === nextSlider, `${slider} -> ${nextSlider}`);
   }
   assert.equal(Model.maySupersedeOperation('future-mutation', 'status'), false);
 });
@@ -396,6 +396,43 @@ test('reconcileDragTargets keeps a temperature target inside the 50 K tolerance 
     'temperature'
   );
   assert.deepEqual(far.target, { brightness: null, temperature: 4000, gamma: null });
+});
+
+test('reconcileDragTargets retains and chases unsettled cross-section slider targets', () => {
+  const current = physicalState({ brightness: 50, temperature: 4500 });
+  let targets = Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 75);
+  targets = Model.dragTargetPush(targets, 'temperature', 4500);
+  const result = Model.reconcileDragTargets(current, targets, 'temperature');
+  assert.deepEqual(result.target, { brightness: 75, temperature: null, gamma: null });
+  assert.deepEqual(result.requests, [{ section: 'brightness', value: 75 }]);
+});
+
+test('mergeStatePatch preserves brightness when fast-path skip_brightness is set', () => {
+  const initial = physicalState({ brightness: 68, temperature: 5900 });
+  const merged = Model.mergeStatePatch(initial, {
+    brightness: { available: false, percent: null, monitor: null, error: null, skipped: true },
+    nightlight: { available: true, enabled: true, identity: false, temperature: 4200, gamma: 95, error: null }
+  });
+  assert.equal(merged.available, true);
+  assert.equal(merged.brightness.available, true);
+  assert.equal(merged.brightness.percent, 68);
+  assert.equal(merged.temperature, 4200);
+  assert.equal(merged.gamma, 95);
+});
+
+test('moveCursorHorizontally navigates multi-field sections and yields at boundaries', () => {
+  assert.equal(Model.moveCursorHorizontally({ section: 0, field: 0 }, 1, 'home'), null);
+  assert.equal(Model.moveCursorHorizontally({ section: 1, field: 0 }, -1, 'automation'), null);
+  assert.deepEqual(Model.moveCursorHorizontally({ section: 1, field: 0 }, 1, 'automation'), { section: 1, field: 1 });
+  assert.deepEqual(Model.moveCursorHorizontally({ section: 1, field: 9 }, 1, 'automation'), { section: 1, field: 10 });
+  assert.equal(Model.moveCursorHorizontally({ section: 1, field: 10 }, 1, 'automation'), null);
+
+  assert.equal(Model.moveCursorHorizontally({ section: 2, field: 8 }, 1, 'automation', { snoozeActive: false }), null);
+  assert.deepEqual(Model.moveCursorHorizontally({ section: 2, field: 8 }, 1, 'automation', { snoozeActive: true }), { section: 2, field: 9 });
+
+  assert.deepEqual(Model.moveCursorHorizontally({ section: 2, field: 0 }, 1, 'settings'), { section: 2, field: 2 });
+  assert.deepEqual(Model.moveCursorHorizontally({ section: 2, field: 2 }, -1, 'settings'), { section: 2, field: 1 });
+  assert.equal(Model.moveCursorHorizontally({ section: 2, field: 0 }, -1, 'settings'), null);
 });
 
 test('every mapped error-code key exists in I18n dictionaries', () => {

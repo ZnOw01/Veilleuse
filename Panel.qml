@@ -23,7 +23,7 @@ Panel {
         property alias inputMethodHints: input.inputMethodHints
         property string accessibleName: label
         property bool hasCursor: false
-        spacing: Style.spacing.md
+        spacing: Style.spacing.xs
 
         Text {
             textFormat: Text.PlainText
@@ -96,7 +96,7 @@ Panel {
     property int transitionDirection: 1
     property string locale: "en"
     property string selectedMonitor: "focused"
-    property string shortcutKeys: "SUPER+SHIFT+N"
+    property string shortcutKeys: "SUPER+SHIFT+V"
     property int snoozeAmount: 30
     property string snoozeUnit: "minutes"
     property string lastError: ""
@@ -144,7 +144,7 @@ Panel {
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
     readonly property int controlIconSlot: Style.space(20)
     readonly property int panelWidth: Style.space(330)
-    readonly property int panelMaxHeight: Style.space(615)
+    readonly property int panelMaxHeight: Style.space(680)
     readonly property int motionMicro: Style.duration(120)
     readonly property int motionFast: Style.duration(160)
     readonly property int motionNormal: Style.duration(180)
@@ -260,14 +260,24 @@ Panel {
         return normalized;
     }
 
-    function mergeCombined(base, raw) {
+    function mergeCombined(base, raw, previous) {
+        var prev = previous && typeof previous === "object" ? previous : base;
         var next = normalizeCombined(base);
         var input = raw && typeof raw === "object" ? raw : {};
+        var prevAutomation = prev && prev.automation && typeof prev.automation === "object" ? prev.automation : null;
+        if (prevAutomation) {
+            next.automation = {};
+            for (var prevKey in prevAutomation) next.automation[prevKey] = prevAutomation[prevKey];
+        }
         if (input.automation && typeof input.automation === "object") {
             if (!next.automation || typeof next.automation !== "object") next.automation = {};
             for (var key in input.automation) next.automation[key] = input.automation[key];
         }
-        if (Array.isArray(input.monitors)) next.monitors = input.monitors;
+        var brightnessSkipped = Boolean(input.brightness && typeof input.brightness === "object" && input.brightness.skipped === true);
+        if (Array.isArray(input.monitors) && (!brightnessSkipped || input.monitors.length > 0))
+            next.monitors = input.monitors;
+        else if (prev && Array.isArray(prev.monitors))
+            next.monitors = prev.monitors;
         return next;
     }
     function navigateToRoute(nextRoute) {
@@ -356,8 +366,7 @@ Panel {
 
     function nightlightToggleCommand() {
         var schedule = root.state.schedule || {};
-        var display = root.state.automation && root.state.automation.schedule_display
-            ? root.state.automation.schedule_display : {};
+        var display = Model.scheduleDisplayValues(root.state.automation);
         var night = display.night || {};
         var command = ["nightlight", "toggle", "--monitor", root.selectedMonitor];
         var temperature = Number(schedule.night_temp);
@@ -437,7 +446,10 @@ Panel {
     }
 
     function reconcile() {
-        root.request(["reconcile", "--monitor", root.selectedMonitor], "reconcile");
+        if (root.opened)
+            root.request(["reconcile", "--monitor", root.selectedMonitor], "reconcile");
+        else
+            root.request(["reconcile", "--skip-brightness"], "reconcile");
     }
 
     function queueScheduleReconcile() {
@@ -485,11 +497,13 @@ Panel {
         if (section === "brightness")
             request(["brightness", String(Math.round(value)), "--monitor", root.selectedMonitor], section);
         else
-            request(["nightlight", section, String(Math.round(value)), "--monitor", root.selectedMonitor], section);
+            request(["nightlight", section, String(Math.round(value)), "--skip-brightness"], section);
     }
 
     // Record pointer intent before starting its asynchronous hardware write.
     function queueDragMutation(section, value) {
+        if (Math.round(value) === root.sliderCurrentValue(section))
+            return;
         root.dragTarget = Model.dragTargetPush(root.dragTarget, section, value);
         root.queueMutation(section, value);
     }
@@ -547,6 +561,18 @@ Panel {
         helperProcess.running = true;
     }
 
+    function extractStatePatch(payload) {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload))
+            return null;
+        if (payload.state && typeof payload.state === "object" && !Array.isArray(payload.state))
+            return payload.state;
+        if (Object.prototype.hasOwnProperty.call(payload, "brightness")
+                || Object.prototype.hasOwnProperty.call(payload, "nightlight")
+                || Object.prototype.hasOwnProperty.call(payload, "schedule"))
+            return payload;
+        return null;
+    }
+
     // A superseded request may have changed the hardware. Merge its readback
     // without replacing unrelated sections or the newest drag target.
     function mergeStaleResponse(exitCode) {
@@ -559,11 +585,11 @@ Panel {
         } catch (error) {
             payload = null;
         }
-        var patch = payload && payload.state && typeof payload.state === "object" && !Array.isArray(payload.state) ? payload.state : null;
+        var patch = root.extractStatePatch(payload);
         if (!patch)
             return;
 
-        state = root.mergeCombined(Model.mergeStatePatch(state, patch), patch);
+        state = root.mergeCombined(Model.mergeStatePatch(state, patch), patch, state);
     }
 
     function handleExit(exitCode) {
@@ -586,7 +612,7 @@ Panel {
                 }
                 if (stalePayload && stalePayload.state_persist_error) {
                     schedulePersistErrorPending = true;
-                } else if (stalePayload && stalePayload.ok !== false && stalePayload.state && typeof stalePayload.state === "object") {
+                } else if (stalePayload && stalePayload.ok !== false && root.extractStatePatch(stalePayload)) {
                     scheduleReconcilePending = true;
                 }
             }
@@ -625,7 +651,7 @@ Panel {
             "state": responseState
         });
         if (result.accepted) {
-            state = root.mergeCombined(result.state, responseState);
+            state = root.mergeCombined(result.state, responseState, root.state);
             actionPending = false;
             lastError = root.stateErrorText();
             if (responseState && responseState.manual_persist_error) {
@@ -660,8 +686,11 @@ Panel {
         }
         actionPending = false;
         root.dragTarget = Model.dragTargetEmpty();
-        if (queuedOperation === "status")
+        if (queuedOperation === "status") {
             state = root.normalizeCombined({});
+        } else if (payload && payload.state && typeof payload.state === "object" && !Array.isArray(payload.state)) {
+            state = root.mergeCombined(Model.mergeStatePatch(root.state, payload.state), payload.state, root.state);
+        }
 
         var payloadError = payload && payload.error ? String(payload.error) : "";
         var payloadCode = payload && payload.error_code ? String(payload.error_code) : "";
@@ -685,6 +714,15 @@ Panel {
         var key = direction > 0 ? "ArrowDown" : "ArrowUp";
         cursor = Model.moveCursor(cursor, key, root.route);
         Qt.callLater(root.ensureCursorVisible);
+    }
+
+    function moveCursorHorizontally(direction) {
+        var next = Model.moveCursorHorizontally(root.cursor, direction, root.route, { snoozeActive: root.snoozeActive });
+        if (!next)
+            return false;
+        cursor = next;
+        Qt.callLater(root.ensureCursorVisible);
+        return true;
     }
 
     // Pointer hover and keyboard navigation share the same section/field cursor.
@@ -768,8 +806,7 @@ Panel {
         root.editEnd = schedule.night_time || "15:30";
         root.editDayTemperature = String(schedule.day_temp || 6000);
         root.editNightTemperature = String(schedule.night_temp || 3500);
-        var display = root.state.automation && root.state.automation.schedule_display
-            ? root.state.automation.schedule_display : {};
+        var display = Model.scheduleDisplayValues(root.state.automation);
         root.editDayBrightness = display.day && display.day.brightness !== undefined ? String(display.day.brightness) : "";
         root.editDayGamma = display.day && display.day.gamma !== undefined ? String(display.day.gamma) : "";
         root.editNightBrightness = display.night && display.night.brightness !== undefined ? String(display.night.brightness) : "";
@@ -801,7 +838,8 @@ Panel {
         }
         if (section === "schedule") {
             if (cursor.field === 9) {
-                root.populateScheduleEditor();
+                if (root.scheduleReady && !root.actionPending)
+                    root.populateScheduleEditor();
                 return;
             }
             if (cursor.field === 10) {
@@ -853,8 +891,11 @@ Panel {
     moduleName: "io.github.znow01.veilleuse"
     ipcTarget: "io.github.znow01.veilleuse"
     manageIpc: false
+    readonly property bool leadsIpc: shortcutIpc.enabled
 
-    IpcHandler {
+    ShellIpc {
+        id: shortcutIpc
+
         target: root.ipcTarget
 
         function open() { root.open(); }
@@ -879,7 +920,7 @@ Panel {
         Model.setI18n(I18n);
         root.locale = String(root.setting("locale", "en"));
         root.selectedMonitor = String(root.setting("monitor", "focused"));
-        root.shortcutKeys = String(root.setting("shortcutKeys", "SUPER+SHIFT+N"));
+        root.shortcutKeys = String(root.setting("shortcutKeys", "SUPER+SHIFT+V"));
         requestStatus();
     }
 
@@ -937,7 +978,7 @@ Panel {
 
         interval: 1000
         repeat: false
-        running: true
+        running: root.leadsIpc
         onTriggered: {
             if (root.actionPending) {
                 initialReconcileTimer.restart();
@@ -952,7 +993,7 @@ Panel {
 
         interval: 30000
         repeat: true
-        running: true
+        running: root.opened || root.leadsIpc
         onTriggered: if (!root.actionPending) root.reconcile()
     }
 
@@ -986,16 +1027,8 @@ Panel {
         contentWidth: keyboardPanel.fittedContentWidth(root.panelWidth)
         contentHeight: keyboardPanel.fittedContentHeight(contentColumn.implicitHeight, root.panelMaxHeight)
 
-        Behavior on contentHeight {
-            NumberAnimation {
-                duration: root.motionNormal
-                easing.type: Easing.OutCubic
-            }
-        }
-
-        // Arrows-only keyboard: Left/Right switch views, Up/Down move the
-        // cursor, Enter/Space activate, Esc closes. Editors and popup lists
-        // own their keys through the blocked gate.
+        // Arrows-only keyboard: Left/Right adjust controls or switch views,
+        // Up/Down move the cursor, Enter/Space activate, Esc closes.
         Item {
             id: keyCatcher
 
@@ -1012,13 +1045,13 @@ Panel {
                     return;
                 }
                 if (event.key === Qt.Key_Left) {
-                    if (!root.adjustSliderBy(-1))
+                    if (!root.adjustSliderBy(-1) && !root.moveCursorHorizontally(-1))
                         root.switchRouteBy(-1);
                     event.accepted = true;
                     return;
                 }
                 if (event.key === Qt.Key_Right) {
-                    if (!root.adjustSliderBy(1))
+                    if (!root.adjustSliderBy(1) && !root.moveCursorHorizontally(1))
                         root.switchRouteBy(1);
                     event.accepted = true;
                     return;
@@ -1056,7 +1089,7 @@ Panel {
                 id: contentColumn
 
                 width: panelFlick.width
-                spacing: Style.spacing.panelGap - 2
+                spacing: Style.spacing.panelGap
 
                 Item {
                     anchors.left: parent.left
@@ -1320,10 +1353,6 @@ Panel {
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.cursor.section === 1 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
-
-                                    Behavior on iconColor {
-                                        ColorAnimation { duration: root.motionMicro }
-                                    }
                                 }
 
                                 Text {
@@ -1399,10 +1428,6 @@ Panel {
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.cursor.section === 2 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
-
-                                    Behavior on iconColor {
-                                        ColorAnimation { duration: root.motionMicro }
-                                    }
                                 }
 
                                 Text {
@@ -1478,10 +1503,6 @@ Panel {
                                     height: Math.max(implicitHeight, iconSize)
                                     iconColor: root.cursor.section === 3 ? Color.accent : root.foreground
                                     anchors.verticalCenter: parent.verticalCenter
-
-                                    Behavior on iconColor {
-                                        ColorAnimation { duration: root.motionMicro }
-                                    }
                                 }
 
                                 Text {
@@ -1694,7 +1715,7 @@ Panel {
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Style.spacing.rowPaddingX
                             anchors.rightMargin: Style.spacing.rowPaddingX
-                            spacing: Style.spacing.rowGap
+                            spacing: Style.spacing.controlGap
 
                             Column {
                                 width: parent.width
@@ -1831,7 +1852,7 @@ Panel {
 
                                 Column {
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    spacing: Style.spacing.md
+                                    spacing: Style.spacing.xs
 
                                     Text {
                                         textFormat: Text.PlainText
@@ -1853,6 +1874,7 @@ Panel {
                                         font.family: root.fontFamily
                                         text: root.editStart
                                         inputMask: "99:99"
+                                        hasCursor: root.cursor.section === 1 && root.cursor.field === 1
                                         Accessible.name: root.text("day_period") + " " + root.text("start")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 1) }
@@ -1867,6 +1889,7 @@ Panel {
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
+                                    spacing: Style.spacing.xs
                                     label: root.text("temperature") + " (K)"
                                     // The parser classifies temperatures below 5900 K
                                     // as night profiles, so day inputs use a narrower range.
@@ -1876,9 +1899,19 @@ Panel {
                                     stepSize: 50
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 2
                                     Accessible.name: root.text("day_period") + " " + root.text("temperature")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 2) }
                                     onModified: value => root.editDayTemperature = String(value)
+                                    field.textFromValue: function(v) { return String(v); }
+                                    field.valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? dayTemperatureEditor.field.value : n; }
+                                    field.validator: RegularExpressionValidator { regularExpression: /^[0-9]{0,5}$/ }
+                                    Connections {
+                                        target: dayTemperatureEditor.field.contentItem
+                                        function onTextEdited() {
+                                            root.editDayTemperature = dayTemperatureEditor.field.contentItem.text;
+                                        }
+                                    }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -1906,6 +1939,7 @@ Panel {
                                     validator: RegularExpressionValidator { regularExpression: /^(?:[1-9][0-9]?|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 3
                                     accessibleName: root.text("day_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 3) }
                                     onTextChanged: root.editDayBrightness = text
@@ -1931,6 +1965,7 @@ Panel {
                                     validator: RegularExpressionValidator { regularExpression: /^(?:[0-9]{1,2}|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 4
                                     accessibleName: root.text("day_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 4) }
                                     onTextChanged: root.editDayGamma = text
@@ -2005,12 +2040,12 @@ Panel {
 
                                 Column {
                                     width: (parent.width - Style.spacing.controlGap) / 2
-                                    spacing: Style.spacing.md
+                                    spacing: Style.spacing.xs
 
                                     Text {
                                         textFormat: Text.PlainText
                                         width: parent.width
-                                        text: root.text("end")
+                                        text: root.text("start")
                                         color: Qt.darker(root.foreground, 1.4)
                                         font.family: root.fontFamily
                                         font.pixelSize: Style.font.bodySmall
@@ -2027,7 +2062,8 @@ Panel {
                                         font.family: root.fontFamily
                                         text: root.editEnd
                                         inputMask: "99:99"
-                                        Accessible.name: root.text("night_period") + " " + root.text("end")
+                                        hasCursor: root.cursor.section === 1 && root.cursor.field === 5
+                                        Accessible.name: root.text("night_period") + " " + root.text("start")
                                         Accessible.role: Accessible.EditableText
                                         HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 5) }
                                         onTextChanged: root.editEnd = text
@@ -2041,6 +2077,7 @@ Panel {
 
                                     width: (parent.width - Style.spacing.controlGap) / 2
                                     fieldWidth: width
+                                    spacing: Style.spacing.xs
                                     label: root.text("temperature") + " (K)"
                                     value: Number(root.editNightTemperature || 3500)
                                     from: 2500
@@ -2048,9 +2085,19 @@ Panel {
                                     stepSize: 50
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 6
                                     Accessible.name: root.text("night_period") + " " + root.text("temperature")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 6) }
                                     onModified: value => root.editNightTemperature = String(value)
+                                    field.textFromValue: function(v) { return String(v); }
+                                    field.valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? nightTemperatureEditor.field.value : n; }
+                                    field.validator: RegularExpressionValidator { regularExpression: /^[0-9]{0,5}$/ }
+                                    Connections {
+                                        target: nightTemperatureEditor.field.contentItem
+                                        function onTextEdited() {
+                                            root.editNightTemperature = nightTemperatureEditor.field.contentItem.text;
+                                        }
+                                    }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
@@ -2078,6 +2125,7 @@ Panel {
                                     validator: RegularExpressionValidator { regularExpression: /^(?:[1-9][0-9]?|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 7
                                     accessibleName: root.text("night_period") + " " + root.text("brightness")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 7) }
                                     onTextChanged: root.editNightBrightness = text
@@ -2103,6 +2151,7 @@ Panel {
                                     validator: RegularExpressionValidator { regularExpression: /^(?:[0-9]{1,2}|100)?$/ }
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 1 && root.cursor.field === 8
                                     accessibleName: root.text("night_period") + " " + root.text("gamma")
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 8) }
                                     onTextChanged: root.editNightGamma = text
@@ -2301,7 +2350,7 @@ Panel {
                                 radius: Style.cornerRadius
                                 color: Style.hoverFillFor(root.foreground, Color.accent)
                                 borderSpec: Border.controlSpec("normal", Color.urgent, Color.urgent)
-                                implicitHeight: activeSnoozeColumn.implicitHeight + Style.spacing.md * 2
+                                implicitHeight: activeSnoozeColumn.implicitHeight + Style.spacing.xs * 2
 
                                 Column {
                                     id: activeSnoozeColumn
@@ -2327,7 +2376,7 @@ Panel {
 
                                         Text {
                                             textFormat: Text.PlainText
-                                            width: parent.width - Style.font.body - Style.spacing.xs
+                                            width: Math.max(0, parent.width - Style.font.body - snoozeClearButton.width - 2 * Style.spacing.xs)
                                             text: root.text("snooze_active") + (root.snoozeRemainingText !== "" ? " · " + root.snoozeRemainingText : "")
                                             color: Color.urgent
                                             font.family: root.fontFamily
@@ -2335,6 +2384,26 @@ Panel {
                                             font.bold: true
                                             elide: Text.ElideRight
                                             anchors.verticalCenter: parent.verticalCenter
+                                        }
+
+                                        Button {
+                                            id: snoozeClearButton
+
+                                            width: Math.max(Style.space(76), snoozeClearButton.implicitWidth)
+                                            text: root.text("clear_snooze")
+                                            fontSize: Style.font.bodySmall
+                                            focusable: true
+                                            bordered: true
+                                            leftAlign: false
+                                            foreground: Color.urgent
+                                            enabled: root.automationReady && !root.actionPending
+                                            hasCursor: root.cursor.section === 2 && root.cursor.field === 9
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 9) }
+                                            onClicked: {
+                                                root.settingsCommand("snooze", ["clear"]);
+                                                root.refocusKeyCatcher();
+                                            }
                                         }
                                     }
 
@@ -2385,24 +2454,39 @@ Panel {
                                 NumberField {
                                     id: snoozeEditor
 
-                                    width: 84
+                                    width: Style.space(88)
                                     fieldWidth: width
+                                    spacing: Style.spacing.xs
                                     value: root.snoozeAmount
                                     from: 1
                                     to: 86400
                                     stepSize: 1
                                     foreground: root.foreground
                                     fontFamily: root.fontFamily
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 6
                                     Accessible.name: root.text("snooze")
                                     enabled: root.automationReady && !root.actionPending
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 6) }
                                     onModified: value => root.snoozeAmount = value
+                                    field.textFromValue: function(v) { return String(v); }
+                                    field.valueFromText: function(t) { var n = parseInt(t, 10); return isNaN(n) ? snoozeEditor.field.value : n; }
+                                    Connections {
+                                        target: snoozeEditor.field.contentItem
+                                        function onTextEdited() {
+                                            var n = parseInt(snoozeEditor.field.contentItem.text, 10);
+                                            if (!isNaN(n) && n >= 1 && n <= 86400)
+                                                root.snoozeAmount = n;
+                                        }
+                                    }
                                     field.Keys.priority: Keys.BeforeItem
                                     field.Keys.onPressed: function(event) {
                                         if (event.key === Qt.Key_Escape) {
                                             keyCatcher.forceActiveFocus();
                                             event.accepted = true;
                                         } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                            var typed = parseInt(snoozeEditor.field.contentItem.text, 10);
+                                            if (!isNaN(typed) && typed >= 1 && typed <= 86400)
+                                                root.snoozeAmount = typed;
                                             root.applySnooze();
                                             keyCatcher.forceActiveFocus();
                                             event.accepted = true;
@@ -2413,7 +2497,7 @@ Panel {
                                 Button {
                                     id: snoozeUnitButton
 
-                                    width: 58
+                                    width: Style.space(84)
                                     text: root.text("unit_" + root.snoozeUnit)
                                     focusable: true
                                     bordered: true
@@ -2432,7 +2516,7 @@ Panel {
                                 Button {
                                     id: snoozeApplyButton
 
-                                    width: root.snoozeActive ? 62 : parent.width - 84 - 58 - 2 * Style.spacing.xs
+                                    width: Math.max(Style.space(72), parent.width - snoozeEditor.width - snoozeUnitButton.width - 2 * Style.spacing.xs)
                                     text: root.text("snooze_set")
                                     focusable: true
                                     bordered: true
@@ -2444,25 +2528,6 @@ Panel {
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 8) }
                                     onClicked: {
                                         root.applySnooze();
-                                        root.refocusKeyCatcher();
-                                    }
-                                }
-
-                                Button {
-                                    id: snoozeClearButton
-
-                                    visible: root.snoozeActive
-                                    width: 82
-                                    text: root.text("clear_snooze")
-                                    focusable: true
-                                    bordered: true
-                                    leftAlign: false
-                                    foreground: root.snoozeActive ? Color.urgent : root.foreground
-                                    enabled: root.automationReady && !root.actionPending
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 9
-                                    HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 9) }
-                                    onClicked: {
-                                        root.settingsCommand("snooze", ["clear"]);
                                         root.refocusKeyCatcher();
                                     }
                                 }
@@ -2593,7 +2658,7 @@ Panel {
                                                 id: chipText
                                                 anchors.centerIn: parent
                                                 text: modelData
-                                                color: (modelData === "SUPER" || modelData === "SHIFT" || modelData === "CTRL" || modelData === "ALT" || modelData === "MOD4" || modelData === "MOD1") ? Color.accent : root.foreground
+                                                color: (modelData === "SUPER" || modelData === "SHIFT" || modelData === "CTRL" || modelData === "CONTROL" || modelData === "ALT" || modelData === "MOD4" || modelData === "MOD1" || modelData === "MOD2" || modelData === "MOD3" || modelData === "MOD5") ? Color.accent : root.foreground
                                                 font.family: root.fontFamily
                                                 font.pixelSize: Style.font.caption
                                                 font.bold: true
@@ -2622,9 +2687,11 @@ Panel {
                                 placeholderText: root.text("shortcut_keys")
                                 foreground: root.foreground
                                 font.family: root.fontFamily
+                                hasCursor: root.cursor.section === 1
                                 Accessible.name: root.text("shortcut_keys")
                                 Accessible.role: Accessible.EditableText
                                 HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(1, 0) }
+                                onTextChanged: if (text !== root.shortcutKeys) root.shortcutKeys = text
                                 onAccepted: {
                                     root.setInlineSetting("shortcutKeys", text);
                                     keyCatcher.forceActiveFocus();
@@ -2650,7 +2717,7 @@ Panel {
                                     leftAlign: false
                                     foreground: root.foreground
                                     accent: Color.accent
-                                    hasCursor: root.cursor.section === 2 && root.cursor.field === 1
+                                    hasCursor: root.cursor.section === 2 && root.cursor.field <= 1
                                     HoverHandler { onHoveredChanged: if (hovered) root.cursorToSection(2, 1) }
                                     enabled: !root.actionPending && shortcutField.text.trim() !== ""
                                     onClicked: {

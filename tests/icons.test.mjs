@@ -41,6 +41,14 @@ test('glyphForState returns the correct glyph per system state', () => {
   assert.equal(glyphForState(null), ICONS.unavailable);
   assert.equal(glyphForState({}), ICONS.unavailable);
   assert.equal(glyphForState({ available: false, automation: { snoozed: true } }), ICONS.snooze);
+  assert.equal(
+    glyphForState({ available: false, enabled: true, brightness: { available: false }, nightlight: { available: true } }),
+    ICONS.weatherSunny
+  );
+  assert.equal(
+    glyphForState({ available: false, enabled: true, nightlight: { available: false } }),
+    ICONS.unavailable
+  );
 });
 
 test('NerdIcon.qml conforms to Omarchy Quattro tokenized icon contract', () => {
@@ -49,4 +57,5 @@ test('NerdIcon.qml conforms to Omarchy Quattro tokenized icon contract', () => {
   assert.match(nerdIconQml, /property real iconSize:\s*Style\.font\.icon/);
   assert.match(nerdIconQml, /font\.family:\s*fontFamily/);
   assert.match(nerdIconQml, /font\.pixelSize:\s*iconSize/);
+  assert.match(nerdIconQml, /duration:\s*Style\.duration\(160\)/);
 });
