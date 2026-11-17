@@ -2,6 +2,19 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.7.0 (2026-11-17)
+
+- Add `--skip-brightness` to `nightlight` and `reconcile`, reuse brightness from `omarchy-monitor-state`, and cache backend state within automation runs so background reconciliation and slider drags avoid redundant `hyprctl` and DDC spawns.
+- Register the panel IPC endpoint with Omarchy `ShellIpc` so `omarchy-shell` answers over its native socket and only one bar instance runs background reconciliation on multi-monitor setups.
+- Keep cross-section slider drags independent, merge root-level superseded responses and partial failure states without dropping `automation` or `monitors`, and ignore sub-pixel slider jitter.
+- Fix schedule profile selection so unmanaged user profiles survive `schedule get`, `schedule set`, and `schedule disable`, and update single-line `profile { ... }` blocks cleanly.
+- Fix shortcut removal between adjacent lines, normalize `MOD4`/`MOD1`/`CONTROL` aliases, and detect `rebind`, `bind_toggle`, and `bind_hold` collisions.
+- Reap orphaned `.state.json.*.tmp` files under the exclusive state lock, refresh `omarchy-shell` night-light indicators after `snooze` and `reconcile`, and keep top-level `origin` accurate across snooze, manual, and automatic transitions.
+- Change the default shortcut draft to `SUPER+SHIFT+V` so it no longer collides with stock Omarchy bindings, remove locale thousand separators from numeric inputs, relabel the Night time input as `Start`, and fit the full Automation view without clipping.
+- Remove dead `config.json` storage, dormant ramp transition code, unused glyphs and translation keys, and duplicate UI test harnesses.
+- Pin GitHub Actions by commit SHA, require `qmltestrunner` in CI, and automate SemVer bumps, annotated tags, and GitHub Releases on pushes to `main`.
+- Refresh the Home, Automation, and Settings screenshots and align `README.md`, `CLI.md`, `PROJECT.md`, `CONTRIBUTING.md`, and `TEST_INFRA.md`.
+
 ## v3.6.2 (2026-11-04)
 
 - Hide the hero status pill in the natural color state; the bar tooltip still reports it.
