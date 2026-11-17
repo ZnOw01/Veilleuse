@@ -6,6 +6,7 @@ import hashlib
 import base64
 import json
 import os
+import shutil
 import subprocess
 import stat
 import sys
@@ -614,6 +615,44 @@ toggle.disable_schedule()
         with self.assertRaises(toggle.ScheduleToggleError) as caught:
             toggle.enable_schedule()
         self.assertEqual(caught.exception.error_code, "conflict")
+
+    def test_custom_twilight_profile_survives_disable_and_enable_when_markers_present(self):
+        mixed = (
+            "profile {\n"
+            "    time = 17:00\n"
+            "    temperature = 5500\n"
+            "}\n\n"
+            "# Veilleuse day\n"
+            "profile {\n"
+            "    time = 06:00\n"
+            "    identity = true\n"
+            "}\n\n"
+            "# Veilleuse night\n"
+            "profile {\n"
+            "    time = 19:00\n"
+            "    temperature = 3500\n"
+            "}\n"
+        )
+        self.config.write_bytes(mixed.encode("utf-8"))
+        disabled = toggle.disable_schedule()
+        self.assertFalse(disabled["schedule_enabled"])
+        disabled_text = self.config.read_text(encoding="utf-8")
+        self.assertIn("temperature = 5500", disabled_text)
+        self.assertNotIn("06:00", disabled_text)
+        self.assertNotIn("19:00", disabled_text)
+
+        enabled = toggle.enable_schedule()
+        self.assertTrue(enabled["schedule_enabled"])
+        self.assertEqual(self.config.read_text(encoding="utf-8"), mixed)
+
+    def test_exclusive_lock_rejects_symlinked_parent_directory(self):
+        shutil.rmtree(self.config.parent)
+        outside = self.root / "outside-hypr"
+        outside.mkdir()
+        self.config.parent.symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(toggle.ScheduleToggleError) as caught:
+            toggle.disable_schedule()
+        self.assertEqual(caught.exception.error_code, "unsafe_path")
 
 
 if __name__ == "__main__":

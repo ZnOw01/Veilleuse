@@ -1110,6 +1110,36 @@ class AutomationUtilsTest(unittest.TestCase):
                 self.assertTrue(result["success"], result)
                 self.assertTrue(result["snoozed"])
 
+    def test_top_level_origin_tracks_snooze_reconcile_and_manual_transitions(self):
+        self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
+        snoozed = automation.snooze_set(30, env=self.env())
+        self.assertTrue(snoozed["success"], snoozed)
+        self.assertEqual(self.read_state()["origin"], "snooze")
+        self.assertEqual(self.read_state()["snooze_until"], 2800.0)
+
+        manual = automation.commit_manual_apply(
+            self.env(), "nightlight_temperature", {"temperature": 4200, "gamma": 90}
+        )
+        self.assertEqual(manual["origin"], "manual")
+        self.assertIsNone(manual["snooze_until"])
+        self.assertIsNone(self.read_state()["snooze_until"])
+
+        automation.snooze_set(30, env=self.env())
+        cleared = automation.snooze_clear(env=self.env())
+        self.assertTrue(cleared["success"], cleared)
+        self.assertEqual(self.read_state()["origin"], "automatic")
+
+        automation.snooze_set(30, env=self.env())
+        self.nightlight.identity = False
+        enforced = automation.reconcile(env=self.env())
+        self.assertTrue(enforced["success"], enforced)
+        self.assertEqual(self.read_state()["origin"], "snooze")
+
+        self.clock.advance(2000.0)
+        expired = automation.reconcile(env=self.env())
+        self.assertTrue(expired["success"], expired)
+        self.assertEqual(self.read_state()["origin"], "automatic")
+
 
 if __name__ == "__main__":
     unittest.main()

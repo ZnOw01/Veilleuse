@@ -561,6 +561,22 @@ class StateUtilsTest(unittest.TestCase):
         self.assertEqual(caught.exception.error_code, "invalid_state")
         self.assertEqual(state_utils.read_state(), initial)
 
+    def test_locked_reaps_orphaned_regular_temp_files_without_touching_symlinks(self):
+        state_dir = self.state_file().parent
+        state_dir.mkdir(parents=True, exist_ok=True)
+        orphan = state_dir / ".state.json.12345.deadbeef.tmp"
+        orphan.write_bytes(b'{"partial": ')
+        outside = Path(self.tempdir.name) / "outside.txt"
+        outside.write_bytes(b"keep")
+        symlink_tmp = state_dir / ".state.json.99999.symlink.tmp"
+        symlink_tmp.symlink_to(outside)
+
+        state_utils.write_state(dict(state_utils.DEFAULT_STATE))
+
+        self.assertFalse(orphan.exists())
+        self.assertTrue(symlink_tmp.is_symlink())
+        self.assertEqual(outside.read_bytes(), b"keep")
+
     def test_tier1_pure_stdlib_only_invariants(self):
         """Tier 1 - F12: Verify scripts import only standard library modules and internal project modules."""
         import ast

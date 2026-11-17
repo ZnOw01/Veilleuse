@@ -627,6 +627,49 @@ class MaskLuaEdgeCaseTest(unittest.TestCase):
         text = 'local s = [==[ o.bind("SUPER + V")\n'
         self.assertIsNone(shortcut_utils.collision(text, "SUPER, V"))
 
+    def test_remove_block_preserves_newline_between_adjacent_lines(self):
+        block = shortcut_utils._block_text("SUPER, V", "\n")
+        source = "-- keep comment\n" + block + 'o.bind("SUPER + Q", "Quit", "quit")\n'
+        removed, had_block, keys = shortcut_utils.remove_block(source)
+        self.assertTrue(had_block)
+        self.assertEqual(keys, "SUPER + V")
+        self.assertEqual(removed, '-- keep comment\no.bind("SUPER + Q", "Quit", "quit")\n')
+
+    def test_collision_detects_rebind_bind_toggle_bind_hold_and_mod_aliases(self):
+        text = (
+            'o.rebind("MOD4 + V", "Paste", "cmd")\n'
+            'o.bind_toggle("CONTROL + ALT + K", "Toggle", "cmd")\n'
+            'o.bind_hold("MOD1 + F4", "Hold", "cmd")\n'
+            'o.bind("SUPER, code:34", "Bracket", "cmd")\n'
+            'o.bind("SUPER, mouse:272", "Drag", "cmd")\n'
+            'o.bind("switch:on:Lid Switch", "Lid", "cmd")\n'
+        )
+        self.assertIsNotNone(shortcut_utils.collision(text, "SUPER, V"))
+        self.assertIsNotNone(shortcut_utils.collision(text, "CTRL ALT, K"))
+        self.assertIsNotNone(shortcut_utils.collision(text, "ALT, F4"))
+        self.assertIsNone(shortcut_utils.collision(text, "SUPER SHIFT, V"))
+        with self.assertRaises(ValueError):
+            shortcut_utils.parse_keys("SUPER MOD4, V")
+
+
+class ShortcutStatusSafetyTest(ShortcutUtilsTestBase):
+    def test_status_sets_available_false_on_corrupt_markers_and_ignores_symlink_backup(self):
+        path = self.write_bindings("-- >>> Veilleuse shortcut >>>\n")
+        outside = Path(self.tempdir.name) / "outside.bak"
+        outside.write_text("secret", encoding="utf-8")
+        backup = path.with_suffix(path.suffix + shortcut_utils.BACKUP_SUFFIX)
+        backup.symlink_to(outside)
+
+        status = shortcut_utils.shortcut_status()
+        self.assertFalse(status["available"])
+        self.assertIsNotNone(status["error"])
+        self.assertFalse(status["backup_exists"])
+
+        self.write_bindings('o.bind("SUPER + Q", "Quit", "quit")\n')
+        clean_status = shortcut_utils.shortcut_status()
+        self.assertTrue(clean_status["available"])
+        self.assertFalse(clean_status["backup_exists"])
+
 
 class ShortcutLuaBlockTests(unittest.TestCase):
     LUA = Path("/usr/bin/lua")

@@ -35,6 +35,17 @@ class ScheduleConflictError(ValueError):
     error_code = "conflict"
 
 
+class AmbiguousScheduleError(ValueError):
+    """Ownership of day/night profiles in hyprsunset.conf is ambiguous."""
+
+    error_code = "ambiguous_config"
+
+
+_OWNERSHIP_MARKER_RE = re.compile(
+    r"(?im)^[ \t]*#[^\n]*\bveilleuse\b[^\n]*\b(day|night)\b[^\n]*$"
+)
+
+
 class AtomicWriteDurabilityError(OSError):
     """The replace succeeded, but the containing directory was not flushed."""
 
@@ -334,14 +345,104 @@ def validate_schedule(schedule, clamp=False):
     }
 
 
-def parse_schedule_text(text, strict=False):
-    """Parse profiles while retaining the GUI's dict and clamping contract.
+def select_managed_profiles(
+    text,
+    *,
+    strict=False,
+    require_explicit_when_extra=False,
+    allow_partial=False,
+):
+    if not isinstance(text, str):
+        raise ValueError("La configuración debe ser texto")
+    blocks = list(iter_profile_blocks(text))
+    if not blocks:
+        if allow_partial:
+            return None, None
+        raise ValueError("La configuración no contiene perfiles")
 
-    Structural errors never become a default schedule.  The empty string is
-    retained as the historical fallback sentinel used by the status helper.
-    With the default ``strict=False``, numeric temperatures are clamped as
-    before; ``strict=True`` rejects values outside the corresponding UI range.
-    """
+    entries = []
+    previous_end = 0
+    for number, (start, end, profile) in enumerate(blocks, 1):
+        info = _parse_profile_info(profile, strict=True)
+        if info["time"] is None:
+            raise ValueError(f"El perfil {number} está incompleto: falta time")
+        kind = profile_kind(info)
+        if kind is None:
+            raise ValueError(
+                f"El perfil {number} está incompleto: falta temperature o identity"
+            )
+        if strict and info["identity"] is not True:
+            _validate_temperature(
+                info["temperature"],
+                NIGHT_TEMP_MIN,
+                DAY_TEMP_MAX,
+                "La temperatura",
+            )
+        context = text[max(previous_end, start - 256):end]
+        markers = [m.group(1).casefold() for m in _OWNERSHIP_MARKER_RE.finditer(context)]
+        if len(markers) > 1:
+            raise AmbiguousScheduleError("Un perfil gestionado tiene múltiples marcadores")
+        entries.append(
+            {
+                "start": start,
+                "end": end,
+                "text": profile,
+                "info": info,
+                "kind": kind,
+                "marker": markers[0] if markers else None,
+            }
+        )
+        previous_end = end
+
+    marked_day = [e for e in entries if e["marker"] == "day"]
+    marked_night = [e for e in entries if e["marker"] == "night"]
+    if len(marked_day) > 1 or len(marked_night) > 1:
+        raise AmbiguousScheduleError("Existen múltiples marcadores Veilleuse para el mismo período")
+
+    if require_explicit_when_extra and len(entries) != 2:
+        if len(marked_day) != 1 or len(marked_night) != 1:
+            raise AmbiguousScheduleError("Los perfiles diurno y nocturno son ambiguos")
+        day_entry = marked_day[0]
+        night_entry = marked_night[0]
+    else:
+        day_entry = (
+            marked_day[0]
+            if marked_day
+            else next((e for e in entries if e["marker"] is None and e["kind"] == "day"), None)
+        )
+        night_entry = (
+            marked_night[0]
+            if marked_night
+            else next((e for e in entries if e["marker"] is None and e["kind"] == "night"), None)
+        )
+
+    if not allow_partial and (day_entry is None or night_entry is None):
+        if require_explicit_when_extra:
+            raise AmbiguousScheduleError("Los perfiles diurno y nocturno son ambiguos")
+        missing = "day" if day_entry is None else "night"
+        raise ValueError(f"La configuración no contiene un perfil {missing} válido")
+
+    if strict:
+        if day_entry is not None and day_entry["info"]["identity"] is not True:
+            _validate_temperature(
+                day_entry["info"]["temperature"],
+                DAY_TEMP_MIN,
+                DAY_TEMP_MAX,
+                "La temperatura diurna",
+            )
+        if night_entry is not None:
+            if night_entry["info"]["identity"] is True:
+                raise ValueError("El perfil nocturno no puede usar identity = true")
+            _validate_temperature(
+                night_entry["info"]["temperature"],
+                NIGHT_TEMP_MIN,
+                NIGHT_TEMP_MAX,
+                "La temperatura nocturna",
+            )
+    return day_entry, night_entry
+
+
+def parse_schedule_text(text, strict=False):
     if not isinstance(text, str):
         raise ValueError("La configuración debe ser texto")
     if not text.strip():
@@ -349,37 +450,26 @@ def parse_schedule_text(text, strict=False):
             raise ValueError("La configuración no contiene perfiles")
         return default_schedule()
 
-    records = profile_records(text, strict_temperatures=strict)
-    schedule = {}
-    found_day = False
-    found_night = False
-    for info, kind in records:
-        if kind == "day" and not found_day:
-            temperature = DAY_TEMP if info["identity"] is True else info["temperature"]
-            day_temp = (
-                DAY_TEMP
-                if info["identity"] is True
-                else clamp_day_temperature(temperature)
-            )
-            schedule.update(day_time=info["time"], day_temp=day_temp)
-            found_day = True
-        elif kind == "night" and not found_night:
-            schedule.update(
-                night_time=info["time"],
-                night_temp=clamp_night_temperature(info["temperature"]),
-            )
-            found_night = True
-    if not found_day or not found_night:
-        missing = "day" if not found_day else "night"
-        raise ValueError(f"La configuración no contiene un perfil {missing} válido")
+    day_entry, night_entry = select_managed_profiles(text, strict=strict)
+    day_info = day_entry["info"]
+    night_info = night_entry["info"]
+    day_temp = (
+        DAY_TEMP
+        if day_info["identity"] is True
+        else clamp_day_temperature(day_info["temperature"])
+    )
+    schedule = {
+        "day_time": day_info["time"],
+        "day_temp": day_temp,
+        "night_time": night_info["time"],
+        "night_temp": clamp_night_temperature(night_info["temperature"]),
+    }
     return validate_schedule(schedule)
 
 
 def day_profile_is_identity(text):
-    for info, kind in profile_records(text):
-        if kind == "day":
-            return info["identity"] is True
-    raise ValueError("La configuración no contiene un perfil day válido")
+    day_entry, _night_entry = select_managed_profiles(text, strict=False)
+    return day_entry["info"]["identity"] is True
 
 
 def schedule_period(schedule, now=None):
@@ -398,7 +488,9 @@ def schedule_period(schedule, now=None):
 def exclusive_lock(path):
     """Serialize related GUI and command-line operations on Linux."""
     path = Path(path)
+    _check_write_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _check_write_path(path)
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
     descriptor = None
     try:

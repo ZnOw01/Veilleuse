@@ -391,37 +391,16 @@ def _hash(data: bytes) -> str:
 
 def _managed_ranges(text: str) -> list[tuple[int, int]]:
     try:
-        blocks = list(schedule_utils.iter_profile_blocks(text))
-        records = schedule_utils.profile_records(text, strict_temperatures=True)
+        day_entry, night_entry = schedule_utils.select_managed_profiles(
+            text, strict=True, require_explicit_when_extra=True
+        )
+    except getattr(schedule_utils, "AmbiguousScheduleError", ()) as caught:
+        raise _error("ambiguous_config", "Schedule day/night profiles are ambiguous", caught)
     except (AttributeError, ValueError) as caught:
         raise _error("malformed_config", "Schedule contains malformed profiles", caught)
-    if len(blocks) != len(records):
-        raise _error("malformed_config", "Schedule profile records are inconsistent")
-    ranges = [(start, end) for start, end, _profile in blocks]
-    if len(records) == 2:
-        kinds = [kind for _info, kind in records]
-        if sorted(kinds) == ["day", "night"]:
-            return ranges
-
-    # A user config may contain additional valid profiles.  In that case only
-    # an explicit Veilleuse day/night comment directly associated with a block
-    # establishes ownership; ordinary comments are never treated as markers.
-    marker_pattern = re.compile(
-        r"(?im)^[ \t]*#[^\n]*\bveilleuse\b[^\n]*\b(day|night)\b[^\n]*$"
+    return sorted(
+        [(day_entry["start"], day_entry["end"]), (night_entry["start"], night_entry["end"])]
     )
-    marked = []
-    previous_end = 0
-    for (start, end, _profile), (_info, _kind) in zip(blocks, records):
-        context = text[max(previous_end, start - 256):end]
-        kinds = [match.group(1).casefold() for match in marker_pattern.finditer(context)]
-        if len(kinds) == 1:
-            marked.append((kinds[0], (start, end)))
-        elif kinds:
-            raise _error("ambiguous_config", "A managed profile has multiple markers")
-        previous_end = end
-    if sorted(kind for kind, _range in marked) == ["day", "night"]:
-        return [profile_range for _kind, profile_range in marked]
-    raise _error("ambiguous_config", "Schedule day/night profiles are ambiguous")
 
 
 def _remove_ranges(text: str, ranges: list[tuple[int, int]]) -> str:

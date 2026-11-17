@@ -289,6 +289,7 @@ def commit_manual_apply(env, operation, values=None) -> dict:
         next_state = {
             **current,
             "origin": "manual",
+            "snooze_until": None,
             "last_applied": entry,
         }
         if override is not None:
@@ -440,6 +441,7 @@ def _snooze_set_expiry(target_epoch: float, operation: str, env: dict, minutes=N
         env["update_state"](
             lambda current: {
                 **current,
+                "origin": "snooze",
                 "snooze_until": float(target_epoch),
                 "manual_override": None,
                 "last_applied": {
@@ -547,6 +549,7 @@ def snooze_clear(env=None) -> dict:
         env["update_state"](
             lambda current: {
                 **current,
+                "origin": "automatic" if current.get("schedule_enabled") is True else "unknown",
                 "snooze_until": None,
                 "manual_override": None,
             }
@@ -692,6 +695,7 @@ def _commit_reconcile(
     def _commit(current):
         next_state = {
             **current,
+            "origin": "automatic",
             "last_applied": {
                 "at": _iso_timestamp(now),
                 "origin": "automatic",
@@ -745,7 +749,15 @@ def _clear_override(env: dict, message: str, *, snoozed: bool = False, detail: b
     """Drop the manual-intent override; return a failure payload on error."""
     try:
         env["update_state"](
-            lambda current: {**current, "manual_override": None}
+            lambda current: {
+                **current,
+                "manual_override": None,
+                "origin": (
+                    "snooze"
+                    if snoozed
+                    else ("automatic" if current.get("schedule_enabled") is True else "unknown")
+                ),
+            }
         )
     except Exception as error:
         return _failure(
@@ -817,6 +829,7 @@ def _reconcile_snoozed(env: dict, state: Mapping) -> dict:
         env["update_state"](
             lambda current_state: {
                 **current_state,
+                "origin": "snooze",
                 "manual_override": None,
                 "last_applied": {
                     "at": _iso_timestamp(now),
@@ -850,6 +863,7 @@ def _reconcile_expired(env: dict, state: Mapping) -> dict:
         env["update_state"](
             lambda current: {
                 **current,
+                "origin": "automatic" if current.get("schedule_enabled") is True else "unknown",
                 "snooze_until": None,
                 "manual_override": None,
             }

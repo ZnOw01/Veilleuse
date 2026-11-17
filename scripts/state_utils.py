@@ -489,6 +489,16 @@ def _locked(document: Path):
         raise StateError("unsafe_path" if error.errno == errno.ELOOP else "io_error", "Unable to lock document") from error
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
+        prefix = f".{document.name}."
+        with contextlib.suppress(OSError):
+            for entry in os.scandir(document.parent):
+                if (
+                    entry.name.startswith(prefix)
+                    and entry.name.endswith(".tmp")
+                    and entry.is_file(follow_symlinks=False)
+                ):
+                    with contextlib.suppress(OSError):
+                        os.unlink(entry.path)
         yield
     except StateError:
         raise

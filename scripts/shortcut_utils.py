@@ -49,6 +49,7 @@ RELOAD_EXIT_CODE = 124
 _MODIFIERS = frozenset(
     {"SUPER", "CTRL", "ALT", "SHIFT", "MOD1", "MOD2", "MOD3", "MOD4", "MOD5"}
 )
+_MODIFIER_ALIASES = {"MOD4": "SUPER", "MOD1": "ALT", "CONTROL": "CTRL"}
 _NAMED_KEYS = frozenset(
     {
         "SPACE", "RETURN", "ESCAPE", "TAB", "BACKSPACE", "DELETE", "INSERT",
@@ -58,8 +59,19 @@ _NAMED_KEYS = frozenset(
 )
 _FUNCTION_KEY = re.compile(r"^F(?:[1-9]|1[0-9]|2[0-4])$")
 _SINGLE_KEY = re.compile(r"^[A-Z0-9]$")
-# Omarchy 4 bindings.lua: o.bind/hl.bind install, hl.unbind removes.
-_BIND_CALL = re.compile(r"(?m)\b(?:o|hl)\.(?:bind|unbind)\s*\(")
+_EXTERNAL_MOD_TOKEN = re.compile(r"^[A-Z0-9_]+$")
+_EXTERNAL_KEY_TOKEN = re.compile(r"^[A-Za-z0-9_:./-]+$")
+_BIND_CALL = re.compile(
+    r"(?m)\b(?:o|hl)\s*\.\s*(?:bind|rebind|bind_toggle|bind_hold|unbind)\s*\("
+)
+
+
+def _canonical_mod(mod: str) -> str:
+    return _MODIFIER_ALIASES.get(mod.upper(), mod.upper())
+
+
+def _canonical_mods(mods) -> frozenset[str]:
+    return frozenset(_canonical_mod(mod) for mod in mods)
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +298,15 @@ def parse_keys(spec):
     if len(parts) != 2 or not parts[1]:
         raise ValueError('El atajo debe usar el formato "MOD, TECLA" (p. ej. "SUPER, V")')
     mods = []
+    seen_canonical = set()
     for token in parts[0].split():
         token = token.upper()
         if token not in _MODIFIERS:
             raise ValueError(f"Modificador no permitido: {token}")
-        if token in mods:
+        canonical = _canonical_mod(token)
+        if canonical in seen_canonical:
             raise ValueError(f"Modificador repetido: {token}")
+        seen_canonical.add(canonical)
         mods.append(token)
     if not mods:
         raise ValueError('El atajo debe incluir al menos un modificador (p. ej. "SUPER, V")')
@@ -394,7 +409,7 @@ def remove_block(text):
     keys = _block_keys(text[start:end])
     prefix = start
     eol = _detect_eol(text) if text else "\n"
-    if start > 0 and text[:start].endswith(eol):
+    if end == len(text) and start > 0 and text[:start].endswith(eol):
         prefix = start - len(eol)
     return text[:prefix] + text[end:], True, keys
 
@@ -515,21 +530,38 @@ def _first_string_arg(text, position):
 
 
 def _parse_keys_string(keys_string):
-    """Parse an Omarchy key string like ``SUPER + V`` into ``(mods, key)``."""
-    parts = [part.strip() for part in keys_string.split("+")]
-    parts = [part for part in parts if part]
-    if not parts:
+    if not isinstance(keys_string, str) or "\n" in keys_string or "\r" in keys_string:
         return None
-    key = parts[-1].upper()
-    if not re.fullmatch(r"[A-Z0-9_]+", key):
+    stripped = keys_string.strip()
+    if not stripped:
         return None
-    mods = frozenset(part.upper() for part in parts[:-1])
-    return mods, key
+    if stripped.casefold().startswith("switch:") and "+" not in stripped and "," not in stripped:
+        return frozenset(), stripped.upper()
+    if "," in stripped:
+        pieces = stripped.split(",")
+        if len(pieces) != 2:
+            return None
+        raw_mods_text, raw_key = pieces[0].strip(), pieces[1].strip()
+        if not raw_key or not _EXTERNAL_KEY_TOKEN.fullmatch(raw_key):
+            return None
+        mod_tokens = [m.upper() for m in raw_mods_text.replace("+", " ").split() if m]
+        if any(not _EXTERNAL_MOD_TOKEN.fullmatch(m) for m in mod_tokens):
+            return None
+        return frozenset(mod_tokens), raw_key.upper()
+    raw_parts = [part.strip() for part in stripped.split("+")]
+    if not raw_parts or any(not part for part in raw_parts):
+        return None
+    raw_key = raw_parts[-1]
+    if not _EXTERNAL_KEY_TOKEN.fullmatch(raw_key):
+        return None
+    mod_tokens = [part.upper() for part in raw_parts[:-1]]
+    if any(not _EXTERNAL_MOD_TOKEN.fullmatch(m) for m in mod_tokens):
+        return None
+    return frozenset(mod_tokens), raw_key.upper()
 
 
 def _binding_call_kind(call_text):
-    """Return ``"bind"`` or ``"unbind"`` for a matched call like ``hl.unbind(``."""
-    return "unbind" if re.search(r"\.unbind\s*\(", call_text) else "bind"
+    return "unbind" if re.search(r"\.\s*unbind\s*\(", call_text) else "bind"
 
 
 def _literal_string_first_arg(text, position):
@@ -623,11 +655,11 @@ def collision(text, keys_spec):
     instead of silently marking the keys as free.
     """
     mods, key = parse_keys(keys_spec)
-    needle = (frozenset(mods), key)
+    needle = (_canonical_mods(mods), key)
     block = find_block(text)
     active_bind = None
     for kind, call_mods, call_key, original_line in _external_binding_calls(text, block):
-        if (call_mods, call_key) != needle:
+        if (_canonical_mods(call_mods), call_key) != needle:
             continue
         active_bind = original_line if kind == "bind" else None
     return active_bind
@@ -635,6 +667,13 @@ def collision(text, keys_spec):
 
 # ---------------------------------------------------------------------------
 # status / install / remove
+
+def _regular_file_exists(path):
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
 
 def shortcut_status():
     """Read-only snapshot of the shortcut and its single backup."""
@@ -662,7 +701,7 @@ def shortcut_status():
         "keys": None,
         "command": FIXED_COMMAND,
         "backup": str(backup),
-        "backup_exists": backup.is_file(),
+        "backup_exists": _regular_file_exists(backup),
         "error": None,
     }
     if not exists:
@@ -670,11 +709,13 @@ def shortcut_status():
     try:
         text = _read_bytes(path).decode("utf-8")
     except (OSError, ValueError, UnicodeError) as caught:
+        state["available"] = False
         state["error"] = str(caught)
         return state
     try:
         block = find_block(text)
     except ValueError as caught:
+        state["available"] = False
         state["error"] = str(caught)
         return state
     if block is None:
