@@ -891,7 +891,7 @@ Panel {
     moduleName: "io.github.znow01.veilleuse"
     ipcTarget: "io.github.znow01.veilleuse"
     manageIpc: false
-    readonly property bool leadsIpc: shortcutIpc.enabled
+    readonly property bool leadsIpc: IpcRegistry.leads(shortcutIpc, IpcRegistry.revision)
 
     ShellIpc {
         id: shortcutIpc
