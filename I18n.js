@@ -16,9 +16,7 @@ var en = {
   saved: 'Changes saved',
   unavailable: 'Unavailable',
   notConfirmed: 'State not confirmed',
-  enabled: 'Enabled',
   disabled: 'Natural color',
-  manualOverride: 'Manual override',
   start: 'Start',
   end: 'End',
   cancel: 'Cancel',
@@ -51,12 +49,8 @@ var en = {
   unitHours: 'Hours',
   unitMinutes: 'Minutes',
   unitSeconds: 'Seconds',
-  sunset: 'Sunset',
-  nightStart: 'Night start',
   nightStartShort: 'Night',
-  quickSnooze: 'Quick snooze',
   // Settings.
-  settingsTitle: 'Settings',
   language: 'Language',
   shortcut: 'Keyboard shortcut',
   shortcutKeys: 'Keys',
@@ -71,8 +65,6 @@ var en = {
   errMonitorUnavailable: 'The selected monitor is unavailable.',
   errScheduleInvalid: 'The configured schedule is not valid.',
   errSnoozeInvalid: 'The requested snooze is not valid.',
-  errHistoryUnreadable: 'The history could not be read.',
-  errSettingsWrite: 'The settings could not be saved.',
   errShortcutWrite: 'The keyboard shortcut could not be updated.',
   errUnknown: 'An unknown error occurred.',
   errInvalidValue: 'The requested value is not valid.',
@@ -92,8 +84,6 @@ var en = {
   errMissingCommand: 'A required system command is missing.',
   errTimeout: 'The command timed out.',
   errBackendUnavailable: 'The control backend is unavailable.',
-  errDeadline: 'The operation deadline was exceeded.',
-  errCancelled: 'The operation was cancelled.',
   errSnoozeFailed: 'The snooze could not be applied.',
   errReconcileFailed: 'The schedule could not be reconciled.',
   errApplyFailed: 'The night light could not be applied.',
@@ -107,7 +97,6 @@ var en = {
   // Misc.
   monitor: 'Monitor',
   focusedMonitor: 'Focused monitor',
-  working: 'Applying…',
   minutesShort: 'min',
   keyboardHints: '← →\u00A0adjust / switch\u00A0view · ↑ ↓\u00A0move · Enter\u00A0activate · Esc\u00A0close'
 };
@@ -123,9 +112,7 @@ var es = {
   saved: 'Cambios guardados',
   unavailable: 'No disponible',
   notConfirmed: 'Estado no confirmado',
-  enabled: 'Activada',
   disabled: 'Color natural',
-  manualOverride: 'Anulación manual',
   start: 'Inicio',
   end: 'Fin',
   cancel: 'Cancelar',
@@ -154,11 +141,7 @@ var es = {
   unitHours: 'Horas',
   unitMinutes: 'Minutos',
   unitSeconds: 'Segundos',
-  sunset: 'Atardecer',
-  nightStart: 'Inicio de noche',
   nightStartShort: 'Noche',
-  quickSnooze: 'Posposición rápida',
-  settingsTitle: 'Ajustes',
   language: 'Idioma',
   shortcut: 'Acceso directo',
   shortcutKeys: 'Teclas',
@@ -172,8 +155,6 @@ var es = {
   errMonitorUnavailable: 'El monitor seleccionado no está disponible.',
   errScheduleInvalid: 'El horario configurado no es válido.',
   errSnoozeInvalid: 'La posposición solicitada no es válida.',
-  errHistoryUnreadable: 'No se pudo leer el historial.',
-  errSettingsWrite: 'No se pudieron guardar los ajustes.',
   errShortcutWrite: 'No se pudo actualizar el acceso directo.',
   errUnknown: 'Se produjo un error desconocido.',
   errInvalidValue: 'El valor solicitado no es válido.',
@@ -193,8 +174,6 @@ var es = {
   errMissingCommand: 'Falta un comando necesario del sistema.',
   errTimeout: 'Se agotó el tiempo de espera del comando.',
   errBackendUnavailable: 'El backend de control no está disponible.',
-  errDeadline: 'Se superó el plazo de la operación.',
-  errCancelled: 'La operación fue cancelada.',
   errSnoozeFailed: 'No se pudo aplicar la posposición.',
   errReconcileFailed: 'No se pudo reconciliar el horario.',
   errApplyFailed: 'No se pudo aplicar la luz nocturna.',
@@ -207,7 +186,6 @@ var es = {
   optional: 'Opcional',
   monitor: 'Monitor',
   focusedMonitor: 'Monitor enfocado',
-  working: 'Aplicando…',
   minutesShort: 'min',
   keyboardHints: '← →\u00A0ajustar / cambiar\u00A0vista · ↑ ↓\u00A0moverse · Enter\u00A0activar · Esc\u00A0cerrar'
 };
@@ -220,32 +198,22 @@ var KEYS = (function () {
   return Object.keys(combined);
 })();
 
-// QML-facing semantic aliases. Dictionaries keep the established camelCase
-// contract while the panel uses stable snake_case action keys.
 var ALIASES = {
   home: 'routeHome', automation: 'routeAutomation', settings: 'routeSettings',
-  night_light: 'heroTitle', manual_override: 'manualOverride',
+  night_light: 'heroTitle',
   focused_monitor: 'focusedMonitor', monitor: 'monitor',
   day_period: 'dayPeriod', night_period: 'nightPeriod', schedule_track: 'scheduleTrack',
   snooze: 'snoozeTitle', snooze_set: 'snoozeSet', clear_snooze: 'snoozeClear',
   snooze_active: 'snoozeStatusActive', minutes_short: 'minutesShort',
   unit_hours: 'unitHours', unit_minutes: 'unitMinutes', unit_seconds: 'unitSeconds',
-  sunset: 'sunset', night_start: 'nightStart', quick_snooze: 'quickSnooze',
   cancel: 'cancel', language: 'language', spanish: 'spanish', english: 'english',
   shortcut: 'shortcut', shortcut_keys: 'shortcutKeys', install_shortcut: 'shortcutInstall',
-  remove_shortcut: 'shortcutRemove', working: 'working',
-  gamma_short: 'gammaShort',
-  keyboard_hints: 'keyboardHints', unknown: 'provenanceUnknown',
+  remove_shortcut: 'shortcutRemove', gamma_short: 'gammaShort',
+  keyboard_hints: 'keyboardHints',
   origin_automatic: 'provenanceAutomatic', origin_manual: 'provenanceManual',
   origin_preset: 'provenancePreset', origin_snooze: 'provenanceSnooze',
-  origin_unknown: 'provenanceUnknown', not_confirmed: 'notConfirmed'
+  origin_unknown: 'provenanceUnknown'
 };
-
-// Canonical keys the panel addresses without an alias.
-var CANONICAL_PASSTHROUGH = [
-  'brightness', 'temperature', 'gamma', 'schedule', 'save', 'saved',
-  'unavailable', 'start', 'end', 'sunset'
-];
 
 function locales() {
   return LOCALES.slice();

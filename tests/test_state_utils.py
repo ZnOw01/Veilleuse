@@ -44,14 +44,14 @@ class StateUtilsTest(unittest.TestCase):
         self.environment.stop()
         self.tempdir.cleanup()
 
-    def config_file(self):
-        return self.config_home / "veilleuse" / "config.json"
-
     def state_file(self):
         return self.state_home / "veilleuse" / "state.json"
 
     def history_file(self):
         return self.state_home / "veilleuse" / "history.jsonl"
+
+    def read_history_records(self):
+        return state_utils._read_history(self.history_file())
 
     def test_invalid_history_origins_raise_stable_validation_error(self):
         for origin in ([], {}, 42, None):
@@ -72,54 +72,23 @@ class StateUtilsTest(unittest.TestCase):
     def test_paths_are_absolute_and_relative_xdg_values_fall_back_to_home(self):
         with mock.patch.dict(
             os.environ,
-            {"XDG_CONFIG_HOME": "relative-config", "XDG_STATE_HOME": "relative-state"},
+            {"XDG_STATE_HOME": "relative-state"},
             clear=False,
         ):
             self.assertEqual(
-                state_utils.config_path(), self.home / ".config" / "veilleuse" / "config.json"
-            )
-            self.assertEqual(
                 state_utils.state_path(), self.home / ".local" / "state" / "veilleuse" / "state.json"
             )
-        self.assertTrue(state_utils.config_path().is_absolute())
+            self.assertEqual(
+                state_utils.history_path(), self.home / ".local" / "state" / "veilleuse" / "history.jsonl"
+            )
         self.assertTrue(state_utils.state_path().is_absolute())
 
     def test_absent_documents_return_defaults_without_writing(self):
-        self.assertEqual(state_utils.read_config(), state_utils.DEFAULT_CONFIG)
         self.assertEqual(state_utils.read_state(), state_utils.DEFAULT_STATE)
-        self.assertEqual(state_utils.list_history(), [])
-        self.assertFalse(self.config_file().exists())
+        self.assertFalse(hasattr(state_utils, "BUILTIN_PRESETS"))
+        self.assertFalse(hasattr(state_utils, "read_config"))
         self.assertFalse(self.state_file().exists())
         self.assertFalse(self.history_file().exists())
-
-    def test_config_is_preset_free_and_defaults_to_schema_only(self):
-        # Presets are gone from the product: the config document carries
-        # nothing but its schema, and no preset surface exists in the module.
-        self.assertEqual(state_utils.DEFAULT_CONFIG, {"schema": 1})
-        self.assertFalse(hasattr(state_utils, "BUILTIN_PRESETS"))
-        state_utils.write_config({"schema": 1})
-        self.assertEqual(state_utils.read_config(), {"schema": 1})
-
-    def test_legacy_preset_documents_migrate_on_read(self):
-        # A config written by a preset-era release must keep loading instead
-        # of failing validation and bricking the plugin: the legacy preset
-        # keys are dropped and the document normalizes to schema-only.
-        legacy = {
-            "schema": 1,
-            "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-            "default_preset": "desk",
-        }
-        self.config_file().parent.mkdir(parents=True, exist_ok=True)
-        self.config_file().write_text(json.dumps(legacy), encoding="utf-8")
-        self.assertEqual(state_utils.read_config(), {"schema": 1})
-
-        legacy_zero = {
-            "schema": 0,
-            "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-            "default_preset": "desk",
-        }
-        self.config_file().write_text(json.dumps(legacy_zero), encoding="utf-8")
-        self.assertEqual(state_utils.read_config(), {"schema": 1})
 
     def test_schedule_display_and_applied_period_are_validated(self):
         display = {
@@ -175,13 +144,11 @@ class StateUtilsTest(unittest.TestCase):
         )
         self.assertEqual(partial["schedule_period_applied"], "night")
 
-    def test_config_and_state_are_strictly_validated_and_written_mode_0600(self):
-        config = {"schema": 1}
+    def test_state_is_strictly_validated_and_written_mode_0600(self):
         state = {
             "schema": 1,
             "schedule_enabled": False,
             "snooze_until": 1700000000,
-            "transition_seconds": 45,
             "origin": "manual",
             "last_applied": {
                 "at": "2026-08-13T10:00:00Z",
@@ -198,19 +165,11 @@ class StateUtilsTest(unittest.TestCase):
             },
             "schedule_period_applied": "day",
         }
-        state_utils.write_config(config)
         state_utils.write_state(state)
-        self.assertEqual(state_utils.read_config(), config)
         self.assertEqual(state_utils.read_state(), state)
-        self.assertEqual(stat.S_IMODE(self.config_file().stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(self.state_file().stat().st_mode), 0o600)
 
-        invalid_config = dict(config, unexpected=True)
-        with self.assertRaises(state_utils.StateError) as error:
-            state_utils.write_config(invalid_config)
-        self.assertEqual(error.exception.error_code, "invalid_config")
-
-        invalid_state = dict(state, transition_seconds=1801)
+        invalid_state = dict(state, unexpected=True)
         with self.assertRaises(state_utils.StateError) as error:
             state_utils.write_state(invalid_state)
         self.assertEqual(error.exception.error_code, "invalid_state")
@@ -311,7 +270,7 @@ class StateUtilsTest(unittest.TestCase):
                     )
                 self.assertEqual(error.exception.error_code, "invalid_state")
 
-    def test_schema_one_state_without_manual_override_loads_with_default(self):
+    def test_legacy_state_fields_migrate_on_read_and_strip_on_write(self):
         state = {
             "schema": 1,
             "schedule_enabled": True,
@@ -325,63 +284,42 @@ class StateUtilsTest(unittest.TestCase):
         self.state_file().write_text(json.dumps(state), encoding="utf-8")
         loaded = state_utils.read_state()
         self.assertEqual(loaded["manual_override"], None)
-        self.assertEqual(loaded["transition_seconds"], 45)
+        self.assertNotIn("transition_seconds", loaded)
         self.assertEqual(loaded["origin"], "manual")
-        # Reading does not rewrite the on-disk schema-1 document.
         self.assertEqual(json.loads(self.state_file().read_text()), state)
-        # Once a write happens the optional field is materialized.
         written = state_utils.write_state(loaded)
         self.assertIn("manual_override", written)
-        self.assertIn("manual_override", json.loads(self.state_file().read_text()))
+        persisted = json.loads(self.state_file().read_text())
+        self.assertIn("manual_override", persisted)
+        self.assertNotIn("transition_seconds", persisted)
 
     def test_corrupt_json_has_stable_error_and_is_never_overwritten(self):
-        path = self.config_file()
+        path = self.state_file()
         path.parent.mkdir(parents=True)
         path.write_text('{"schema": 1,', encoding="utf-8")
         original = path.read_bytes()
         with self.assertRaises(state_utils.StateError) as error:
-            state_utils.read_config()
+            state_utils.read_state()
         self.assertEqual(error.exception.error_code, "invalid_json")
         with self.assertRaises(state_utils.StateError) as error:
-            state_utils.write_config(state_utils.DEFAULT_CONFIG)
+            state_utils.write_state(state_utils.DEFAULT_STATE)
         self.assertEqual(error.exception.error_code, "invalid_json")
         self.assertEqual(path.read_bytes(), original)
 
     def test_schema_is_required_and_malformed_documents_are_never_overwritten(self):
-        for path, reader, writer, default, error_code in (
-            (
-                self.config_file(),
-                state_utils.read_config,
-                state_utils.write_config,
-                state_utils.DEFAULT_CONFIG,
-                "invalid_schema",
-            ),
-            (
-                self.state_file(),
-                state_utils.read_state,
-                state_utils.write_state,
-                state_utils.DEFAULT_STATE,
-                "invalid_schema",
-            ),
-        ):
-            with self.subTest(path=path):
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b"{}")
-                original = path.read_bytes()
-                with self.assertRaises(state_utils.StateError) as error:
-                    reader()
-                self.assertEqual(error.exception.error_code, error_code)
-                with self.assertRaises(state_utils.StateError) as error:
-                    writer(default)
-                self.assertEqual(error.exception.error_code, error_code)
-                self.assertEqual(path.read_bytes(), original)
+        path = self.state_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"{}")
+        original = path.read_bytes()
+        with self.assertRaises(state_utils.StateError) as error:
+            state_utils.read_state()
+        self.assertEqual(error.exception.error_code, "invalid_schema")
+        with self.assertRaises(state_utils.StateError) as error:
+            state_utils.write_state(state_utils.DEFAULT_STATE)
+        self.assertEqual(error.exception.error_code, "invalid_schema")
+        self.assertEqual(path.read_bytes(), original)
 
     def test_schema_zero_is_migrated_only_when_explicitly_written(self):
-        config = {
-            "schema": 0,
-            "presets": {"desk": {"temperature": 4200, "gamma": 85}},
-            "default_preset": "desk",
-        }
         state = {
             "schema": 0,
             "schedule_enabled": True,
@@ -391,38 +329,31 @@ class StateUtilsTest(unittest.TestCase):
             "last_applied": None,
             "schedule_disabled": None,
         }
-        self.config_file().parent.mkdir(parents=True)
         self.state_file().parent.mkdir(parents=True)
-        self.config_file().write_text(json.dumps(config), encoding="utf-8")
         self.state_file().write_text(json.dumps(state), encoding="utf-8")
 
-        loaded_config = state_utils.read_config()
         loaded_state = state_utils.read_state()
-        self.assertEqual(loaded_config["schema"], 1)
         self.assertEqual(loaded_state["schema"], 1)
-        self.assertEqual(json.loads(self.config_file().read_text()), config)
         self.assertEqual(json.loads(self.state_file().read_text()), state)
 
-        state_utils.write_config(loaded_config)
         state_utils.write_state(loaded_state)
-        self.assertEqual(json.loads(self.config_file().read_text())["schema"], 1)
         self.assertEqual(json.loads(self.state_file().read_text())["schema"], 1)
 
     def test_symlink_file_and_parent_fail_closed(self):
         real = Path(self.tempdir.name) / "real"
         real.mkdir()
-        self.config_home.symlink_to(real, target_is_directory=True)
+        self.state_home.symlink_to(real, target_is_directory=True)
         with self.assertRaises(state_utils.StateError) as error:
-            state_utils.read_config()
+            state_utils.read_state()
         self.assertEqual(error.exception.error_code, "unsafe_path")
 
-        self.config_home.unlink()
-        self.config_file().parent.mkdir(parents=True)
+        self.state_home.unlink()
+        self.state_file().parent.mkdir(parents=True)
         target = Path(self.tempdir.name) / "target.json"
-        target.write_text(json.dumps(state_utils.DEFAULT_CONFIG), encoding="utf-8")
-        self.config_file().symlink_to(target)
+        target.write_text(json.dumps(state_utils.DEFAULT_STATE), encoding="utf-8")
+        self.state_file().symlink_to(target)
         with self.assertRaises(state_utils.StateError) as error:
-            state_utils.read_config()
+            state_utils.read_state()
         self.assertEqual(error.exception.error_code, "unsafe_path")
 
     def test_symlink_lock_fails_closed(self):
@@ -480,10 +411,10 @@ class StateUtilsTest(unittest.TestCase):
             "success": True,
         }
 
-    def test_history_is_validated_bounded_and_clearable(self):
+    def test_history_is_validated_and_bounded(self):
         for number in range(55):
             state_utils.append_history(self.history_record(number))
-        records = state_utils.list_history()
+        records = self.read_history_records()
         self.assertEqual(len(records), 50)
         self.assertEqual(records[0]["time"], "2026-08-13T10:05:00Z")
         self.assertEqual(records[-1]["time"], "2026-08-13T10:54:00Z")
@@ -498,29 +429,25 @@ class StateUtilsTest(unittest.TestCase):
         self.assertEqual(error.exception.error_code, "invalid_history")
         self.assertEqual(self.history_file().read_bytes(), before)
 
-        self.assertEqual(state_utils.clear_history(), [])
-        self.assertEqual(state_utils.list_history(), [])
-        self.assertTrue(self.history_file().exists())
-
     def test_update_state_writes_only_when_the_mutated_state_changes(self):
         self.assertEqual(
             state_utils.update_state(lambda state: None), state_utils.DEFAULT_STATE
         )
         self.assertFalse(self.state_file().exists())
 
-        state_utils.write_state(dict(state_utils.DEFAULT_STATE, transition_seconds=30))
+        state_utils.write_state(dict(state_utils.DEFAULT_STATE, snooze_until=30))
         before = self.state_file().read_bytes()
         for mutator in (
             lambda state: None,
-            lambda state: {**state, "transition_seconds": state["transition_seconds"]},
+            lambda state: {**state, "snooze_until": state["snooze_until"]},
         ):
             self.assertEqual(
-                state_utils.update_state(mutator)["transition_seconds"], 30
+                state_utils.update_state(mutator)["snooze_until"], 30
             )
         self.assertEqual(self.state_file().read_bytes(), before)
 
     def test_update_state_never_loses_concurrent_mutator_keys(self):
-        state_utils.update_state(lambda state: {**state, "transition_seconds": 0})
+        state_utils.update_state(lambda state: {**state, "snooze_until": 0})
         barrier = threading.Barrier(8)
 
         def bump():
@@ -529,7 +456,7 @@ class StateUtilsTest(unittest.TestCase):
                 state_utils.update_state(
                     lambda state: {
                         **state,
-                        "transition_seconds": state["transition_seconds"] + 1,
+                        "snooze_until": state["snooze_until"] + 1,
                     }
                 )
 
@@ -539,45 +466,7 @@ class StateUtilsTest(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=10)
         self.assertFalse(any(thread.is_alive() for thread in threads))
-        self.assertEqual(state_utils.read_state()["transition_seconds"], 40)
-
-    def test_clear_history_decides_existence_only_under_the_lock(self):
-        real_locked = state_utils._locked
-        real_exists = state_utils._document_exists
-        held = []
-        decisions = []
-
-        @contextlib.contextmanager
-        def traced_locked(document):
-            held.append(True)
-            try:
-                with real_locked(document):
-                    yield
-            finally:
-                held.pop()
-
-        def traced_exists(path):
-            if path == self.history_file():
-                decisions.append(bool(held))
-            return real_exists(path)
-
-        for history_present in (False, True):
-            with self.subTest(history_present=history_present):
-                decisions.clear()
-                if history_present:
-                    state_utils.append_history(self.history_record(0))
-                with mock.patch.object(
-                    state_utils, "_locked", traced_locked
-                ), mock.patch.object(state_utils, "_document_exists", traced_exists):
-                    self.assertEqual(state_utils.clear_history(), [])
-                self.assertTrue(
-                    decisions, "clear_history must decide the document's existence"
-                )
-                self.assertTrue(
-                    all(decisions),
-                    "a concurrent append between check and lock would survive the clear",
-                )
-                self.assertEqual(state_utils.list_history(), [])
+        self.assertEqual(state_utils.read_state()["snooze_until"], 40)
 
     def test_concurrent_history_appends_preserve_all_latest_records(self):
         worker = (
@@ -600,7 +489,7 @@ class StateUtilsTest(unittest.TestCase):
             )
         for process in workers:
             self.assertEqual(process.wait(timeout=10), 0, f"worker exited with {process.returncode}")
-        records = state_utils.list_history()
+        records = self.read_history_records()
         self.assertEqual(len(records), 40)
         self.assertEqual(
             {record["time"] for record in records},
@@ -609,10 +498,6 @@ class StateUtilsTest(unittest.TestCase):
 
     def test_tests_do_not_create_python_bytecode(self):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
-
-
-    # ------------------------------------------------------------------
-    # contract gaps: star-import safety, update_config, history corruption
 
     def test_star_import_exports_only_existing_symbols(self):
         namespace = {}
@@ -623,63 +508,33 @@ class StateUtilsTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(hasattr(state_utils, name))
 
-    def test_update_config_persists_mutator_result_and_returns_copy(self):
-        state_utils.write_config(dict(state_utils.DEFAULT_CONFIG))
-        updated = state_utils.update_config(lambda config: dict(config))
-        self.assertEqual(updated, {"schema": state_utils.SCHEMA_VERSION})
-        self.assertEqual(state_utils.read_config(), updated)
-
-    def test_update_config_mutator_exception_raises_invalid_config_keeping_file(self):
-        original = b'{"schema": 1}\n'
-        path = self.config_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(original)
-        path.chmod(0o600)
-
-        def exploding_mutator(config):
-            raise RuntimeError("boom")
-
-        with self.assertRaises(state_utils.StateError) as caught:
-            state_utils.update_config(exploding_mutator)
-        self.assertEqual(caught.exception.error_code, "invalid_config")
-        self.assertEqual(path.read_bytes(), original)
-
-    def test_history_blank_line_fails_closed_without_rewrite(self):
+    def test_history_corruption_fails_closed_without_rewrite(self):
         record = {"time": "t1", "operation": "set", "success": True}
         state_utils.append_history(record)
         path = self.history_file()
         corrupted = path.read_bytes() + b"\n"
         path.write_bytes(corrupted)
         with self.assertRaises(state_utils.StateError) as caught:
-            state_utils.list_history()
+            self.read_history_records()
         self.assertEqual(caught.exception.error_code, "invalid_history")
         with self.assertRaises(state_utils.StateError):
             state_utils.append_history({"time": "t2", "operation": "set"})
         self.assertEqual(path.read_bytes(), corrupted)
 
-    def test_history_invalid_json_line_reports_invalid_json(self):
-        path = self.history_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'{"time": "t1", "operation": "set"\n')
         with self.assertRaises(state_utils.StateError) as caught:
-            state_utils.list_history()
+            self.read_history_records()
         self.assertEqual(caught.exception.error_code, "invalid_json")
 
-    def test_history_bad_record_shape_reports_invalid_history(self):
-        path = self.history_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b'{"operation": "set"}\n')
         with self.assertRaises(state_utils.StateError) as caught:
-            state_utils.list_history()
+            self.read_history_records()
         self.assertEqual(caught.exception.error_code, "invalid_history")
 
     def test_created_state_directories_are_private_0700(self):
-        state_utils.write_config(dict(state_utils.DEFAULT_CONFIG))
         state_utils.write_state(dict(state_utils.DEFAULT_STATE))
-        for directory in (self.config_home / "veilleuse", self.state_home / "veilleuse"):
-            with self.subTest(directory=str(directory)):
-                mode = stat.S_IMODE(directory.stat().st_mode)
-                self.assertEqual(mode, 0o700)
+        mode = stat.S_IMODE((self.state_home / "veilleuse").stat().st_mode)
+        self.assertEqual(mode, 0o700)
 
     def test_validate_history_record_rejects_extra_fields_and_invalid_types(self):
         with self.assertRaises(state_utils.StateError) as caught:
@@ -712,7 +567,8 @@ class StateUtilsTest(unittest.TestCase):
         scripts_dir = ROOT / "scripts"
         local_modules = {p.stem for p in scripts_dir.glob("*.py")} | {"scripts", "veilleuse_control"}
         stdlib_names = sys.stdlib_module_names
-        for py_file in scripts_dir.glob("*.py"):
+        targets = [*scripts_dir.glob("*.py"), scripts_dir / "veilleuse-control"]
+        for py_file in targets:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):

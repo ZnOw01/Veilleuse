@@ -110,7 +110,7 @@ test('the hero shows the title and switch only, with no schedule meta line', () 
 });
 
 test('the hero status pill does not repeat the natural color state', () => {
-  const detail = qml.slice(qml.indexOf('readonly property string heroStatusDetail'), qml.indexOf('readonly property int snoozeRemainingMinutes'));
+  const detail = qml.slice(qml.indexOf('readonly property string heroStatusDetail'), qml.indexOf('readonly property int snoozeRemainingSeconds'));
   assert.match(detail, /return "";/);
   assert.doesNotMatch(detail, /"disabled"/);
 });
@@ -182,7 +182,9 @@ test('snooze composes a number, a unit and one apply action', () => {
   assert.match(qml, /\["snooze",\s*"set",\s*"--seconds",\s*String\(root\.snoozeSeconds\),\s*"--monitor",\s*root\.selectedMonitor\]/);
   // The active snooze shows its remaining time and a cancel; nothing else.
   assert.match(snooze, /visible:\s*root\.snoozeActive/);
-  assert.match(snooze, /snoozeRemainingMinutes/);
+  assert.match(snooze, /snoozeRemainingText/);
+  assert.match(qml, /Model\.formatSnoozeRemaining\(root\.snoozeRemainingSeconds,\s*root\.locale\)/);
+  assert.match(barQml, /Model\.formatSnoozeRemaining\(/);
   assert.match(snooze, /text:\s*root\.text\("clear_snooze"\)/);
   // Manual duration controls remain available alongside quick snooze actions.
   assert.doesNotMatch(qml, /snooze_30|snooze_120|until-tomorrow|until_tomorrow|setSnooze\(30\)|setSnooze\(120\)/);
@@ -440,7 +442,7 @@ test('pointer drags record the latest drag target through the request bus', () =
 });
 
 test('confirmed readbacks advance the drag chase with the helper tolerances', () => {
-  assert.match(qml, /function reconcilePending\(\)[\s\S]*?Model\.reconcileDragTargets\(state,\s*root\.state,\s*root\.dragTarget,\s*root\.queuedOperation\)/);
+  assert.match(qml, /function reconcilePending\(\)[\s\S]*?Model\.reconcileDragTargets\(root\.state,\s*root\.dragTarget,\s*root\.queuedOperation\)/);
   assert.match(qml, /root\.dragTarget\s*=\s*drag\.target/);
   assert.match(qml, /root\.queueMutation\(drag\.requests\[j\]\.section,\s*drag\.requests\[j\]\.value\)/);
 });
@@ -714,4 +716,72 @@ test('malformed shortcut success fails closed instead of displaying saved feedba
   assert.equal(context.feedbackText, '');
   assert.equal(context.state, context.originalState);
   assert.ok(context.lastError);
+});
+
+test('real Panel.qml route navigation updates direction, resets cursor, and clears stale errors', () => {
+  const sent = [];
+  const context = {
+    Model,
+    route: 'home',
+    routeOptions: Model.routeOrder(),
+    transitionDirection: 1,
+    dragTarget: Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 80),
+    cursor: { section: 3, field: 0 },
+    lastError: 'old error',
+    feedbackText: 'old feedback',
+    selectedMonitor: 'eDP-2',
+    state: Model.normalizeState({ schedule: { available: true, day_time: '07:00', night_time: '20:00', day_temp: 6200, night_temp: 3200 } }),
+    panelFlick: { contentY: 42 },
+    keyCatcher: { focused: false, forceActiveFocus() { this.focused = true; } },
+    Qt: { callLater(fn) { fn(); } },
+    editStart: '06:00', editEnd: '15:30', editDayTemperature: '6000', editNightTemperature: '3500',
+    editDayBrightness: '', editDayGamma: '', editNightBrightness: '', editNightGamma: '',
+    requestStatus() { sent.push('status'); },
+    request(cmd, op) { sent.push([op, ...cmd]); },
+  };
+  context.root = context;
+  const nav = qml.slice(qml.indexOf('function navigateToRoute('), qml.indexOf('function refocusKeyCatcher('));
+  const pop = qml.slice(qml.indexOf('function populateScheduleEditor('), qml.indexOf('function scheduleDraftSnapshot('));
+  vm.createContext(context);
+  vm.runInContext(pop + nav, context);
+
+  context.navigateToRoute('automation');
+  assert.equal(context.route, 'automation');
+  assert.equal(context.transitionDirection, 1);
+  assert.deepEqual(context.dragTarget, Model.dragTargetEmpty());
+  assert.deepEqual(context.cursor, Model.cursorStart());
+  assert.equal(context.lastError, '');
+  assert.equal(context.editStart, '07:00');
+  assert.equal(context.panelFlick.contentY, 0);
+  assert.equal(context.keyCatcher.focused, true);
+  assert.equal(sent[0][0], 'schedule-status');
+
+  // Ring navigation wraps home -> settings with direction -1 and settings -> home with +1.
+  context.navigateToRoute('home');
+  context.navigateToRoute('settings');
+  assert.equal(context.route, 'settings');
+  assert.equal(context.transitionDirection, -1);
+  context.navigateToRoute('home');
+  assert.equal(context.route, 'home');
+  assert.equal(context.transitionDirection, 1);
+});
+
+test('keyCatcherBlocked covers every interactive editor and selector popup', () => {
+  const blockedDecl = qml.slice(qml.indexOf('readonly property bool keyCatcherBlocked:'), qml.indexOf('function normalizedPath'));
+  for (const token of [
+    'startEditor.activeFocus',
+    'endEditor.activeFocus',
+    'dayTemperatureEditor.field.activeFocus',
+    'dayBrightnessEditor.field.activeFocus',
+    'dayGammaEditor.field.activeFocus',
+    'nightTemperatureEditor.field.activeFocus',
+    'nightBrightnessEditor.field.activeFocus',
+    'nightGammaEditor.field.activeFocus',
+    'snoozeEditor.field.activeFocus',
+    'shortcutField.activeFocus',
+    'monitorSelector.popupOpen',
+    'localeSelector.popupOpen'
+  ]) {
+    assert.ok(blockedDecl.includes(token), `keyCatcherBlocked missing ${token}`);
+  }
 });

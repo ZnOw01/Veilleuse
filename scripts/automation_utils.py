@@ -42,18 +42,10 @@ GAMMA_MIN = 0
 GAMMA_MAX = 100
 BRIGHTNESS_MIN = 1
 BRIGHTNESS_MAX = 100
-STEP_INTERVAL_SECONDS = 1.0
-# Bounded grace for the final exact-target step: a slow environment must
-# never drop the requested target, only genuinely expired ramps report
-# "deadline".
-RAMP_FINAL_GRACE_SECONDS = 5.0
 IDENTITY_TEMPERATURE = 6000
 DRIFT_TOLERANCE_TEMPERATURE = 50
-# Deterministic cap for a manual override tied to the time-invariant identity
-# profile: the longest possible identity period is under 24 hours, so a
-# 24-hour boundary preserves the same-period semantics while guaranteeing the
-# override can never persist forever.  Legacy identity overrides without an
-# explicit ``until`` use the same duration from their ``at`` timestamp.
+# Identity profiles are time-invariant, so a 24-hour boundary stops a
+# manual override from surviving indefinitely across days.
 IDENTITY_OVERRIDE_DURATION_SECONDS = 24 * 60 * 60
 
 
@@ -132,35 +124,6 @@ def snooze_status(state: Mapping, now: float) -> dict:
         "expires_in_seconds": remaining,
         "expires_in_minutes": int(remaining // 60),
     }
-
-
-def ramp_schedule(
-    current_temperature: int,
-    current_gamma: int,
-    target_temperature: int,
-    target_gamma: int,
-    steps: int,
-):
-    """Interpolated application schedule for one ramp.
-
-    Returns ``steps`` ``(temperature, gamma)`` pairs covering the ramp; each
-    value is monotonic toward its target, inside the [current, target] range,
-    and the final pair is exactly the requested target.  ``round`` of a
-    monotone interpolation is monotone, so values never overshoot.
-    """
-    if steps < 1:
-        steps = 1
-    schedule = []
-    for index in range(1, steps + 1):
-        fraction = index / steps
-        schedule.append(
-            (
-                round(current_temperature + (target_temperature - current_temperature) * fraction),
-                round(current_gamma + (target_gamma - current_gamma) * fraction),
-            )
-        )
-    schedule[-1] = (target_temperature, target_gamma)
-    return schedule
 
 
 def _failure(error_code, message, **fields):
@@ -386,7 +349,6 @@ def default_env() -> dict:
         "apply_brightness": _default_apply_brightness,
         "apply_gamma": _default_apply_gamma,
         "current_profile": _default_current_profile,
-        "token": lambda: None,
     }
 
 
@@ -398,15 +360,6 @@ def _resolve_env(env) -> dict:
         raise ValueError("env must be a mapping")
     resolved.update(env)
     return resolved
-
-
-def _token(env) -> object | None:
-    provider = env["token"]
-    if provider is None:
-        return None
-    if callable(provider):
-        return provider()
-    return provider
 
 
 def _default_read_nightlight() -> dict:
@@ -622,68 +575,6 @@ def snooze_clear(env=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Transition ramp.
-
-def _run_ramp(
-    env: dict,
-    start: Mapping,
-    target_temperature: int,
-    target_gamma: int,
-    seconds: float,
-    token: object,
-    *,
-    operation: str = "transition",
-) -> tuple[bool, object]:
-    """Drive one gradual ramp: monotonic bounded steps, shared deadline.
-
-    Steps are scheduled at absolute times so the per-step IPC cost of
-    ``apply_values`` is absorbed by shorter sleeps instead of burning the
-    shared deadline. The deadline stays hard for sleeping clocks, but the
-    final exact-target step gets a bounded grace: a slow environment must
-    never drop the requested target. No step is applied once the token is
-    set.
-    """
-    started = env["monotonic"]()
-    deadline = started + seconds
-    steps = max(1, int(seconds / STEP_INTERVAL_SECONDS))
-    step_interval = seconds / steps
-    schedule = ramp_schedule(
-        start["temperature"], start["gamma"],
-        target_temperature, target_gamma, steps,
-    )
-    applied = []
-    last_values = None
-    last_index = len(schedule) - 1
-    for index, values in enumerate(schedule):
-        now = env["monotonic"]()
-        if now >= (deadline + RAMP_FINAL_GRACE_SECONDS
-                   if index == last_index else deadline):
-            return False, _ramp_failure(
-                "deadline", "El plazo de la transición ha expirado",
-                applied, seconds, operation,
-            )
-        if token is not None and token.is_set():
-            return False, _ramp_failure(
-                "cancelled", "La transición fue cancelada",
-                applied, seconds, operation,
-            )
-        if values != last_values:
-            state = env["apply_values"](*values)
-            if not state.get("available") or state.get("error"):
-                return False, _ramp_failure(
-                    _failure_code(state, "apply_failed"),
-                    state.get("error") or "No se pudo aplicar un paso de la transición",
-                    applied, seconds, operation,
-                )
-            applied.append(values)
-            last_values = values
-        if index < last_index:
-            target_time = started + (index + 2) * step_interval
-            delay = target_time - env["monotonic"]()
-            env["sleep"](max(0.0, min(STEP_INTERVAL_SECONDS, delay)))
-    return True, applied
-
-
 # Reconcile.
 
 def _profile_drift(profile: Mapping, current: Mapping) -> bool:
@@ -731,7 +622,6 @@ def _apply_scheduled_display(env: dict, scheduled: Mapping) -> tuple[dict | None
 
 def _apply_profile(
     env: dict, profile: Mapping, current: Mapping,
-    transition_seconds: int, token: object,
     scheduled: Mapping | None = None,
 ) -> tuple[dict, dict | None]:
     """Apply the schedule profile; returns ``(result, applied_values_or_None)``."""
@@ -763,33 +653,18 @@ def _apply_profile(
             "read_failed", "El estado de la luz nocturna está incompleto",
             operation="reconcile", applied=False, snoozed=False,
         ), None
-    start_temperature = (
-        IDENTITY_TEMPERATURE if current.get("identity") is True else int(start["temperature"])
-    )
-    start_gamma = int(start["gamma"])
     target_gamma = (
         int(scheduled["gamma"])
         if scheduled is not None and scheduled.get("gamma") is not None
-        else start_gamma
+        else int(start["gamma"])
     )
-    if transition_seconds == 0:
-        state = env["apply_values"](target_temperature, target_gamma)
-        if not state.get("available") or state.get("error"):
-            return _failure(
-                _failure_code(state, "apply_failed"),
-                state.get("error") or "No se pudo aplicar el perfil",
-                operation="reconcile", applied=False, snoozed=False,
-            ), None
-    else:
-        ok, detail = _run_ramp(
-            env,
-            {"temperature": start_temperature, "gamma": start_gamma},
-            target_temperature, target_gamma,
-            float(transition_seconds), token,
-            operation="reconcile",
-        )
-        if not ok:
-            return detail, None
+    state = env["apply_values"](target_temperature, target_gamma)
+    if not state.get("available") or state.get("error"):
+        return _failure(
+            _failure_code(state, "apply_failed"),
+            state.get("error") or "No se pudo aplicar el perfil",
+            operation="reconcile", applied=False, snoozed=False,
+        ), None
     values = {"temperature": target_temperature, "gamma": target_gamma}
     if scheduled is not None and "brightness" in scheduled:
         display_values, display_failure = _apply_scheduled_display(
@@ -914,16 +789,6 @@ def _reset_period_or_failure(env: dict, state: Mapping, profile: Mapping):
     return None
 
 
-def _ramp_failure(code, message, applied, seconds, operation):
-    return _failure(
-        code, message,
-        operation=operation, applied=False,
-        temperature=applied[-1][0] if applied else None,
-        gamma=applied[-1][1] if applied else None,
-        applied_steps=list(applied), seconds=seconds,
-    )
-
-
 def _reconcile_snoozed(env: dict, state: Mapping) -> dict:
     """Enforce natural identity while a snooze is active."""
     current, failure = _read_nightlight_or_failure(env, snoozed=True)
@@ -979,7 +844,7 @@ def _reconcile_snoozed(env: dict, state: Mapping) -> dict:
     )
 
 
-def _reconcile_expired(env: dict, state: Mapping, token) -> dict:
+def _reconcile_expired(env: dict, state: Mapping) -> dict:
     """Clear an expired snooze, then apply the profile once."""
     try:
         env["update_state"](
@@ -1008,10 +873,7 @@ def _reconcile_expired(env: dict, state: Mapping, token) -> dict:
     if failure is not None:
         return failure
     scheduled = _pending_display(state, profile)
-    result, values = _apply_profile(
-        env, profile, current, state.get("transition_seconds", 0), token,
-        scheduled=scheduled,
-    )
+    result, values = _apply_profile(env, profile, current, scheduled=scheduled)
     if not result.get("success"):
         return result
     committed, history_error = _commit_reconcile(
@@ -1034,7 +896,7 @@ def _reconcile_expired(env: dict, state: Mapping, token) -> dict:
     )
 
 
-def _reconcile_active(env: dict, state: Mapping, token) -> dict:
+def _reconcile_active(env: dict, state: Mapping) -> dict:
     """Apply the current period on drift, honoring manual intent."""
     if state.get("schedule_enabled") is not True:
         if state.get("manual_override") is not None:
@@ -1092,10 +954,7 @@ def _reconcile_active(env: dict, state: Mapping, token) -> dict:
             history_error=history_error,
         )
 
-    result, values = _apply_profile(
-        env, profile, current, state.get("transition_seconds", 0), token,
-        scheduled=scheduled,
-    )
+    result, values = _apply_profile(env, profile, current, scheduled=scheduled)
     if not result.get("success"):
         return result
     committed, history_error = _commit_reconcile(
@@ -1137,12 +996,11 @@ def reconcile(env=None) -> dict:
         )
     now = env["now"]()
     snooze_until = state.get("snooze_until")
-    token = _token(env)
     if snooze_until is not None and now < snooze_until:
         return _reconcile_snoozed(env, state)
     if snooze_until is not None:
-        return _reconcile_expired(env, state, token)
-    return _reconcile_active(env, state, token)
+        return _reconcile_expired(env, state)
+    return _reconcile_active(env, state)
 
 
 __all__ = [
@@ -1151,10 +1009,10 @@ __all__ = [
     "SNOOZE_SECONDS_MIN", "SNOOZE_SECONDS_MAX",
     "TEMPERATURE_MIN", "TEMPERATURE_MAX", "GAMMA_MIN", "GAMMA_MAX",
     "BRIGHTNESS_MIN", "BRIGHTNESS_MAX",
-    "STEP_INTERVAL_SECONDS", "IDENTITY_TEMPERATURE",
+    "IDENTITY_TEMPERATURE",
     "DRIFT_TOLERANCE_TEMPERATURE", "IDENTITY_OVERRIDE_DURATION_SECONDS",
     "build_manual_override", "commit_manual_apply",
-    "default_env", "ramp_schedule", "snooze_status",
+    "default_env", "snooze_status",
     "snooze_status_current", "snooze_set", "snooze_set_seconds",
     "snooze_clear", "reconcile",
 ]

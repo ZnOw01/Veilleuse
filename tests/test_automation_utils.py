@@ -8,6 +8,7 @@ temporary XDG home.  No live shell commands or real time are ever used.
 
 import copy
 import datetime
+import json
 import os
 import sys
 import tempfile
@@ -245,7 +246,10 @@ class AutomationUtilsTest(unittest.TestCase):
         return state_utils.read_state()
 
     def read_history(self):
-        return state_utils.list_history()
+        path = self.history_file()
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
     # ------------------------------------------------------------------
     # snooze status
@@ -498,9 +502,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(self.nightlight.naturals, 1)
 
     def test_reconcile_expired_clears_snooze_and_applies_profile_once(self):
-        self.initial_state(
-            snooze_until=900.0, last_applied=None, transition_seconds=30
-        )
+        self.initial_state(snooze_until=900.0, last_applied=None)
         self.profile = {"available": True, "kind": "temperature", "temperature": 4000}
         first = automation.reconcile(env=self.env())
         self.assertTrue(first["success"], first)
@@ -514,14 +516,12 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(
             state["last_applied"]["values"], {"temperature": 4000, "gamma": 90}
         )
-        # Configured transition performed exactly one full ramp.
-        self.assertEqual(len(self.nightlight.applications), 30)
-        self.assertEqual(self.nightlight.applications[-1], (4000, 90))
+        self.assertEqual(self.nightlight.applications, [(4000, 90)])
 
         second = automation.reconcile(env=self.env())
         self.assertTrue(second["success"])
         self.assertFalse(second["applied"])
-        self.assertEqual(len(self.nightlight.applications), 30)
+        self.assertEqual(len(self.nightlight.applications), 1)
         self.assertEqual(len(self.read_history()), 1)
 
     def test_reconcile_expired_applies_profile_once_even_without_drift(self):
@@ -553,17 +553,13 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertIsNone(self.read_state()["snooze_until"])
         self.assertEqual(self.read_history(), [])
 
-    def test_reconcile_period_drift_ramps_with_configured_transition(self):
-        self.initial_state(transition_seconds=40)
+    def test_reconcile_period_drift_applies_target_directly(self):
+        self.initial_state()
         self.profile = {"available": True, "kind": "temperature", "temperature": 4000}
         result = automation.reconcile(env=self.env())
         self.assertTrue(result["success"], result)
         self.assertTrue(result["applied"])
-        applications = self.nightlight.applications
-        self.assertEqual(len(applications), 40)
-        self.assertEqual(applications[-1], (4000, 90))
-        temperatures = [values[0] for values in applications]
-        self.assertEqual(temperatures, sorted(temperatures))
+        self.assertEqual(self.nightlight.applications, [(4000, 90)])
         state = self.read_state()
         self.assertEqual(state["last_applied"]["origin"], "automatic")
         self.assertEqual(state["last_applied"]["operation"], "reconcile_schedule")
@@ -571,7 +567,7 @@ class AutomationUtilsTest(unittest.TestCase):
 
         again = automation.reconcile(env=self.env())
         self.assertFalse(again["applied"])
-        self.assertEqual(len(self.nightlight.applications), 40)
+        self.assertEqual(len(self.nightlight.applications), 1)
 
     def test_reconcile_period_identity_drift_applies_natural(self):
         self.profile = {"available": True, "kind": "identity"}
@@ -634,7 +630,7 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertEqual(self.nightlight.applications, [])
 
     def test_reconcile_provenance_failure_after_apply_is_honest(self):
-        self.initial_state(transition_seconds=0)
+        self.initial_state()
         self.profile = {"available": True, "kind": "temperature", "temperature": 4000}
 
         def flaky_update(mutator):
@@ -795,7 +791,7 @@ class AutomationUtilsTest(unittest.TestCase):
 
     def test_reconcile_resumes_schedule_when_period_changes(self):
         self.nightlight = FakeNightlight(temperature=4500, gamma=90)
-        self.initial_state(manual_override=self.manual_override(), transition_seconds=0)
+        self.initial_state(manual_override=self.manual_override())
         self.profile = {"available": True, "kind": "temperature", "temperature": 3500}
         result = automation.reconcile(env=self.env())
         self.assertTrue(result["success"], result)
@@ -854,7 +850,6 @@ class AutomationUtilsTest(unittest.TestCase):
             manual_override=self.manual_override(
                 profile={"kind": "temperature", "temperature": 3500}
             ),
-            transition_seconds=0,
         )
         cleared = automation.reconcile(env=self.env())
         self.assertTrue(cleared["success"], cleared)
@@ -886,7 +881,6 @@ class AutomationUtilsTest(unittest.TestCase):
         self.initial_state(
             snooze_until=900.0,
             manual_override=self.manual_override(),
-            transition_seconds=0,
         )
         self.profile = {"available": True, "kind": "temperature", "temperature": 4000}
         result = automation.reconcile(env=self.env())
@@ -1104,86 +1098,6 @@ class AutomationUtilsTest(unittest.TestCase):
         self.assertFalse(any(ROOT.rglob("__pycache__")))
 
 
-    # ------------------------------------------------------------------
-    # ramp robustness: latest-wins cancellation, deadline, dedup
-
-    def test_reconcile_ramp_cancelled_midway_reports_cancelled_with_honest_prefix(self):
-        self.initial_state(transition_seconds=4)
-        self.nightlight.temperature = 5000
-        self.token = FakeToken(self.clock, trip_monotonic=1.5)
-
-        result = automation.reconcile(env=self.env())
-
-        self.assertEqual(result["error_code"], "cancelled")
-        self.assertFalse(result["applied"])
-        applied_steps = result["applied_steps"]
-        self.assertEqual(len(applied_steps), 2)
-        self.assertEqual(self.nightlight.applications, applied_steps)
-        self.assertEqual(result["temperature"], applied_steps[-1][0])
-        self.assertEqual(result["gamma"], applied_steps[-1][1])
-        # A cancelled ramp never reports the requested target as reached.
-        self.assertNotEqual(result["temperature"], 3500)
-
-    def test_reconcile_ramp_deadline_expiry_midway_reports_deadline_and_last_values(self):
-        self.initial_state(transition_seconds=3)
-        self.nightlight.temperature = 5000
-
-        def jumping_sleep(seconds):
-            self.clock.monotonic_value += 10.0
-
-        result = automation.reconcile(env=self.env(sleep=jumping_sleep))
-
-        self.assertEqual(result["error_code"], "deadline")
-        self.assertFalse(result["applied"])
-        self.assertEqual(len(result["applied_steps"]), 1)
-        self.assertEqual(self.nightlight.applications, result["applied_steps"])
-
-    def test_run_ramp_final_step_within_grace_still_delivers_exact_target(self):
-        env = self.env()
-        ok, detail = automation._run_ramp(
-            env, {"temperature": 5000, "gamma": 90}, 4000, 80,
-            2.0, None,
-        )
-        self.assertTrue(ok)
-        self.assertEqual(detail[-1], (4000, 80))
-        self.assertEqual(self.nightlight.applications[-1], (4000, 80))
-
-    def test_run_ramp_final_step_beyond_grace_reports_deadline(self):
-        def slow_sleep(seconds):
-            self.clock.monotonic_value += 8.0
-
-        env = self.env(sleep=slow_sleep)
-        ok, detail = automation._run_ramp(
-            env, {"temperature": 5000, "gamma": 90}, 4000, 80,
-            2.0, None,
-        )
-        self.assertFalse(ok)
-        self.assertEqual(detail["error_code"], "deadline")
-        self.assertTrue(detail["applied_steps"])
-
-    def test_run_ramp_skips_steps_whose_values_equal_previous(self):
-        env = self.env()
-        ok, detail = automation._run_ramp(
-            env, {"temperature": 4000, "gamma": 80}, 4000, 80,
-            3.0, None,
-        )
-        self.assertTrue(ok)
-        self.assertEqual(detail, [(4000, 80)])
-        self.assertEqual(self.nightlight.applications, [(4000, 80)])
-
-    def test_reconcile_midramp_apply_failure_is_honest_with_last_good_values(self):
-        self.initial_state(transition_seconds=3)
-        self.nightlight.temperature = 5000
-        self.nightlight.fail_at = 2
-
-        result = automation.reconcile(env=self.env())
-
-        self.assertEqual(result["error_code"], "apply_failed")
-        self.assertFalse(result["applied"])
-        self.assertEqual(len(result["applied_steps"]), 1)
-        self.assertEqual(self.nightlight.applications, result["applied_steps"])
-        self.assertEqual(result["temperature"], result["applied_steps"][-1][0])
-
     def test_snooze_bounds_inclusive_edges_are_accepted(self):
         for unit, value in (("seconds", 10), ("seconds", 86400), ("minutes", 1), ("minutes", 1440)):
             with self.subTest(unit=unit, value=value):
@@ -1195,19 +1109,6 @@ class AutomationUtilsTest(unittest.TestCase):
                 result = setter(value, env=self.env())
                 self.assertTrue(result["success"], result)
                 self.assertTrue(result["snoozed"])
-
-    def test_ramp_schedule_clamps_steps_and_lands_exactly_on_target(self):
-        self.assertEqual(
-            automation.ramp_schedule(5000, 90, 3000, 10, 0), [(3000, 10)]
-        )
-        flat = automation.ramp_schedule(4000, 80, 4000, 80, 3)
-        self.assertEqual(flat, [(4000, 80)] * 3)
-        descending = automation.ramp_schedule(6500, 100, 2500, 0, 7)
-        temperatures = [pair[0] for pair in descending]
-        gammas = [pair[1] for pair in descending]
-        self.assertEqual(temperatures, sorted(temperatures, reverse=True))
-        self.assertEqual(gammas, sorted(gammas, reverse=True))
-        self.assertEqual(descending[-1], (2500, 0))
 
 
 if __name__ == "__main__":

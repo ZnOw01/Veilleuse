@@ -1,11 +1,14 @@
 import QtQuick
 import "I18n.js" as I18n
 import "Icons.js" as Icons
+import "UiModel.js" as Model
 import qs.Commons
 import qs.Ui
 
 BarWidget {
     id: root
+
+    Component.onCompleted: Model.setI18n(I18n)
 
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
     readonly property bool lightActive: panelLoader.item ? panelLoader.item.nightlightReady === true && panelLoader.item.state.enabled === true : false
@@ -29,10 +32,10 @@ BarWidget {
         var provenance = I18n.t("origin_" + origin, root.activeLocale());
         if (automation.snoozed === true) {
             var until = Number(automation.snooze_until);
-            var remaining = isFinite(until) && until > 0 ? Math.max(0, Math.ceil((until - Date.now() / 1000) / 60)) : 0;
-            var minText = I18n.t("minutes_short", root.activeLocale());
+            var remainingSecs = isFinite(until) && until > 0 ? Math.max(0, until - Date.now() / 1000) : 0;
+            var formatted = Model.formatSnoozeRemaining(remainingSecs, root.activeLocale());
             var snoozeText = I18n.t("snooze_active", root.activeLocale());
-            return snoozeText + (remaining > 0 ? " (" + remaining + " " + minText + ")" : "") + " · " + provenance;
+            return snoozeText + (formatted ? " (" + formatted + ")" : "") + " · " + provenance;
         }
         var title = I18n.t("night_light", root.activeLocale());
         var nightlight = state.nightlight || {};

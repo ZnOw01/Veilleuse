@@ -46,7 +46,7 @@ test('no opposite-locale leakage: es values are Spanish and en values are Englis
 test('t() returns the requested locale translation', () => {
   assert.equal(I18n.t('save', 'es'), 'Guardar cambios');
   assert.equal(I18n.t('save', 'en'), 'Save changes');
-  assert.equal(I18n.t('enabled', 'en'), 'Enabled');
+  assert.equal(I18n.t('disabled', 'en'), 'Natural color');
 });
 
 test('optional schedule input and persistence failure copy are localized', () => {
@@ -56,11 +56,9 @@ test('optional schedule input and persistence failure copy are localized', () =>
   assert.match(I18n.t('scheduleDisplayPersistError', 'es'), /guardó.*no se pudieron guardar.*brillo y gamma/i);
 });
 
-test('schedule timeline and snooze preset labels describe their actual behavior in both locales', () => {
+test('schedule timeline label describes its actual behavior in both locales', () => {
   assert.equal(I18n.t('schedule_track', 'en'), 'Daylight window · 24 hours');
   assert.equal(I18n.t('schedule_track', 'es'), 'Ventana diurna · 24 horas');
-  assert.equal(I18n.t('night_start', 'en'), 'Night start');
-  assert.equal(I18n.t('night_start', 'es'), 'Inicio de noche');
 });
 
 test('t() falls back to the default locale for an unknown requested locale', () => {
@@ -114,7 +112,7 @@ test('the preset-era UI keys are gone and the schedule keys survive', () => {
     'scheduleBrightnessRange', 'scheduleGammaRange',
     'snoozeTitle', 'snoozeSet', 'snoozeClear', 'snoozeStatusActive',
     'unitHours', 'unitMinutes', 'unitSeconds',
-    'settingsTitle', 'language', 'shortcut', 'shortcutInstall', 'shortcutRemove',
+    'language', 'shortcut', 'shortcutInstall', 'shortcutRemove',
     'keyboardHints', 'monitor', 'focusedMonitor',
     'errHelperMissing', 'errUnknown', 'manualPersistError'
   ]) {

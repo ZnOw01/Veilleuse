@@ -179,15 +179,14 @@ Panel {
             return root.text("snooze_active");
         return "";
     }
-    readonly property int snoozeRemainingMinutes: {
-        // snoozeTick is read only so this binding re-evaluates every 30 s
-        // while a snooze is active; its value never changes the math.
+    readonly property int snoozeRemainingSeconds: {
         var tick = root.snoozeTick;
         var until = root.state.automation ? Number(root.state.automation.snooze_until) : 0;
         if (!isFinite(until) || until <= 0)
             return 0;
-        return Math.max(0, Math.ceil((until - Date.now() / 1000) / 60));
+        return Math.max(0, Math.ceil(until - Date.now() / 1000));
     }
+    readonly property string snoozeRemainingText: Model.formatSnoozeRemaining(root.snoozeRemainingSeconds, root.locale)
     readonly property var snoozeSeconds: Model.snoozeDurationSeconds(root.snoozeAmount, root.snoozeUnit)
     readonly property string scheduleValidationError: Model.validateScheduleFields(editStart, editEnd, editDayTemperature, editDayBrightness, editDayGamma, editNightTemperature, editNightBrightness, editNightGamma, root.locale).error
     readonly property var scheduleDurationInfo: Model.calculateScheduleDuration(root.editStart, root.editEnd)
@@ -753,7 +752,7 @@ Panel {
             root.dragTarget = Model.dragTargetEmpty();
             return;
         }
-        var drag = Model.reconcileDragTargets(state, root.state, root.dragTarget, root.queuedOperation);
+        var drag = Model.reconcileDragTargets(root.state, root.dragTarget, root.queuedOperation);
         root.dragTarget = drag.target;
         for (var j = 0; j < drag.requests.length; j++)
             root.queueMutation(drag.requests[j].section, drag.requests[j].value);
@@ -917,7 +916,7 @@ Panel {
         running: root.opened && root.snoozeActive
         onTriggered: {
             root.snoozeTick += 1;
-            if (root.snoozeRemainingMinutes <= 0 && !root.actionPending && !root.snoozeExpiryRefreshPending) {
+            if (root.snoozeRemainingSeconds <= 0 && !root.actionPending && !root.snoozeExpiryRefreshPending) {
                 root.snoozeExpiryRefreshPending = true;
                 root.reconcile();
             }
@@ -2329,7 +2328,7 @@ Panel {
                                         Text {
                                             textFormat: Text.PlainText
                                             width: parent.width - Style.font.body - Style.spacing.xs
-                                            text: root.text("snooze_active") + " · " + root.snoozeRemainingMinutes + " " + root.text("minutes_short")
+                                            text: root.text("snooze_active") + (root.snoozeRemainingText !== "" ? " · " + root.snoozeRemainingText : "")
                                             color: Color.urgent
                                             font.family: root.fontFamily
                                             font.pixelSize: Style.font.bodySmall

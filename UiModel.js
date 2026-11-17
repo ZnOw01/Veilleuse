@@ -34,110 +34,13 @@ if (typeof module !== 'undefined' && module.exports) {
   I18n = require('./I18n.js');
 }
 
-// Keep the fallback in sync with I18n.en; parity tests enforce its keys.
 var DEFAULT_COPY = {
-  heroTitle: 'Night light',
-  brightness: 'Brightness',
-  temperature: 'Temperature',
-  gamma: 'Gamma (perceived brightness)',
-  gammaShort: 'Gamma',
-  schedule: 'Schedule',
-  save: 'Save changes',
-  saved: 'Changes saved',
-  unavailable: 'Unavailable',
   notConfirmed: 'State not confirmed',
-  enabled: 'Enabled',
-  disabled: 'Natural color',
-  manualOverride: 'Manual override',
-  start: 'Start',
-  end: 'End',
-  cancel: 'Cancel',
-  routeHome: 'Home',
-  routeAutomation: 'Automation',
-  routeSettings: 'Settings',
-  provenanceAutomatic: 'Automatic',
-  provenanceManual: 'Manual',
-  provenancePreset: 'Preset',
-  provenanceSnooze: 'Snoozed',
-  provenanceUnknown: 'Unknown',
-  dayPeriod: 'Day',
-  nightPeriod: 'Night',
-  scheduleTrack: 'Daylight window · 24 hours',
-  scheduleDayTimeFormat: 'Day time must use the HH:MM format',
-  scheduleNightTimeFormat: 'Night time must use the HH:MM format',
-  scheduleDayNightEqual: 'Day and night times must be different',
-  scheduleDayTemperatureRange: 'Day temperature must be between 5900 and 6500 K',
-  scheduleNightTemperatureRange: 'Night temperature must be between 2500 and 5000 K',
-  scheduleBrightnessRange: 'Brightness must be between 1 and 100%',
-  scheduleGammaRange: 'Gamma must be between 0 and 100%',
-  snoozeTitle: 'Snooze',
-  snoozeSet: 'Snooze',
-  snoozeClear: 'Cancel snooze',
-  snoozeStatusActive: 'Snoozed',
-  unitHours: 'Hours',
-  unitMinutes: 'Minutes',
-  unitSeconds: 'Seconds',
-  sunset: 'Sunset',
-  nightStart: 'Night start',
-  nightStartShort: 'Night',
-  quickSnooze: 'Quick snooze',
-  settingsTitle: 'Settings',
-  language: 'Language',
-  shortcut: 'Keyboard shortcut',
-  shortcutKeys: 'Keys',
-  shortcutInstall: 'Install',
-  shortcutRemove: 'Remove',
-  spanish: 'Español',
-  english: 'English',
-  errHelperMissing: 'The control helper could not be started.',
-  errBrightnessUnavailable: 'Brightness is currently unavailable.',
-  errNightlightUnavailable: 'Night light is unavailable.',
-  errMonitorUnavailable: 'The selected monitor is unavailable.',
-  errScheduleInvalid: 'The configured schedule is not valid.',
-  errSnoozeInvalid: 'The requested snooze is not valid.',
-  errHistoryUnreadable: 'The history could not be read.',
-  errSettingsWrite: 'The settings could not be saved.',
-  errShortcutWrite: 'The keyboard shortcut could not be updated.',
-  errUnknown: 'An unknown error occurred.',
-  errInvalidValue: 'The requested value is not valid.',
-  errInvalidJson: 'The saved data is not in a valid format.',
-  errInvalidConfig: 'The saved configuration is not valid.',
-  errInvalidState: 'The saved state is not valid.',
-  errInvalidHistory: 'The saved history is not valid.',
-  errReadbackFailed: 'The change could not be confirmed.',
-  errBrightnessWrite: 'The monitor brightness could not be written.',
-  errScheduleUnavailable: 'The configured schedule is unavailable.',
-  errAutomationUnavailable: 'Automation is unavailable.',
-  errScheduleFailed: 'The schedule could not be updated.',
-  errStateFailed: 'The state could not be saved.',
-  errUnsafePath: 'The saved data path is not safe.',
-  errIoError: 'The saved data could not be read or written.',
-  errNotExecutable: 'The control helper is not executable.',
-  errMissingCommand: 'A required system command is missing.',
-  errTimeout: 'The command timed out.',
-  errBackendUnavailable: 'The control backend is unavailable.',
-  errDeadline: 'The operation deadline was exceeded.',
-  errCancelled: 'The operation was cancelled.',
-  errSnoozeFailed: 'The snooze could not be applied.',
-  errReconcileFailed: 'The schedule could not be reconciled.',
-  errApplyFailed: 'The night light could not be applied.',
-  errReadFailed: 'The current state could not be read.',
-  errNativeFailure: 'The native operation could not be completed.',
-  errScheduleConflict: 'The schedule file changed during the operation.',
-  errScheduleDisabled: 'Enable the schedule before saving changes.',
-  manualPersistError: 'The manual setting was applied, but the preference could not be saved; the schedule may revert it on its next cycle.',
-  scheduleDisplayPersistError: 'The schedule was saved, but its brightness and gamma values could not be saved.',
-  optional: 'Optional',
-  monitor: 'Monitor',
-  focusedMonitor: 'Focused monitor',
-  working: 'Applying…',
-  minutesShort: 'min',
-  keyboardHints: '← →\u00A0adjust / switch\u00A0view · ↑ ↓\u00A0move · Enter\u00A0activate · Esc\u00A0close'
+  errUnknown: 'An unknown error occurred.'
 };
 
 var copy = (I18n && I18n.en) ? I18n.en : DEFAULT_COPY;
 
-// QML supplies its imported I18n namespace here; null restores the fallback.
 function setI18n(lib) {
   I18n = lib || null;
   copy = I18n && I18n.en ? I18n.en : DEFAULT_COPY;
@@ -269,7 +172,7 @@ function confirmedValue(state, section) {
 
 // Retry only an unsettled target for the operation just confirmed.
 // A foreign operation clears drag intent instead of replaying it.
-function reconcileDragTargets(previous, current, target, lastOperation) {
+function reconcileDragTargets(current, target, lastOperation) {
   var out = dragTargetEmpty();
   var src = target && typeof target === 'object' ? target : {};
   var requests = [];
@@ -456,33 +359,6 @@ function formatSnoozeRemaining(seconds, locale) {
   return hours + 'h' + (remMins > 0 ? ' ' + remMins + 'm' : '');
 }
 
-function isManualOverride(state) {
-  if (!state || state.available !== true)
-    return false;
-  // The persisted automation record is reconcile's ground truth: when the
-  // status exposes it, agree with reconcile instead of re-deriving intent
-  // from a live-state heuristic that can disagree with it.
-  var automation = state.automation;
-  if (automation && typeof automation === 'object'
-      && Object.prototype.hasOwnProperty.call(automation, 'manual_override')) {
-    return automation.manual_override !== null && automation.manual_override !== undefined;
-  }
-  var schedule = state.schedule;
-  if (!schedule || schedule.available !== true)
-    return false;
-  if (schedule.period === 'day') {
-    var expectedDayEnabled = schedule.day_identity !== true
-      && schedule.day_temp !== null
-      && schedule.day_temp < 6000;
-    return state.enabled !== expectedDayEnabled;
-  }
-  if (schedule.period === 'night') return state.enabled !== true;
-  return false;
-}
-
-// Preserve unrelated sections when a partial readback arrives. Full status
-// refreshes recompute availability; normalization validates the merged values.
-// Superseded writes may still report physical progress through this path.
 function mergeStatePatch(previous, patch) {
   var current = normalizeState(previous);
   var validPatch = patch !== null && typeof patch === 'object' && !Array.isArray(patch) ? patch : {};
@@ -548,32 +424,21 @@ function t(key, locale) {
   return Object.prototype.hasOwnProperty.call(copy, key) ? copy[key] : key;
 }
 
-function copyFor(locale) {
-  if (I18n) return I18n.dictionary(locale);
-  return copy;
-}
-
 var ERROR_CODE_KEYS = {
-  // camelCase aliases (backward-compatible with the original contract).
   helperMissing: 'errHelperMissing',
   brightnessUnavailable: 'errBrightnessUnavailable',
   nightlightUnavailable: 'errNightlightUnavailable',
   monitorUnavailable: 'errMonitorUnavailable',
   scheduleInvalid: 'errScheduleInvalid',
   snoozeInvalid: 'errSnoozeInvalid',
-  historyUnreadable: 'errHistoryUnreadable',
-  settingsWrite: 'errSettingsWrite',
   shortcutWrite: 'errShortcutWrite',
   nativeFailure: 'errNativeFailure',
-  // snake_case codes actually emitted by the Python helper, mapped to the
-  // same localized dictionaries so no emitted code degrades to errUnknown.
   helper_unavailable: 'errHelperMissing',
   monitor_unavailable: 'errMonitorUnavailable',
   invalid_argument: 'errInvalidValue',
   invalid_value: 'errInvalidValue',
   invalid_json: 'errInvalidJson',
   invalid_schema: 'errInvalidConfig',
-  invalid_config: 'errInvalidConfig',
   invalid_state: 'errInvalidState',
   invalid_history: 'errInvalidHistory',
   brightness_readback_failed: 'errReadbackFailed',
@@ -593,8 +458,6 @@ var ERROR_CODE_KEYS = {
   timeout: 'errTimeout',
   backend_unavailable: 'errBackendUnavailable',
   shortcut_failed: 'errShortcutWrite',
-  deadline: 'errDeadline',
-  cancelled: 'errCancelled',
   snooze_failed: 'errSnoozeFailed',
   reconcile_failed: 'errReconcileFailed',
   apply_failed: 'errApplyFailed',
@@ -632,19 +495,6 @@ function localizeStateError(error, locale) {
 
 function routeOrder() {
   return ROUTES.slice();
-}
-
-var PROVENANCE_KEYS = {
-  automatic: 'provenanceAutomatic',
-  manual: 'provenanceManual',
-  preset: 'provenancePreset',
-  snooze: 'provenanceSnooze',
-  unknown: 'provenanceUnknown'
-};
-
-function provenanceLabel(origin, locale) {
-  var key = Object.prototype.hasOwnProperty.call(PROVENANCE_KEYS, origin) ? PROVENANCE_KEYS[origin] : 'provenanceUnknown';
-  return t(key, locale);
 }
 
 function calculateScheduleDuration(startTime, endTime) {
@@ -726,8 +576,6 @@ function shortcutCommandKeys(value) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    copy: copy,
-    DEFAULT_COPY: DEFAULT_COPY,
     ERROR_CODE_KEYS: ERROR_CODE_KEYS,
     setI18n: setI18n,
     routeSections: routeSections,
@@ -747,16 +595,13 @@ if (typeof module !== 'undefined' && module.exports) {
     validateScheduleFields: validateScheduleFields,
     snoozeDurationSeconds: snoozeDurationSeconds,
     formatSnoozeRemaining: formatSnoozeRemaining,
-    isManualOverride: isManualOverride,
     mergeStatePatch: mergeStatePatch,
     commitResponse: commitResponse,
     t: t,
-    copyFor: copyFor,
     errorCodeMessage: errorCodeMessage,
     localizeError: localizeError,
     localizeStateError: localizeStateError,
     routeOrder: routeOrder,
-    provenanceLabel: provenanceLabel,
     calculateScheduleDuration: calculateScheduleDuration,
     scheduleTrackSegments: scheduleTrackSegments,
     parseShortcutTokens: parseShortcutTokens,

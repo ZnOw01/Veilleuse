@@ -1,5 +1,6 @@
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -625,6 +626,54 @@ class MaskLuaEdgeCaseTest(unittest.TestCase):
     def test_unterminated_long_string_masks_rest_of_file(self):
         text = 'local s = [==[ o.bind("SUPER + V")\n'
         self.assertIsNone(shortcut_utils.collision(text, "SUPER, V"))
+
+
+class ShortcutLuaBlockTests(unittest.TestCase):
+    LUA = Path("/usr/bin/lua")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.has_lua = cls.LUA.is_file() and os.access(cls.LUA, os.X_OK)
+
+    def run_lua(self, path):
+        return subprocess.run(
+            [str(self.LUA), str(path)],
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+    def test_generated_block_runs_under_the_o_stub_and_passes_exact_arguments(self):
+        if not self.has_lua:
+            self.skipTest("/usr/bin/lua not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            block_path = Path(tmp) / "bindings.lua"
+            block_path.write_text(shortcut_utils._block_text("SUPER, V", "\n"), encoding="utf-8")
+            self.assertNotIn("]]", str(block_path), "long bracket path collision")
+            bootstrap = Path(tmp) / "bootstrap.lua"
+            bootstrap.write_text(
+                "o = { bind = function(keys, desc, cmd)\n"
+                "  captured = { keys = keys, desc = desc, cmd = cmd }\n"
+                "end }\n"
+                "local chunk = assert(loadfile([[" + str(block_path) + "]]))\n"
+                "chunk()\n"
+                "assert(captured, 'o.bind was not called')\n"
+                "print(captured.keys)\n"
+                "print(captured.desc)\n"
+                "print(captured.cmd)\n",
+                encoding="utf-8",
+            )
+            result = self.run_lua(bootstrap)
+        self.assertEqual(
+            result.returncode,
+            0,
+            "block must be valid Lua: " + result.stderr.strip(),
+        )
+        keys, desc, cmd = result.stdout.splitlines()
+        self.assertEqual(keys, shortcut_utils.canonical_keys("SUPER, V"))
+        self.assertEqual(keys, "SUPER + V")
+        self.assertEqual(desc, "Veilleuse")
+        self.assertEqual(cmd, shortcut_utils.FIXED_COMMAND)
 
 
 if __name__ == "__main__":

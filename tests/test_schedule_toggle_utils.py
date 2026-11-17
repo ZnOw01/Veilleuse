@@ -336,7 +336,7 @@ class ScheduleToggleTests(unittest.TestCase):
         injected = False
 
         def fail_after_publish(mutator):
-            real_update(lambda current: {**current, "transition_seconds": 77})
+            real_update(lambda current: {**current, "snooze_until": 777})
 
             def publish_then_fail(path, data):
                 nonlocal injected
@@ -353,7 +353,7 @@ class ScheduleToggleTests(unittest.TestCase):
                 toggle.disable_schedule()
 
         self.assertEqual(self.config.read_bytes(), REALISTIC_CONFIG.encode("utf-8"))
-        self.assertEqual(self.read_state()["transition_seconds"], 77)
+        self.assertEqual(self.read_state()["snooze_until"], 777)
 
     def test_post_publish_rollback_restores_override_cleared_by_disable(self):
         override = {
@@ -390,7 +390,7 @@ real_atomic = state_utils._atomic_write
 real_rollback = toggle._rollback_file
 
 def update_with_failure(mutator):
-    real_update(lambda current: {**current, "transition_seconds": 77})
+    real_update(lambda current: {**current, "snooze_until": 777})
     failed = False
     def publish_then_fail(path, data):
         nonlocal failed
@@ -420,11 +420,11 @@ toggle.disable_schedule()
         self.assertEqual(process.returncode, 78)
         self.assertEqual(self.config.read_bytes(), original)
         self.assertFalse(self.read_state()["schedule_enabled"])
-        self.assertEqual(self.read_state()["transition_seconds"], 77)
+        self.assertEqual(self.read_state()["snooze_until"], 777)
         recovered = toggle.schedule_status()
         self.assertFalse(recovered["schedule_enabled"])
         self.assertNotIn(b"profile {", self.config.read_bytes())
-        self.assertEqual(self.read_state()["transition_seconds"], 77)
+        self.assertEqual(self.read_state()["snooze_until"], 777)
 
     def test_enable_state_failure_rolls_back_restoration(self):
         toggle.disable_schedule()

@@ -1,9 +1,4 @@
-"""Safe, versioned persistence for Veilleuse configuration and state.
-
-This module deliberately has no provider, model, UI, or application-command
-dependencies.  It owns only the three XDG documents used by the backend
-slice: ``config.json``, ``state.json``, and ``history.jsonl``.
-"""
+"""Safe, versioned persistence for Veilleuse runtime state and history."""
 
 from __future__ import annotations
 
@@ -27,7 +22,6 @@ sys.dont_write_bytecode = True
 
 SCHEMA_VERSION = 1
 MAX_HISTORY = 50
-CONFIG_FILENAME = "config.json"
 STATE_FILENAME = "state.json"
 HISTORY_FILENAME = "history.jsonl"
 _NAME_PATTERN = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
@@ -36,20 +30,10 @@ _ISO_LIKE_PATTERN = re.compile(
 )
 _ORIGINS = {"automatic", "manual", "preset", "snooze", "unknown"}
 
-# Presets were removed from the product. Documents written by preset-era
-# releases still carry these keys; validation drops them on read so those
-# installs keep loading instead of failing as invalid_config.
-_LEGACY_CONFIG_KEYS = ("presets", "default_preset")
-
-DEFAULT_CONFIG = {
-    "schema": SCHEMA_VERSION,
-}
-
 DEFAULT_STATE = {
     "schema": SCHEMA_VERSION,
     "schedule_enabled": True,
     "snooze_until": None,
-    "transition_seconds": 0,
     "origin": "unknown",
     "last_applied": None,
     "schedule_disabled": None,
@@ -89,10 +73,6 @@ def _xdg_home(variable: str, fallback: str) -> Path:
         if candidate is not None and candidate.is_absolute():
             return candidate
     return _home() / fallback
-
-
-def config_path() -> Path:
-    return _xdg_home("XDG_CONFIG_HOME", ".config") / "veilleuse" / CONFIG_FILENAME
 
 
 def state_path() -> Path:
@@ -236,17 +216,6 @@ def _schema(raw: object, kind: str) -> tuple[dict, int]:
     if isinstance(value, bool) or not isinstance(value, int) or value not in (0, SCHEMA_VERSION):
         raise StateError("invalid_schema", f"Unsupported {kind} schema")
     return copy.deepcopy(raw), value
-
-
-def _validate_config(raw: object) -> dict:
-    data, version = _schema(raw, "config")
-    if version == 0:
-        data["schema"] = SCHEMA_VERSION
-    for key in _LEGACY_CONFIG_KEYS:
-        data.pop(key, None)
-    if set(data) != {"schema"}:
-        raise StateError("invalid_config", "Config fields are invalid")
-    return {"schema": SCHEMA_VERSION}
 
 
 def _validate_schedule_display_period(value: object, period: str) -> dict:
@@ -398,6 +367,7 @@ def _validate_manual_override(value: object) -> dict | None:
 
 def _validate_state(raw: object) -> dict:
     data, version = _schema(raw, "state")
+    data.pop("transition_seconds", None)
     if set(data) - set(DEFAULT_STATE):
         raise StateError("invalid_state", "State fields are invalid")
     data["schema"] = SCHEMA_VERSION
@@ -413,12 +383,6 @@ def _validate_state(raw: object) -> dict:
         or snooze < 0
     ):
         raise StateError("invalid_state", "snooze_until is invalid")
-    try:
-        transition = _integer(
-            data["transition_seconds"], minimum=0, maximum=1800, field="transition_seconds"
-        )
-    except StateError as error:
-        raise StateError("invalid_state", "transition_seconds is invalid") from error
     origin = data["origin"]
     if not isinstance(origin, str) or origin not in _ORIGINS:
         raise StateError("invalid_state", "origin is invalid")
@@ -436,7 +400,6 @@ def _validate_state(raw: object) -> dict:
         "schema": SCHEMA_VERSION,
         "schedule_enabled": data["schedule_enabled"],
         "snooze_until": snooze,
-        "transition_seconds": transition,
         "origin": origin,
         "last_applied": _validate_last_applied(data["last_applied"]),
         "schedule_disabled": _validate_schedule_disabled(data["schedule_disabled"]),
@@ -537,35 +500,6 @@ def _locked(document: Path):
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             with contextlib.suppress(OSError):
                 os.close(descriptor)
-
-def read_config() -> dict:
-    return _read_document(config_path(), "config", _validate_config, DEFAULT_CONFIG)
-
-
-def write_config(value: Mapping) -> dict:
-    normalized = _validate_config(value)
-    path = config_path()
-    with _locked(path):
-        if _document_exists(path):
-            _read_document(path, "config", _validate_config, DEFAULT_CONFIG)
-        _atomic_write(path, normalized)
-    return copy.deepcopy(normalized)
-
-
-def update_config(mutator: Callable[[dict], Mapping]) -> dict:
-    path = config_path()
-    with _locked(path):
-        current = _read_document(path, "config", _validate_config, DEFAULT_CONFIG)
-        try:
-            candidate = mutator(copy.deepcopy(current))
-        except StateError:
-            raise
-        except Exception as error:
-            raise StateError("invalid_config", "Config update failed") from error
-        normalized = _validate_config(candidate)
-        _atomic_write(path, normalized)
-    return copy.deepcopy(normalized)
-
 
 def read_state() -> dict:
     return _read_document(state_path(), "state", _validate_state, DEFAULT_STATE)
@@ -693,23 +627,6 @@ def _atomic_write_lines(path: Path, records: list[dict]) -> None:
     _atomic_write_stream(path, write)
 
 
-def list_history() -> list[dict]:
-    return _read_history(history_path())[-MAX_HISTORY:]
-
-
-def clear_history() -> list[dict]:
-    path = history_path()
-    with _locked(path):
-        # The existence decision belongs inside the lock: an append_history
-        # racing between an unlocked check and the lock would otherwise
-        # survive the clear.
-        if not _document_exists(path):
-            return []
-        _read_history(path)
-        _atomic_write_lines(path, [])
-    return []
-
-
 def _before_replace(path: Path) -> None:
     """Test seam immediately before the final destination safety check."""
 
@@ -729,9 +646,9 @@ def _check_destination(path: Path) -> None:
 
 
 __all__ = [
-    "DEFAULT_CONFIG", "DEFAULT_STATE", "MAX_HISTORY",
-    "StateError", "append_history", "clear_history", "config_path",
-    "history_path", "list_history", "read_config", "read_state",
-    "state_path", "update_config", "update_state",
-    "validate_history_record", "write_config", "write_state",
+    "DEFAULT_STATE", "MAX_HISTORY",
+    "StateError", "append_history",
+    "history_path", "read_state",
+    "state_path", "update_state",
+    "validate_history_record", "write_state",
 ]

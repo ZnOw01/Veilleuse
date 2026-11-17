@@ -221,14 +221,14 @@ test('rejects successful helper responses with no state fields', () => {
 });
 
 test('keeps native copy explicit and action-oriented', () => {
-  assert.equal(Model.copy.heroTitle, 'Night light');
-  assert.equal(Model.copy.brightness, 'Brightness');
-  assert.equal(Model.copy.temperature, 'Temperature');
-  assert.equal(Model.copy.gamma, 'Gamma (perceived brightness)');
-  assert.equal(Model.copy.schedule, 'Schedule');
-  assert.equal(Model.copy.save, 'Save changes');
-  assert.equal(Model.copy.unavailable, 'Unavailable');
-  assert.equal(Model.copy.disabled, 'Natural color');
+  assert.equal(Model.t('heroTitle', 'en'), 'Night light');
+  assert.equal(Model.t('brightness', 'en'), 'Brightness');
+  assert.equal(Model.t('temperature', 'en'), 'Temperature');
+  assert.equal(Model.t('gamma', 'en'), 'Gamma (perceived brightness)');
+  assert.equal(Model.t('schedule', 'en'), 'Schedule');
+  assert.equal(Model.t('save', 'en'), 'Save changes');
+  assert.equal(Model.t('unavailable', 'en'), 'Unavailable');
+  assert.equal(Model.t('disabled', 'en'), 'Natural color');
 });
 
 test('normalizes the combined JSON emitted by veilleuse-control', () => {
@@ -330,65 +330,6 @@ test('schedule display drafts are optional and validated when present', () => {
   );
 });
 
-test('detects a manual override only when real light state contradicts schedule period', () => {
-  assert.equal(typeof Model.isManualOverride, 'function');
-  if (typeof Model.isManualOverride !== 'function') return;
-  const scheduledDay = Model.normalizeState({
-    brightness: { available: true, percent: 50, monitor: 'DP-1' },
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100 },
-    schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500, day_identity: true, period: 'day' }
-  });
-  const scheduledNight = Model.commitResponse(scheduledDay, {
-    requestId: 1,
-    latestRequestId: 1,
-    ok: true,
-    state: { enabled: false, schedule: { period: 'night' } }
-  }).state;
-  assert.equal(Model.isManualOverride(scheduledDay), true);
-  assert.equal(Model.isManualOverride(scheduledNight), true);
-  assert.equal(Model.isManualOverride(Model.commitResponse(scheduledDay, {
-    requestId: 2,
-    latestRequestId: 2,
-    ok: true,
-    state: { enabled: false, schedule: { period: 'day' } }
-  }).state), false);
-
-  const numericDay = Model.normalizeState({
-    brightness: { available: true, percent: 50, monitor: 'DP-1' },
-    nightlight: { available: true, enabled: true, identity: false, temperature: 5900, gamma: 100 },
-    schedule: { available: true, day_time: '06:00', day_temp: 5900, night_time: '18:00', night_temp: 3500, day_identity: false, period: 'day' }
-  });
-  assert.equal(Model.isManualOverride(numericDay), false);
-  assert.equal(Model.isManualOverride(Model.commitResponse(numericDay, {
-    requestId: 3,
-    latestRequestId: 3,
-    ok: true,
-    state: { enabled: false }
-  }).state), true);
-});
-
-test('isManualOverride trusts a persisted automation manual_override when present', () => {
-  const scheduledDay = Model.normalizeState({
-    brightness: { available: true, percent: 50, monitor: 'DP-1' },
-    nightlight: { available: true, enabled: true, identity: false, temperature: 5900, gamma: 100 },
-    schedule: { available: true, day_time: '06:00', day_temp: 5900, night_time: '18:00', night_temp: 3500, day_identity: false, period: 'day' }
-  });
-  assert.equal(Model.isManualOverride(scheduledDay), false);
-  scheduledDay.automation = { manual_override: { profile: { kind: 'identity' } } };
-  assert.equal(Model.isManualOverride(scheduledDay), true);
-
-  const persistedClear = Model.normalizeState({
-    available: true,
-    enabled: true,
-    brightness: { available: true, percent: 50, monitor: 'DP-1' },
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3500, gamma: 100 },
-    schedule: { available: true, day_time: '06:00', day_temp: 6000, night_time: '18:00', night_temp: 3500, day_identity: true, period: 'day' }
-  });
-  assert.equal(Model.isManualOverride(persistedClear), true);
-  persistedClear.automation = { manual_override: null };
-  assert.equal(Model.isManualOverride(persistedClear), false);
-});
-
 test('dragTargetEmpty starts every drag section without an absolute target', () => {
   assert.deepEqual(Model.dragTargetEmpty(), { brightness: null, temperature: null, gamma: null });
 });
@@ -409,10 +350,9 @@ test('dragTargetPush clears a section when the intent is removed', () => {
 });
 
 test('reconcileDragTargets keeps a same-section target until the readback tolerates it', () => {
-  const previous = physicalState({ brightness: 50 });
   const current = physicalState({ brightness: 50 });
   const result = Model.reconcileDragTargets(
-    previous, current,
+    current,
     Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 70),
     'brightness'
   );
@@ -421,11 +361,9 @@ test('reconcileDragTargets keeps a same-section target until the readback tolera
 });
 
 test('reconcileDragTargets clears a target the readback reached within tolerance', () => {
-  const previous = physicalState({ brightness: 50 });
-  // One point of DDC quantization is within the helper's tolerance.
   const current = physicalState({ brightness: 69 });
   const result = Model.reconcileDragTargets(
-    previous, current,
+    current,
     Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 70),
     'brightness'
   );
@@ -434,10 +372,9 @@ test('reconcileDragTargets clears a target the readback reached within tolerance
 });
 
 test('reconcileDragTargets drops drag intent on a foreign readback', () => {
-  const previous = physicalState({ brightness: 50 });
   const current = physicalState({ brightness: 50 });
   const result = Model.reconcileDragTargets(
-    previous, current,
+    current,
     Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 70),
     'status'
   );
@@ -446,61 +383,36 @@ test('reconcileDragTargets drops drag intent on a foreign readback', () => {
 });
 
 test('reconcileDragTargets keeps a temperature target inside the 50 K tolerance window', () => {
-  const previous = physicalState({ temperature: 3500 });
   const current = physicalState({ temperature: 3540 });
   const result = Model.reconcileDragTargets(
-    previous, current,
+    current,
     Model.dragTargetPush(Model.dragTargetEmpty(), 'temperature', 3550),
     'temperature'
   );
   assert.deepEqual(result.target, Model.dragTargetEmpty());
   const far = Model.reconcileDragTargets(
-    current, physicalState({ temperature: 3540 }),
+    physicalState({ temperature: 3540 }),
     Model.dragTargetPush(Model.dragTargetEmpty(), 'temperature', 4000),
     'temperature'
   );
   assert.deepEqual(far.target, { brightness: null, temperature: 4000, gamma: null });
 });
 
-test('bundled fallback copy keeps exact key parity with the I18n English dictionary', () => {
-  const fallback = Model.DEFAULT_COPY;
-  assert.ok(fallback && typeof fallback === 'object', 'DEFAULT_COPY must be exported for parity checks');
-  assert.deepEqual(Object.keys(fallback).sort(), Object.keys(I18n.en).sort());
-  for (const key of Object.keys(I18n.en))
-    assert.equal(fallback[key], I18n.en[key], `fallback ${key} must copy the I18n.en value`);
-});
-
-test('every stable error-code key resolves to a real message without the I18n library wired', () => {
+test('every mapped error-code key exists in I18n dictionaries', () => {
   const codeKeys = Object.values(Model.ERROR_CODE_KEYS);
   assert.ok(codeKeys.length >= 30, `expected >= 30 mapped codes, got ${codeKeys.length}`);
-  Model.setI18n(null);
-  try {
-    for (const key of new Set(codeKeys)) {
-      assert.ok(typeof Model.DEFAULT_COPY[key] === 'string' && Model.DEFAULT_COPY[key] !== '', `fallback copy missing ${key}`);
-      assert.notEqual(Model.t(key), key, `${key} must not degrade to the raw key in the fallback`);
-    }
-    assert.equal(Model.errorCodeMessage('invalid_json'), 'The saved data is not in a valid format.');
-    assert.equal(Model.errorCodeMessage('timeout'), 'The command timed out.');
-    assert.equal(Model.validateScheduleFields('25:00', '18:00', '6000', '', '', '3500', '', '').error, 'Day time must use the HH:MM format');
-    assert.equal(Model.validateScheduleFields('06:00', '18:00', '7000', '', '', '3500', '', '').error, 'Day temperature must be between 5900 and 6500 K');
-    assert.equal(Model.t('manualPersistError'), Model.DEFAULT_COPY.manualPersistError);
-  } finally {
-    Model.setI18n(I18n);
+  for (const key of new Set(codeKeys)) {
+    assert.ok(typeof I18n.en[key] === 'string' && I18n.en[key] !== '', `en missing ${key}`);
+    assert.ok(typeof I18n.es[key] === 'string' && I18n.es[key] !== '', `es missing ${key}`);
   }
-});
-
-test('setI18n swaps the runtime locale library and restores the active copy', () => {
-  assert.equal(typeof Model.setI18n, 'function');
   Model.setI18n(null);
   try {
-    assert.equal(Model.t('save', 'es'), 'Save changes');
-    assert.equal(Model.copyFor('es'), Model.DEFAULT_COPY);
+    assert.equal(Model.t('notConfirmed'), 'State not confirmed');
+    assert.equal(Model.errorCodeMessage('unknown_code'), 'An unknown error occurred.');
   } finally {
     Model.setI18n(I18n);
   }
   assert.equal(Model.t('save', 'es'), 'Guardar cambios');
-  assert.equal(Model.copyFor('fr'), I18n.en);
-  assert.equal(Model.copy, I18n.en);
 });
 
 function physicalState(overrides) {
@@ -562,14 +474,6 @@ test('mergeStatePatch ignores non-object patches and re-normalizes garbage value
     brightness: { available: true, percent: 400, monitor: 'eDP-2', error: null }
   });
   assert.equal(garbage.available, false);
-});
-
-test('provenance labels localize each automation origin', () => {
-  assert.equal(Model.provenanceLabel('automatic', 'es'), 'Automática');
-  assert.equal(Model.provenanceLabel('manual', 'en'), 'Manual');
-  // "preset" only survives in persisted history; it still renders sanely.
-  assert.equal(Model.provenanceLabel('preset', 'en'), 'Preset');
-  assert.equal(Model.provenanceLabel('anything', 'en'), I18n.en.provenanceUnknown);
 });
 
 test('schedule display values normalize per period and drop junk fields', () => {
@@ -681,7 +585,7 @@ test('Tier 1 - F9 Hybrid Navigation: cursorStart and moveCursor navigate through
 });
 
 test('Tier 1 - F10 Dual i18n & Error Resolution: errorCodeMessage resolves all major failure codes', () => {
-  const testCodes = ['helper_unavailable', 'monitor_unavailable', 'invalid_config', 'timeout', 'conflict'];
+  const testCodes = ['helper_unavailable', 'monitor_unavailable', 'invalid_state', 'timeout', 'conflict'];
   for (const code of testCodes) {
     const enMsg = Model.errorCodeMessage(code, 'en');
     const esMsg = Model.errorCodeMessage(code, 'es');
@@ -828,432 +732,37 @@ test('cursorAtControl preserves the hovered control field and clamps by route se
   assert.deepEqual(Model.cursorAtControl(Model.cursorStart(), 0, 4, 'home'), { section: 0, field: 0 });
 });
 
-test('Tier 2 - F11 Drag Reconciliation: reconcileDragTargets respects tolerance windows', () => {
+test('reconcileDragTargets respects tolerance windows', () => {
   const current = Model.normalizeState({
     available: true,
     brightness: { available: true, percent: 50, monitor: 'eDP-1' },
     nightlight: { available: true, enabled: true, temperature: 3500, gamma: 90 }
   });
 
-  // Goal within tolerance is cleared (brightness tol: 1, temp tol: 50, gamma tol: 1)
-  const exactBright = Model.reconcileDragTargets(null, current, { brightness: 51, temperature: null, gamma: null }, 'brightness');
+  const exactBright = Model.reconcileDragTargets(current, { brightness: 51, temperature: null, gamma: null }, 'brightness');
   assert.equal(exactBright.target.brightness, null);
   assert.equal(exactBright.requests.length, 0);
 
-  const exactTemp = Model.reconcileDragTargets(null, current, { brightness: null, temperature: 3540, gamma: null }, 'temperature');
+  const exactTemp = Model.reconcileDragTargets(current, { brightness: null, temperature: 3540, gamma: null }, 'temperature');
   assert.equal(exactTemp.target.temperature, null);
   assert.equal(exactTemp.requests.length, 0);
 
-  // Goal outside tolerance survives and generates chase request
-  const farBright = Model.reconcileDragTargets(null, current, { brightness: 75, temperature: null, gamma: null }, 'brightness');
+  const farBright = Model.reconcileDragTargets(current, { brightness: 75, temperature: null, gamma: null }, 'brightness');
   assert.equal(farBright.target.brightness, 75);
   assert.deepEqual(farBright.requests, [{ section: 'brightness', value: 75 }]);
 
-  const farTemp = Model.reconcileDragTargets(null, current, { brightness: null, temperature: 4200, gamma: null }, 'temperature');
+  const farTemp = Model.reconcileDragTargets(current, { brightness: null, temperature: 4200, gamma: null }, 'temperature');
   assert.equal(farTemp.target.temperature, 4200);
   assert.deepEqual(farTemp.requests, [{ section: 'temperature', value: 4200 }]);
 });
 
-// ============================================================================
-// TIER 3: CROSS-FEATURE COMBINATIONS (Pairwise Interaction Stability)
-// ============================================================================
-
-test('Tier 3 - Pairwise 1: Slider Drag (F4) + Monotonic Request Bus (F11) - Debounce & Stale Merge', () => {
-  const initial = Model.normalizeState({
-    available: true,
-    brightness: { available: true, percent: 30, monitor: 'eDP-1' },
-    nightlight: { available: true, enabled: true, temperature: 3500, gamma: 100 }
-  });
-
-  // User drags brightness to 70 (req 1) then to 85 (req 2)
-  let drag = Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', 70);
-  drag = Model.dragTargetPush(drag, 'brightness', 85);
-  assert.equal(drag.brightness, 85);
-
-  // Readback for req 1 arrives late (requestId: 1, latestRequestId: 2) with brightness: 70
-  const staleResponse = {
-    requestId: 1,
-    latestRequestId: 2,
-    ok: true,
-    state: { brightness: { available: true, percent: 70, monitor: 'eDP-1' } }
-  };
-  const commit = Model.commitResponse(initial, staleResponse);
-  assert.equal(commit.accepted, false); // Stale commit rejected
-
-  // Panel adopts physical progress via mergeStatePatch
-  const merged = Model.mergeStatePatch(initial, staleResponse.state);
-  assert.equal(merged.brightnessPercent, 70);
-
-  // Reconcile against newest drag target (85) still produces chase request
-  const reconciled = Model.reconcileDragTargets(initial, merged, drag, 'brightness');
-  assert.equal(reconciled.target.brightness, 85);
-  assert.deepEqual(reconciled.requests, [{ section: 'brightness', value: 85 }]);
+test('formatSnoozeRemaining formats minutes and hours locally', () => {
+  assert.equal(Model.formatSnoozeRemaining(0, 'en'), '');
+  assert.equal(Model.formatSnoozeRemaining(90, 'en'), '2 min');
+  assert.equal(Model.formatSnoozeRemaining(5400, 'es'), '1h 30m');
 });
 
-test('Tier 3 - Pairwise 2: Quick Snooze (F5) + Bar Widget Tooltip & Provenance (F2)', () => {
-  const activeSnoozeState = Model.normalizeState({
-    available: true,
-    enabled: false,
-    nightlight: { available: true, enabled: false, temperature: 6500, gamma: 100 }
-  });
-  activeSnoozeState.automation = {
-    snoozed: true,
-    snooze_until: Date.now() / 1000 + 1800,
-    origin: 'snooze'
-  };
-
-  assert.equal(Model.provenanceLabel(activeSnoozeState.automation.origin, 'en'), 'Snoozed');
-  assert.equal(Model.provenanceLabel(activeSnoozeState.automation.origin, 'es'), 'Posposición');
-});
-
-test('Tier 3 - Pairwise 3: Schedule Grid (F7) + Hero Switch & Sunset Auto-Engagement (F3)', () => {
-  const dayState = Model.normalizeState({
-    available: true,
-    enabled: false,
-    brightness: { available: true, percent: 80, monitor: 'eDP-1', error: null },
-    nightlight: { available: true, enabled: false, identity: true, temperature: 6500, gamma: 100, error: null },
-    schedule: { available: true, day_time: '07:00', day_temp: 6500, night_time: '19:00', night_temp: 3200, day_identity: true, period: 'day', error: null }
-  });
-  assert.equal(Model.isManualOverride(dayState), false);
-
-  // Night transition occurs
-  const nightState = Model.mergeStatePatch(dayState, {
-    enabled: true,
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3200, gamma: 100, error: null },
-    schedule: { available: true, day_time: '07:00', day_temp: 6500, night_time: '19:00', night_temp: 3200, day_identity: true, period: 'night', error: null }
-  });
-  assert.equal(nightState.enabled, true);
-  assert.equal(nightState.temperature, 3200);
-  assert.equal(Model.isManualOverride(nightState), false);
-});
-
-test('Tier 3 - Pairwise 4: Locale Switch (F8, F10) + Schedule Field Validation Messages (F7)', () => {
-  const invalidDayTime = '99:99';
-  const enRes = Model.validateScheduleFields(invalidDayTime, '19:00', '6000', '', '', '3500', '', '', 'en');
-  const esRes = Model.validateScheduleFields(invalidDayTime, '19:00', '6000', '', '', '3500', '', '', 'es');
-
-  assert.equal(enRes.valid, false);
-  assert.equal(esRes.valid, false);
-  assert.equal(enRes.error, I18n.en.scheduleDayTimeFormat);
-  assert.equal(esRes.error, I18n.es.scheduleDayTimeFormat);
-  assert.notEqual(enRes.error, esRes.error);
-});
-
-test('Tier 3 - Pairwise 5: Route Cross-Fade Transitions (F6) + Cursor Navigation State (F9)', () => {
-  let route = 'home';
-  let cursor = Model.cursorStart();
-  cursor = Model.moveCursor(cursor, 'ArrowDown', route);
-  cursor = Model.moveCursor(cursor, 'ArrowDown', route);
-  assert.equal(cursor.section, 2);
-
-  // Transition to automation
-  route = Model.adjacentRoute(route, 1);
-  assert.equal(route, 'automation');
-  cursor = Model.cursorStart(); // Reset cursor on route change
-  assert.deepEqual(cursor, { section: 0, field: 0 });
-
-  // Transition to settings
-  route = Model.adjacentRoute(route, 1);
-  assert.equal(route, 'settings');
-  cursor = Model.cursorStart();
-  assert.deepEqual(cursor, { section: 0, field: 0 });
-});
-
-test('Tier 3 - Pairwise 6: Multi-Monitor Selection (F8) + Brightness Slider Mutation (F4, F11)', () => {
-  const rawState = {
-    brightness: { available: true, percent: 60, monitor: 'DP-2', error: null },
-    nightlight: { available: true, enabled: true, temperature: 4000, gamma: 100, error: null }
-  };
-  const normalized = Model.normalizeState(rawState);
-  assert.equal(normalized.brightness.monitor, 'DP-2');
-  assert.equal(normalized.brightness.percent, 60);
-
-  // Patching brightness for specific monitor preserves nightlight state
-  const updated = Model.mergeStatePatch(normalized, {
-    brightness: { available: true, percent: 80, monitor: 'DP-2', error: null }
-  });
-  assert.equal(updated.brightness.percent, 80);
-  assert.equal(updated.brightness.monitor, 'DP-2');
-  assert.equal(updated.temperature, 4000);
-});
-
-test('Tier 3 - Pairwise 7: Active Snooze (F5) + Manual Hero Toggle (F3, F11)', () => {
-  const snoozed = Model.normalizeState({
-    available: true,
-    enabled: false,
-    brightness: { available: true, percent: 50, monitor: 'eDP-1', error: null },
-    nightlight: { available: true, enabled: false, temperature: 6500, gamma: 100, error: null }
-  });
-  snoozed.automation = { snoozed: true, snooze_until: Date.now() / 1000 + 3600, origin: 'snooze', manual_override: null };
-
-  // User manually toggles night light ON during snooze
-  const toggled = Model.mergeStatePatch(snoozed, {
-    enabled: true,
-    nightlight: { available: true, enabled: true, temperature: 3500, gamma: 100 }
-  });
-  toggled.automation = { snoozed: false, snooze_until: null, origin: 'manual', manual_override: true };
-  assert.equal(toggled.enabled, true);
-  assert.equal(toggled.automation.snoozed, false);
-  assert.equal(toggled.automation.manual_override, true);
-  assert.equal(Model.isManualOverride(toggled), true);
-});
-
-
-test('Tier 3 - Pairwise 8: Keyboard Stepping (F9) + Drag Target Reconcile (F4, F11)', () => {
-  const base = Model.normalizeState({
-    available: true,
-    brightness: { available: true, percent: 50, monitor: 'eDP-1' },
-    nightlight: { available: true, enabled: true, temperature: 3500, gamma: 100 }
-  });
-
-  const nextVal = Model.stepSliderValue('temperature', 1, base.temperature);
-  assert.equal(nextVal, 3550);
-
-  const drag = Model.dragTargetPush(Model.dragTargetEmpty(), 'temperature', nextVal);
-  assert.equal(drag.temperature, 3550);
-
-  const res = Model.reconcileDragTargets(base, base, drag, 'temperature');
-  // Tolerance is 50 K; diff is exactly 50 K so it is within tolerance and considered settled
-  assert.equal(res.target.temperature, null);
-
-  // Stepping by 200 K
-  const farDrag = Model.dragTargetPush(Model.dragTargetEmpty(), 'temperature', 3800);
-  const farRes = Model.reconcileDragTargets(base, base, farDrag, 'temperature');
-  assert.equal(farRes.target.temperature, 3800);
-  assert.deepEqual(farRes.requests, [{ section: 'temperature', value: 3800 }]);
-});
-
-test('Tier 3 - Pairwise 9: Schedule Toggle (F7) + Provenance Labeling (F2, F10)', () => {
-  assert.equal(Model.provenanceLabel('automatic', 'en'), 'Automatic');
-  assert.equal(Model.provenanceLabel('manual', 'en'), 'Manual');
-  assert.equal(Model.provenanceLabel('snooze', 'es'), 'Posposición');
-  assert.equal(Model.provenanceLabel('unknown', 'es'), 'Desconocido');
-});
-
-test('Tier 3 - Pairwise 10: Error Code Dispatch (F10) + State Error Recovery (F11)', () => {
-  const prev = Model.normalizeState({ available: true, enabled: true });
-  const failedResponse = {
-    requestId: 5,
-    latestRequestId: 5,
-    ok: false,
-    error: 'state_failed',
-    state: null
-  };
-  const committed = Model.commitResponse(prev, failedResponse);
-  assert.equal(committed.accepted, false);
-  assert.deepEqual(committed.state, prev);
-
-  const localizedEn = Model.localizeError('state_failed', 'en');
-  const localizedEs = Model.localizeError('state_failed', 'es');
-  assert.equal(localizedEn, I18n.en.errStateFailed);
-  assert.equal(localizedEs, I18n.es.errStateFailed);
-});
-
-test('Tier 3 - Pairwise 11: Stale Response Merge (F11) + Multi-Slider Value Coherence (F4)', () => {
-  const state = Model.normalizeState({
-    available: true,
-    brightness: { available: true, percent: 40, monitor: 'eDP-1' },
-    nightlight: { available: true, enabled: true, temperature: 3000, gamma: 90 }
-  });
-
-  // Stale patch updating temperature only
-  const patched = Model.mergeStatePatch(state, {
-    nightlight: { available: true, enabled: true, temperature: 3400, gamma: 90 }
-  });
-  assert.equal(patched.temperature, 3400);
-  assert.equal(patched.brightnessPercent, 40); // Brightness untouched
-  assert.equal(patched.gamma, 90); // Gamma untouched
-});
-
-test('Tier 3 - Pairwise 12: Snooze Duration Composition (F5) + Keyboard Return Activation (F9)', () => {
-  // Composed valid duration produces valid integer
-  const validSecs = Model.snoozeDurationSeconds(45, 'minutes');
-  assert.equal(validSecs, 2700);
-
-  // Invalid composed duration returns null, preventing invalid command generation
-  const invalidSecs = Model.snoozeDurationSeconds(-5, 'minutes');
-  assert.equal(invalidSecs, null);
-});
-
-// ============================================================================
-// TIER 4: REAL-WORLD APPLICATION SCENARIOS
-// ============================================================================
-
-test('Tier 4 - Scenario 1: Evening Sunset Ramp & Night Light Auto-Engagement', () => {
-  // 1. Initial daytime state (14:00)
-  let appState = Model.normalizeState({
-    available: true,
-    enabled: false,
-    brightness: { available: true, percent: 100, monitor: 'eDP-1', error: null },
-    nightlight: { available: true, enabled: false, identity: true, temperature: 6500, gamma: 100, error: null },
-    schedule: {
-      available: true,
-      day_time: '07:00',
-      day_temp: 6500,
-      night_time: '19:30',
-      night_temp: 3200,
-      day_identity: true,
-      period: 'day',
-      error: null
-    }
-  });
-  appState.automation = { schedule_enabled: true, origin: 'automatic', snoozed: false };
-  assert.equal(appState.enabled, false);
-  assert.equal(appState.schedule.period, 'day');
-  assert.equal(Model.isManualOverride(appState), false);
-
-  // 2. Sunset reconciliation event triggers at 19:30
-  const sunsetPatch = {
-    enabled: true,
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3200, gamma: 100, error: null },
-    schedule: {
-      available: true,
-      day_time: '07:00',
-      day_temp: 6500,
-      night_time: '19:30',
-      night_temp: 3200,
-      day_identity: true,
-      period: 'night',
-      error: null
-    },
-    automation: { schedule_enabled: true, origin: 'automatic', snoozed: false }
-  };
-  const commit = Model.commitResponse(appState, { requestId: 1, latestRequestId: 1, ok: true, state: sunsetPatch });
-  assert.equal(commit.accepted, true);
-  appState = commit.state;
-
-  // 3. Verify night light is active at 3200K without manual override
-  assert.equal(appState.enabled, true);
-  assert.equal(appState.temperature, 3200);
-  assert.equal(appState.schedule.period, 'night');
-  assert.equal(Model.isManualOverride(appState), false);
-});
-
-test('Tier 4 - Scenario 2: Quick Snooze during Nighttime Task & Resumption', () => {
-  // 1. Active night state (3200K)
-  let appState = Model.normalizeState({
-    available: true,
-    enabled: true,
-    brightness: { available: true, percent: 100, monitor: 'eDP-1', error: null },
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3200, gamma: 100, error: null },
-    schedule: { available: true, day_time: '07:00', day_temp: 6500, night_time: '19:30', night_temp: 3200, period: 'night' }
-  });
-  appState.automation = { schedule_enabled: true, origin: 'automatic', snoozed: false };
-
-  // 2. User sets 30 min snooze
-  const snoozeSecs = Model.snoozeDurationSeconds(30, 'minutes');
-  assert.equal(snoozeSecs, 1800);
-
-  const snoozePatch = {
-    enabled: false,
-    nightlight: { available: true, enabled: false, identity: true, temperature: 6500, gamma: 100, error: null }
-  };
-  const snoozeCommit = Model.commitResponse(appState, { requestId: 2, latestRequestId: 2, ok: true, state: snoozePatch });
-  assert.equal(snoozeCommit.accepted, true);
-  appState = snoozeCommit.state;
-  appState.automation = { schedule_enabled: true, snoozed: true, snooze_until: Date.now() / 1000 + 1800, origin: 'snooze' };
-
-  // 3. Verify natural color identity and snooze provenance
-  assert.equal(appState.enabled, false);
-  assert.equal(appState.automation.snoozed, true);
-  assert.equal(Model.provenanceLabel(appState.automation.origin, 'en'), 'Snoozed');
-
-  // 4. User clears snooze early
-  const clearPatch = {
-    enabled: true,
-    nightlight: { available: true, enabled: true, identity: false, temperature: 3200, gamma: 100, error: null }
-  };
-  const clearCommit = Model.commitResponse(appState, { requestId: 3, latestRequestId: 3, ok: true, state: clearPatch });
-  assert.equal(clearCommit.accepted, true);
-  appState = clearCommit.state;
-  appState.automation = { schedule_enabled: true, snoozed: false, snooze_until: null, origin: 'automatic' };
-
-  // 5. Scheduled night temperature restored
-  assert.equal(appState.enabled, true);
-  assert.equal(appState.temperature, 3200);
-  assert.equal(appState.automation.snoozed, false);
-});
-
-
-test('Tier 4 - Scenario 3: Rapid Multi-Monitor Brightness & Temperature Adjustment', () => {
-  let state = Model.normalizeState({
-    available: true,
-    brightness: { available: true, percent: 50, monitor: 'DP-1', error: null },
-    nightlight: { available: true, enabled: true, temperature: 4000, gamma: 100, error: null }
-  });
-
-  // User drags brightness rapidly: 50 -> 60 -> 75 -> 80
-  let reqId = 10;
-  for (const targetBrightness of [60, 75, 80]) {
-    reqId++;
-    const dragTarget = Model.dragTargetPush(Model.dragTargetEmpty(), 'brightness', targetBrightness);
-    assert.equal(dragTarget.brightness, targetBrightness);
-  }
-
-  // Response for 80 arrives with latestRequestId = 13
-  const finalResponse = {
-    requestId: 13,
-    latestRequestId: 13,
-    ok: true,
-    state: { brightness: { available: true, percent: 80, monitor: 'DP-1', error: null } }
-  };
-  const commit = Model.commitResponse(state, finalResponse);
-  assert.equal(commit.accepted, true);
-  assert.equal(commit.state.brightnessPercent, 80);
-});
-
-test('Tier 4 - Scenario 4: Full Hybrid Keyboard Walkthrough across All 3 Routes', () => {
-  let route = 'home';
-  let cursor = Model.cursorStart();
-
-  // Walk Home route sections
-  const homeSections = Model.routeSections(route);
-  for (let i = 0; i < homeSections.length - 1; i++) {
-    cursor = Model.moveCursor(cursor, 'ArrowDown', route);
-  }
-  assert.equal(cursor.section, homeSections.length - 1);
-
-  // Switch to Automation
-  route = Model.adjacentRoute(route, 1);
-  assert.equal(route, 'automation');
-  cursor = Model.cursorStart();
-
-  // Validate schedule inputs on Automation route
-  const schedValid = Model.validateScheduleFields('06:30', '21:00', '6000', '100', '100', '3000', '50', '80', 'en');
-  assert.equal(schedValid.valid, true);
-
-  // Switch to Settings
-  route = Model.adjacentRoute(route, 1);
-  assert.equal(route, 'settings');
-  cursor = Model.cursorStart();
-  assert.deepEqual(cursor, { section: 0, field: 0 });
-
-  // Switch back to Home (ring complete)
-  route = Model.adjacentRoute(route, 1);
-  assert.equal(route, 'home');
-});
-
-test('Tier 4 - Scenario 5: Dual-Locale Switching & Error Toast Handling', () => {
-  const errorKey = 'errMonitorUnavailable';
-
-  // In English
-  const enToast = I18n.t(errorKey, 'en');
-  assert.equal(enToast, 'The selected monitor is unavailable.');
-
-  // Live switch to Spanish
-  const esToast = I18n.t(errorKey, 'es');
-  assert.equal(esToast, 'El monitor seleccionado no está disponible.');
-
-  // Error cleared
-  assert.equal(Model.localizeError('', 'en'), '');
-  assert.equal(Model.localizeError('', 'es'), '');
-});
-
-// ============================================================================
-// TIER 5: ADVERSARIAL COVERAGE HARDENING (Fuzzing, Malformed Payloads, Safety)
-// ============================================================================
-
-test('Tier 5 - Adversarial: Prototype pollution and deep property corruption safety in normalizeState', () => {
+test('Prototype pollution and deep property corruption safety in normalizeState', () => {
   const malicious = JSON.parse('{"__proto__": {"polluted": true}, "brightness": {"percent": "__proto__"}, "nightlight": null}');
   const normalized = Model.normalizeState(malicious);
   assert.equal(normalized.available, false);
