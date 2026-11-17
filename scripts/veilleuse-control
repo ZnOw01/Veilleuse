@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -245,12 +246,7 @@ def _monitor_lines(output):
 
 
 def read_monitor_state():
-    """Run omarchy-monitor-state and parse the shell's monitor summary.
-
-    The command prints, one per line: focused brightness, internal monitor,
-    external monitor, active internal, mirror, focused monitor, scaling and a
-    JSON array of monitors.  Lines may be empty when a value is unknown.
-    """
+    """Run omarchy-monitor-state and parse the shell's monitor summary."""
     result = run_command(MONITOR_STATE_COMMAND)
     if result.returncode != 0:
         return {
@@ -259,27 +255,31 @@ def read_monitor_state():
             "internal": None,
             "external": None,
             "monitors": [],
+            "monitor_brightness": {},
         }
     lines = _monitor_lines(result.stdout)
+    monitors, monitor_brightness = _parse_monitors_json(lines[7])
     return {
         "brightness": _percent_or_none(lines[0]),
         "monitor": lines[5].strip() or None,
         "internal": lines[1].strip() or None,
         "external": lines[2].strip() or None,
-        "monitors": _parse_monitors_json(lines[7]),
+        "monitors": monitors,
+        "monitor_brightness": monitor_brightness,
     }
 
 
 def _parse_monitors_json(text):
     if not text.strip():
-        return []
+        return [], {}
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
-        return []
+        return [], {}
     if not isinstance(data, list):
-        return []
+        return [], {}
     result = []
+    brightness_map = {}
     for entry in data:
         if not isinstance(entry, dict):
             continue
@@ -295,14 +295,23 @@ def _parse_monitors_json(text):
             or not isinstance(focused_value, bool)
         ):
             continue
+        enabled = enabled_value and not disabled_value
         result.append(
             {
                 "name": name,
-                "enabled": enabled_value and not disabled_value,
+                "enabled": enabled,
                 "focused": focused_value,
             }
         )
-    return result
+        raw_brightness = entry.get("brightness")
+        if (
+            enabled
+            and not isinstance(raw_brightness, bool)
+            and isinstance(raw_brightness, int)
+            and BRIGHTNESS_MIN <= raw_brightness <= BRIGHTNESS_MAX
+        ):
+            brightness_map[name] = raw_brightness
+    return result, brightness_map
 
 
 def read_brightness(monitor, *, deadline=None):
@@ -596,9 +605,9 @@ def toggle_nightlight(temperature=None, gamma=None, brightness=None, monitor="fo
     if brightness is not None:
         brightness_state = _apply_monitor_brightness(brightness, monitor)
         if not brightness_state.get("available") or brightness_state.get("error"):
-            state["available"] = False
             state["error"] = brightness_state.get("error") or "No se pudo aplicar el brillo"
             state["error_code"] = brightness_state.get("error_code", "brightness_write_failed")
+            state["_brightness_state"] = brightness_state
             return state
     return state
 
@@ -684,9 +693,12 @@ def _remove_identity(profile):
 
 def _update_profile(profile, time_value, temperature, identity_day):
     """Update one profile block without disturbing formatting or comments."""
+    line_ending = "\r\n" if "\r\n" in profile else "\n"
+    if "\n" not in profile:
+        body_line = "identity = true" if identity_day else f"temperature = {temperature}"
+        return f"profile {{{line_ending}    time = {time_value}{line_ending}    {body_line}{line_ending}}}"
     schedule_module = _schedule_module()
     info = schedule_module.profile_info(profile) if schedule_module else {}
-    line_ending = "\r\n" if "\r\n" in profile else "\n"
     updated = _replace_time(profile, time_value)
     if identity_day:
         updated = _remove_temperature(updated)
@@ -763,41 +775,33 @@ def _render_schedule(schedule, natural_day, eol="\n"):
 
 
 def _update_schedule_text(existing, schedule, natural_day):
-    """Update the first day/night profiles, preserving every other block.
-
-    Managed blocks also gain an explicit ``# Veilleuse day/night`` marker
-    when they do not carry one yet, for the same reason as in
-    :func:`_render_schedule`.
-    """
     schedule_module = _schedule_module()
     eol = "\r\n" if "\r\n" in existing else "\n"
+    day_entry, night_entry = schedule_module.select_managed_profiles(
+        existing, strict=False, allow_partial=True
+    )
     replacements = []
-    found_day = False
-    found_night = False
-    for start, end, profile in schedule_module.iter_profile_blocks(existing):
-        info = schedule_module.profile_info(profile)
-        if info["time"] is None:
-            continue
-        kind = schedule_module.profile_kind(info)
-        if kind == "day" and not found_day:
-            updated_profile = _update_profile(profile, schedule["day_time"], schedule["day_temp"], natural_day)
-            if not _block_has_marker(existing, start, "day"):
-                updated_profile = _marker_comment("day", eol) + updated_profile
-            replacements.append((start, end, updated_profile))
-            found_day = True
-        elif kind == "night" and not found_night:
-            updated_profile = _update_profile(profile, schedule["night_time"], schedule["night_temp"], False)
-            if not _block_has_marker(existing, start, "night"):
-                updated_profile = _marker_comment("night", eol) + updated_profile
-            replacements.append((start, end, updated_profile))
-            found_night = True
+    if day_entry is not None:
+        updated_profile = _update_profile(
+            day_entry["text"], schedule["day_time"], schedule["day_temp"], natural_day
+        )
+        if not _block_has_marker(existing, day_entry["start"], "day"):
+            updated_profile = _marker_comment("day", eol) + updated_profile
+        replacements.append((day_entry["start"], day_entry["end"], updated_profile))
+    if night_entry is not None:
+        updated_profile = _update_profile(
+            night_entry["text"], schedule["night_time"], schedule["night_temp"], False
+        )
+        if not _block_has_marker(existing, night_entry["start"], "night"):
+            updated_profile = _marker_comment("night", eol) + updated_profile
+        replacements.append((night_entry["start"], night_entry["end"], updated_profile))
 
     updated = existing
-    for start, end, replacement in reversed(replacements):
+    for start, end, replacement in sorted(replacements, key=lambda item: item[0], reverse=True):
         updated = updated[:start] + replacement + updated[end:]
 
     missing = []
-    if not found_day:
+    if day_entry is None:
         day_block = (
             f"profile {{{eol}    time = {schedule['day_time']}{eol}    identity = true{eol}}}"
             if natural_day
@@ -805,7 +809,7 @@ def _update_schedule_text(existing, schedule, natural_day):
             f"    temperature = {schedule['day_temp']}{eol}}}"
         )
         missing.append(_marker_comment("day", eol) + day_block)
-    if not found_night:
+    if night_entry is None:
         missing.append(
             _marker_comment("night", eol)
             + f"profile {{{eol}    time = {schedule['night_time']}{eol}"
@@ -917,15 +921,16 @@ def _read_schedule(path, schedule_module):
             day_identity = schedule_module.day_profile_is_identity(text)
             period_value = schedule_module.schedule_period(schedule)
     except ValueError as caught:
+        error_code = getattr(caught, "error_code", None)
         paused = _paused_schedule_text()
         if paused is None:
-            return _schedule_result(None, False, str(caught))
+            return _schedule_result(None, False, str(caught), error_code=error_code)
         try:
             schedule = schedule_module.parse_schedule_text(paused, strict=True)
             day_identity = schedule_module.day_profile_is_identity(paused)
             period_value = schedule_module.schedule_period(schedule)
         except ValueError:
-            return _schedule_result(None, False, str(caught))
+            return _schedule_result(None, False, str(caught), error_code=error_code)
     return _schedule_result(schedule, day_identity, None, period_value)
 
 
@@ -997,14 +1002,34 @@ def schedule_set(values):
                 original_mode = None
                 original_bytes = None
                 existing = ""
+            natural_day = bool(values.get("natural_day", True))
             if existing:
-                updated = _update_schedule_text(existing, schedule, values.get("natural_day", True))
                 try:
-                    schedule_module.parse_schedule_text(updated, strict=True)
+                    updated = _update_schedule_text(existing, schedule, natural_day)
+                    reparsed = schedule_module.parse_schedule_text(updated, strict=True)
+                    reparsed_identity = schedule_module.day_profile_is_identity(updated)
                 except ValueError as caught:
-                    return _schedule_result(None, values.get("natural_day", True), str(caught))
+                    return _schedule_result(
+                        None,
+                        natural_day,
+                        str(caught),
+                        error_code=getattr(caught, "error_code", None) or "schedule_failed",
+                    )
+                if (
+                    reparsed["day_time"] != schedule["day_time"]
+                    or reparsed["night_time"] != schedule["night_time"]
+                    or reparsed["night_temp"] != schedule["night_temp"]
+                    or reparsed_identity != natural_day
+                    or (not natural_day and reparsed["day_temp"] != schedule["day_temp"])
+                ):
+                    return _schedule_result(
+                        None,
+                        natural_day,
+                        "No se pudo verificar el horario actualizado",
+                        error_code="schedule_failed",
+                    )
             else:
-                updated = _render_schedule(schedule, values.get("natural_day", True))
+                updated = _render_schedule(schedule, natural_day)
             if original_bytes is not None:
                 backup_path = path.with_suffix(path.suffix + ".bak")
                 backup_bytes, backup_mode, published_backup, backup_identity = (
@@ -1194,12 +1219,15 @@ def _automation_fields():
     }
 
 
-def _automation_status(module):
+def _automation_status(module, *, state_snapshot=None):
     fields = _automation_fields()
-    try:
-        state = module.read_state()
-    except Exception as error:
-        return _failed_section(error, fields)
+    if state_snapshot is not None:
+        state = state_snapshot
+    else:
+        try:
+            state = module.read_state()
+        except Exception as error:
+            return _failed_section(error, fields)
     fields.update(
         {
             "available": True,
@@ -1275,17 +1303,64 @@ def _automation_environment(monitor_target="focused"):
     state = _state_module()
     if module is None or state is None:
         return None, None
+    cache = {}
+
+    def cached_read_state():
+        value = state.read_state()
+        cache["state"] = value
+        return value
+
+    def cached_update_state(mutator):
+        value = state.update_state(mutator)
+        cache["state"] = value
+        return value
+
+    def cached_read_nightlight():
+        value = read_nightlight()
+        cache["nightlight"] = value
+        return value
+
+    def cached_apply_values(temperature, gamma):
+        value = _native_apply_values(temperature, gamma)
+        if value.get("available") and not value.get("error"):
+            cache["nightlight"] = value
+        else:
+            cache.pop("nightlight", None)
+        return value
+
+    def cached_apply_natural():
+        value = _apply_natural()
+        if value.get("available") and not value.get("error"):
+            cache["nightlight"] = value
+        else:
+            cache.pop("nightlight", None)
+        return value
+
+    def cached_apply_gamma(percent):
+        value = _apply_gamma(percent)
+        if value.get("available") and not value.get("error"):
+            cache["nightlight"] = value
+        else:
+            cache.pop("nightlight", None)
+        return value
+
+    def cached_apply_brightness(percent):
+        value = _apply_monitor_brightness(percent, monitor_target)
+        if value.get("available") and not value.get("error"):
+            cache["brightness"] = value
+        return value
+
     return module, {
-        "read_state": state.read_state,
-        "update_state": state.update_state,
+        "_cache": cache,
+        "read_state": cached_read_state,
+        "update_state": cached_update_state,
         "append_history": state.append_history,
-        "read_nightlight": read_nightlight,
-        "apply_values": _native_apply_values,
-        "apply_natural": _apply_natural,
-        "apply_brightness": lambda percent: _apply_monitor_brightness(percent, monitor_target),
-        "apply_gamma": _apply_gamma,
-        "current_profile": _current_profile,
-        "token": lambda: None,
+        "read_nightlight": cached_read_nightlight,
+        "apply_values": cached_apply_values,
+        "apply_natural": cached_apply_natural,
+        "apply_brightness": cached_apply_brightness,
+        "apply_gamma": cached_apply_gamma,
+        "current_profile": lambda: _current_profile(),
     }
 
 
@@ -1329,7 +1404,7 @@ def _run_preflight_probe(name, command):
     return _preflight_check(name, False, error_code, error), result
 
 
-def preflight(*, monitor_state=None, brightness=None, nightlight=None):
+def preflight(*, monitor_state=None, brightness=None, nightlight=None, skip_brightness=False):
     """Perform bounded, read-only helper/backend availability checks."""
     helper_path = Path(os.path.abspath(__file__))
     executable = helper_path.is_file() and os.access(helper_path, os.X_OK)
@@ -1343,37 +1418,61 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
         "error": None if executable else "El helper no es ejecutable",
     }
 
-    if monitor_state is None:
-        monitor_check, monitor_result = _run_preflight_probe(
-            "omarchy-monitor-state", MONITOR_STATE_COMMAND
-        )
-        if monitor_check["ok"] and monitor_result is not None:
-            monitor_state = {"monitor": _monitor_lines(monitor_result.stdout)[5].strip() or None}
-    else:
-        monitor_check = _check_from_available(
-            "omarchy-monitor-state", bool(monitor_state.get("monitor"))
-        )
-
-    monitor_name = monitor_state.get("monitor") if isinstance(monitor_state, dict) else None
-    if brightness is None:
-        if monitor_name:
-            brightness_check, _brightness_result = _run_preflight_probe(
-                "omarchy-brightness-display",
-                [*BRIGHTNESS_COMMAND, monitor_name],
+    if skip_brightness:
+        monitor_ok = shutil.which(MONITOR_STATE_COMMAND[0]) is not None
+        monitor_check = (
+            _preflight_check("omarchy-monitor-state", True)
+            if monitor_ok
+            else _preflight_check(
+                "omarchy-monitor-state",
+                False,
+                "missing_command",
+                "Comando ausente: omarchy-monitor-state",
             )
-        elif shutil.which(BRIGHTNESS_COMMAND[0]) is None:
-            brightness_check = _preflight_check(
+        )
+        brightness_ok = shutil.which(BRIGHTNESS_COMMAND[0]) is not None
+        brightness_check = (
+            _preflight_check("omarchy-brightness-display", True)
+            if brightness_ok
+            else _preflight_check(
                 "omarchy-brightness-display",
                 False,
                 "missing_command",
                 "Comando ausente: omarchy-brightness-display",
             )
-        else:
-            brightness_check = _check_from_available("omarchy-brightness-display", False)
-    else:
-        brightness_check = _check_from_available(
-            "omarchy-brightness-display", brightness.get("available") is True
         )
+    else:
+        if monitor_state is None:
+            monitor_check, monitor_result = _run_preflight_probe(
+                "omarchy-monitor-state", MONITOR_STATE_COMMAND
+            )
+            if monitor_check["ok"] and monitor_result is not None:
+                monitor_state = {"monitor": _monitor_lines(monitor_result.stdout)[5].strip() or None}
+        else:
+            monitor_check = _check_from_available(
+                "omarchy-monitor-state", bool(monitor_state.get("monitor"))
+            )
+
+        monitor_name = monitor_state.get("monitor") if isinstance(monitor_state, dict) else None
+        if brightness is None:
+            if monitor_name:
+                brightness_check, _brightness_result = _run_preflight_probe(
+                    "omarchy-brightness-display",
+                    [*BRIGHTNESS_COMMAND, monitor_name],
+                )
+            elif shutil.which(BRIGHTNESS_COMMAND[0]) is None:
+                brightness_check = _preflight_check(
+                    "omarchy-brightness-display",
+                    False,
+                    "missing_command",
+                    "Comando ausente: omarchy-brightness-display",
+                )
+            else:
+                brightness_check = _check_from_available("omarchy-brightness-display", False)
+        else:
+            brightness_check = _check_from_available(
+                "omarchy-brightness-display", brightness.get("available") is True
+            )
 
     if nightlight is None:
         nightlight_check, _nightlight_result = _run_preflight_probe(
@@ -1405,28 +1504,57 @@ def preflight(*, monitor_state=None, brightness=None, nightlight=None):
     }
 
 
-def read_status(*, nightlight=None, monitor_name=None):
+def read_status(
+    *,
+    nightlight=None,
+    brightness=None,
+    monitor_state=None,
+    state_snapshot=None,
+    monitor_name=None,
+    skip_brightness=False,
+):
     """Combine monitor/brightness, nightlight and schedule state in one JSON."""
-    monitor = read_monitor_state()
-    selected_monitor = monitor["monitor"] if monitor_name is None else monitor_name
-    if selected_monitor:
-        percent, error = read_brightness(selected_monitor)
-        brightness_state = {
-            "available": percent is not None,
-            "percent": percent,
-            "monitor": selected_monitor,
-            "error": error,
-        }
-        if error:
-            brightness_state["error_code"] = "brightness_readback_failed"
-    else:
+    if skip_brightness and brightness is None:
+        monitor = None
         brightness_state = {
             "available": False,
             "percent": None,
-            "monitor": None,
-            "error": "No se pudo resolver un monitor enfocado",
-            "error_code": "monitor_unavailable",
+            "monitor": monitor_name,
+            "error": None,
+            "skipped": True,
         }
+        monitors_list = []
+    else:
+        monitor = monitor_state if monitor_state is not None else read_monitor_state()
+        selected_monitor = monitor["monitor"] if monitor_name is None else monitor_name
+        if brightness is not None:
+            brightness_state = dict(brightness)
+            if brightness_state.get("error") and not brightness_state.get("error_code"):
+                brightness_state["error_code"] = "brightness_readback_failed"
+        elif selected_monitor:
+            cached_pct = (monitor.get("monitor_brightness") or {}).get(selected_monitor)
+            if cached_pct is not None:
+                percent, error = cached_pct, None
+            else:
+                percent, error = read_brightness(selected_monitor)
+            brightness_state = {
+                "available": percent is not None,
+                "percent": percent,
+                "monitor": selected_monitor,
+                "error": error,
+            }
+            if error:
+                brightness_state["error_code"] = "brightness_readback_failed"
+        else:
+            brightness_state = {
+                "available": False,
+                "percent": None,
+                "monitor": None,
+                "error": "No se pudo resolver un monitor enfocado",
+                "error_code": "monitor_unavailable",
+            }
+        monitors_list = monitor["monitors"]
+
     nightlight_state = nightlight if nightlight is not None else read_nightlight()
     if nightlight_state.get("error") and not nightlight_state.get("error_code"):
         nightlight_state = dict(nightlight_state, error_code="backend_unavailable")
@@ -1438,18 +1566,19 @@ def read_status(*, nightlight=None, monitor_name=None):
         state_error = RuntimeError("state_utils unavailable")
         automation = _failed_section(state_error, _automation_fields())
     else:
-        automation = _automation_status(module)
+        automation = _automation_status(module, state_snapshot=state_snapshot)
     root = resolve_plugin_root()
     return {
         "plugin": {"id": PLUGIN_ID, "root": str(root)},
         "brightness": brightness_state,
         "nightlight": nightlight_state,
         "schedule": schedule_state,
-        "monitors": monitor["monitors"],
+        "monitors": monitors_list,
         "preflight": preflight(
             monitor_state=monitor,
             brightness=brightness_state,
             nightlight=nightlight_state,
+            skip_brightness=skip_brightness and brightness is None,
         ),
         "automation": automation,
     }
@@ -1498,8 +1627,22 @@ def cmd_preflight(_args):
     return 0
 
 
-def _operation_success(result, *, monitor_name=None):
-    payload = read_status(monitor_name=monitor_name)
+def _operation_success(
+    result,
+    *,
+    monitor_name=None,
+    nightlight=None,
+    brightness=None,
+    state_snapshot=None,
+    skip_brightness=False,
+):
+    payload = read_status(
+        monitor_name=monitor_name,
+        nightlight=nightlight,
+        brightness=brightness,
+        state_snapshot=state_snapshot,
+        skip_brightness=skip_brightness,
+    )
     payload["ok"] = True
     payload["result"] = result
     if isinstance(result, dict) and result.get("operation"):
@@ -1556,7 +1699,17 @@ def cmd_brightness(args):
     state = apply_brightness(monitor, target, state=monitor_state)
     ok = state["available"] and state["error"] is None
     if ok:
-        _emit(read_status(monitor_name=monitor))
+        updated_monitor_state = dict(monitor_state)
+        updated_map = dict(monitor_state.get("monitor_brightness") or {})
+        updated_map[monitor] = state["percent"]
+        updated_monitor_state["monitor_brightness"] = updated_map
+        _emit(
+            read_status(
+                brightness=state,
+                monitor_state=updated_monitor_state,
+                monitor_name=monitor,
+            )
+        )
     else:
         _emit(_operation_failure("brightness_readback_failed", state["error"], result=state, monitor_name=monitor))
     return 0 if ok else 1
@@ -1584,7 +1737,17 @@ def cmd_snooze(args):
         if not result.get("success", True):
             _emit(_operation_failure(result.get("error_code", "snooze_failed"), result.get("error"), result=result, monitor_name=_selected_monitor_name(args)))
             return 1
-        _emit(_operation_success(result, monitor_name=_selected_monitor_name(args)))
+        if args.action in ("set", "clear"):
+            run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
+        cache = environment.get("_cache") or {}
+        _emit(
+            _operation_success(
+                result,
+                monitor_name=_selected_monitor_name(args),
+                nightlight=cache.get("nightlight"),
+                state_snapshot=cache.get("state"),
+            )
+        )
         return 0
     except Exception as error:
         _emit(_operation_failure(getattr(error, "error_code", "snooze_failed"), error, monitor_name=_selected_monitor_name(args)))
@@ -1600,27 +1763,31 @@ def cmd_reconcile(args):
     if not result.get("success"):
         _emit(_operation_failure(result.get("error_code", "reconcile_failed"), result.get("error"), result=result, monitor_name=_selected_monitor_name(args)))
         return 1
-    _emit(_operation_success(result, monitor_name=_selected_monitor_name(args)))
+    if result.get("applied") is True:
+        run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
+    cache = environment.get("_cache") or {}
+    _emit(
+        _operation_success(
+            result,
+            monitor_name=_selected_monitor_name(args),
+            nightlight=cache.get("nightlight"),
+            brightness=cache.get("brightness"),
+            state_snapshot=cache.get("state"),
+            skip_brightness=bool(getattr(args, "skip_brightness", False)),
+        )
+    )
     return 0
 
 
 def _persist_manual_intent(operation, values):
-    """Record a successful manual nightlight operation as manual intent.
-
-    Only the explicitly requested values are recorded (``None`` for
-    toggle/natural).  The hardware change already succeeded, so a persistence
-    failure must never mask it or turn the operation into an error; it is
-    instead surfaced to the caller as a stable error code so the panel knows
-    the schedule may still revert the manual setting.
-    """
     module, environment = _automation_environment()
     if module is None or environment is None:
-        return "state_unavailable"
+        return "state_unavailable", None
     try:
-        module.commit_manual_apply(environment, f"nightlight_{operation}", values)
+        updated = module.commit_manual_apply(environment, f"nightlight_{operation}", values)
     except Exception as error:
-        return str(getattr(error, "error_code", "state_failed"))
-    return None
+        return str(getattr(error, "error_code", "state_failed")), None
+    return None, updated
 
 
 def cmd_nightlight(args):
@@ -1629,12 +1796,14 @@ def cmd_nightlight(args):
         getattr(args, name, None) is not None for name in ("temperature", "brightness", "gamma")
     ):
         return _abort("Las opciones --temperature, --brightness y --gamma solo se usan con toggle")
+    if operation in ("toggle", "natural") and getattr(args, "value", None) is not None:
+        return _abort("Este subcomando no acepta un valor posicional")
     requested = None
+    kelvin = None
+    gamma = None
     if operation == "toggle":
-        kelvin = None
         if getattr(args, "temperature", None) is not None:
             kelvin = _bounded(args.temperature, TEMPERATURE_MIN, 5000, "La temperatura")
-        gamma = None
         if getattr(args, "gamma", None) is not None:
             gamma = _bounded(args.gamma, GAMMA_MIN, GAMMA_MAX, "La gamma")
         brightness = None
@@ -1660,21 +1829,45 @@ def cmd_nightlight(args):
         requested = {"gamma": percent}
     else:
         return _abort(f"Operación de luz nocturna desconocida: {operation}")
+    brightness_failure = state.pop("_brightness_state", None)
     ok = state["available"] and state["error"] is None
     persist_error = None
+    updated_state = None
     if ok:
-        persist_error = _persist_manual_intent(operation, requested)
+        persist_error, updated_state = _persist_manual_intent(operation, requested)
         run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
-    elif operation == "toggle":
+    elif operation == "toggle" and state.get("identity") is not True:
         confirmed = {}
-        if kelvin is not None and state.get("temperature") == kelvin:
+        state_temp = state.get("temperature")
+        state_gamma = state.get("gamma")
+        if (
+            kelvin is not None
+            and isinstance(state_temp, int)
+            and abs(state_temp - kelvin) <= READBACK_TOLERANCE_TEMP
+        ):
             confirmed["temperature"] = kelvin
-        if gamma is not None and state.get("gamma") == gamma:
+        if (
+            gamma is not None
+            and isinstance(state_gamma, int)
+            and abs(state_gamma - gamma) <= READBACK_TOLERANCE_GAMMA
+        ):
             confirmed["gamma"] = gamma
         if confirmed:
-            persist_error = _persist_manual_intent(operation, confirmed)
+            persist_error, updated_state = _persist_manual_intent(operation, confirmed)
             run_command(["omarchy-shell", "-q", "nightlight", "refresh"])
-    status = read_status(nightlight=state, monitor_name=_selected_monitor_name(args))
+    status_nightlight = state
+    if brightness_failure is not None:
+        status_nightlight = {
+            k: v for k, v in state.items() if k != "error_code"
+        }
+        status_nightlight["error"] = None
+    status = read_status(
+        nightlight=status_nightlight,
+        brightness=brightness_failure,
+        state_snapshot=updated_state,
+        monitor_name=_selected_monitor_name(args),
+        skip_brightness=bool(getattr(args, "skip_brightness", False)) and brightness_failure is None,
+    )
     if persist_error:
         status["manual_persist_error"] = persist_error
     if not ok:
@@ -1732,7 +1925,7 @@ def _persist_schedule_display(display):
 def _schedule_status(monitor_name):
     toggle = _utility_module("schedule_toggle_utils")
     try:
-        if toggle is not None and config_path().is_file():
+        if toggle is not None:
             toggle.HYPRSUNSET_CONFIG = config_path()
             toggle_state = toggle.schedule_status(config_path())
         else:
@@ -1905,6 +2098,11 @@ def build_parser():
         help="Gamma to apply when toggle turns the light on",
     )
     _add_monitor_argument(nightlight)
+    nightlight.add_argument(
+        "--skip-brightness",
+        action="store_true",
+        help="Omit monitor and brightness probes in the returned status",
+    )
     nightlight.set_defaults(handler=cmd_nightlight)
 
     snooze = subparsers.add_parser("snooze", help="Manage natural-light snooze")
@@ -1927,6 +2125,11 @@ def build_parser():
 
     reconcile = subparsers.add_parser("reconcile", help="Reconcile snooze and schedule")
     _add_monitor_argument(reconcile)
+    reconcile.add_argument(
+        "--skip-brightness",
+        action="store_true",
+        help="Omit monitor and brightness probes when no display write ran",
+    )
     reconcile.set_defaults(handler=cmd_reconcile)
 
     schedule = subparsers.add_parser("schedule", help="Get or set the hyprsunset schedule")
@@ -1978,10 +2181,14 @@ def main(argv=None):
         args = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 2
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         return args.handler(args)
     except (OSError, ValueError) as error:
         return _abort(str(error))
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 if __name__ == "__main__":

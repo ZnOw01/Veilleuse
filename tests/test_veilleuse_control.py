@@ -146,6 +146,8 @@ class SimulatedCommands:
                 self.gamma = int(tokens[3])
                 return cp(tokens, 0, "", "")
             return cp(tokens, 1, "", "unexpected hyprsunset command")
+        if tokens == ["omarchy-shell", "-q", "nightlight", "refresh"]:
+            return cp(tokens, 0, "", "")
         return cp(tokens, 127, "", "command not found")
 
     def brightness_writes(self):
@@ -273,6 +275,129 @@ class AuditBoundaryTests(HelperModuleTests):
         self.assertIsNone(percent)
         self.assertTrue(error)
         self.assertEqual(self.sim.calls, [])
+
+    def test_read_status_reuses_monitor_state_brightness_without_extra_spawn(self):
+        self.sim.monitor_state_text = monitor_state_text(
+            brightness="55",
+            monitors=[
+                {"name": "eDP-1", "enabled": True, "focused": True, "brightness": 55},
+                {"name": "DP-1", "enabled": True, "focused": False, "brightness": 70},
+            ],
+        )
+        status = vc.read_status(monitor_name="DP-1")
+        self.assertTrue(status["brightness"]["available"])
+        self.assertEqual(status["brightness"]["percent"], 70)
+        brightness_spawns = [
+            tokens for tokens, _ in self.sim.calls if tokens[0] == "omarchy-brightness-display"
+        ]
+        self.assertEqual(brightness_spawns, [])
+
+    def test_skip_brightness_fast_path_skips_monitor_and_brightness_spawns(self):
+        code, output = self.run_cli("nightlight", "temperature", "4200", "--skip-brightness")
+        self.assertEqual(code, 0, output)
+        payload = json.loads(output)
+        self.assertTrue(payload["brightness"]["skipped"])
+        self.assertEqual(self.sim.temperature, 4200)
+        spawns = [tokens[0] for tokens, _ in self.sim.calls]
+        self.assertNotIn("omarchy-monitor-state", spawns)
+        self.assertNotIn("omarchy-brightness-display", spawns)
+
+        self.sim.calls.clear()
+        code, output = self.run_cli("reconcile", "--skip-brightness")
+        self.assertEqual(code, 0, output)
+        payload = json.loads(output)
+        self.assertTrue(payload["brightness"]["skipped"])
+        spawns = [tokens[0] for tokens, _ in self.sim.calls]
+        self.assertNotIn("omarchy-monitor-state", spawns)
+        self.assertNotIn("omarchy-brightness-display", spawns)
+
+    def test_nightlight_toggle_and_natural_reject_stray_positional_value(self):
+        for action in ("toggle", "natural"):
+            with self.subTest(action=action):
+                code, output = self.run_cli("nightlight", action, "5000")
+                self.assertEqual(code, 1, output)
+                self.assertEqual(json.loads(output)["error_code"], "invalid_argument")
+
+    def test_nightlight_toggle_optional_brightness_failure_keeps_nightlight_available(self):
+        self.sim.identity = True
+        self.sim.apply_brightness = False
+        code, output = self.run_cli("nightlight", "toggle", "--temperature", "3500", "--brightness", "60")
+        self.assertEqual(code, 1, output)
+        payload = json.loads(output)
+        self.assertEqual(payload["error_code"], "brightness_write_failed")
+        self.assertTrue(payload["state"]["nightlight"]["available"])
+
+    def test_schedule_set_updates_single_line_profiles_and_preserves_custom_twilight_block(self):
+        path = vc.config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "profile {\n    time = 17:00\n    temperature = 5500\n}\n"
+            "# Veilleuse day\n"
+            "profile { time = 06:00 identity = true }\n"
+            "# Veilleuse night\n"
+            "profile { time = 18:00 temperature = 3500 }\n",
+            encoding="utf-8",
+        )
+        before_get = vc.schedule_get()
+        self.assertTrue(before_get["available"], before_get)
+        self.assertEqual(before_get["day_time"], "06:00")
+        self.assertEqual(before_get["night_time"], "18:00")
+
+        updated = vc.schedule_set(
+            {
+                "day_time": "07:00",
+                "day_temp": 6000,
+                "night_time": "20:00",
+                "night_temp": 3200,
+                "natural_day": False,
+            }
+        )
+        self.assertTrue(updated["available"], updated)
+        self.assertEqual(updated["day_time"], "07:00")
+        self.assertEqual(updated["day_temp"], 6000)
+        self.assertEqual(updated["night_time"], "20:00")
+        self.assertEqual(updated["night_temp"], 3200)
+        self.assertIn("temperature = 5500", path.read_text(encoding="utf-8"))
+
+    def test_schedule_status_detects_missing_config_after_disable(self):
+        path = vc.config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original = (
+            "brightness = 90\n"
+            "# Veilleuse day\nprofile {\n    time = 06:00\n    identity = true\n}\n"
+            "# Veilleuse night\nprofile {\n    time = 19:00\n    temperature = 3500\n}\n"
+        )
+        path.write_text(original, encoding="utf-8")
+        toggle = vc._utility_module("schedule_toggle_utils")
+        toggle.HYPRSUNSET_CONFIG = path
+        toggle.disable_schedule(path)
+        path.unlink()
+
+        code, output = self.run_cli("schedule", "status")
+        self.assertEqual(code, 1, output)
+        payload = json.loads(output)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_code"], "missing_config")
+
+    def test_snooze_and_reconcile_refresh_omarchy_shell_nightlight(self):
+        code, output = self.run_cli("snooze", "set", "--minutes", "15")
+        self.assertEqual(code, 0, output)
+        self.assertIn(["omarchy-shell", "-q", "nightlight", "refresh"], [t for t, _ in self.sim.calls])
+
+        self.sim.calls.clear()
+        code, output = self.run_cli("snooze", "clear")
+        self.assertEqual(code, 0, output)
+        self.assertIn(["omarchy-shell", "-q", "nightlight", "refresh"], [t for t, _ in self.sim.calls])
+
+        self.sim.calls.clear()
+        with patch.object(
+            vc,
+            "_current_profile",
+            return_value={"available": True, "kind": "temperature", "temperature": 4100, "period": "night"},
+        ):
+            code, output = self.run_cli("reconcile", "--skip-brightness")
+        self.assertEqual(code, 0, output)
+        self.assertIn(["omarchy-shell", "-q", "nightlight", "refresh"], [t for t, _ in self.sim.calls])
 
 
 class PluginRootTests(HelperModuleTests):
