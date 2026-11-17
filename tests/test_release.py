@@ -179,6 +179,33 @@ class ReleaseGitStateMachineTests(unittest.TestCase):
         self.assertEqual(second["action"], "ensure_tag_and_release")
         self.assertFalse(second["committed"])
 
+    def test_apply_release_falls_back_to_gh_release_target_when_tag_push_rejected(self):
+        from unittest import mock
+
+        self._commit("feat(control): add --skip-brightness fast path")
+        real_run = release._run
+        gh_calls = []
+
+        def fake_run(cmd, *, cwd, check=True, input_text=None):
+            if cmd[:3] == ["git", "push", "origin"]:
+                if cmd[3].startswith("refs/tags/"):
+                    return subprocess.CompletedProcess(cmd, 1, "", "remote rejected tag push")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            if cmd[0] == "gh":
+                gh_calls.append((list(cmd), input_text))
+                if cmd[:3] == ["gh", "release", "view"]:
+                    return subprocess.CompletedProcess(cmd, 1, "", "not found")
+                return subprocess.CompletedProcess(cmd, 0, "https://example.invalid/v3.7.0\n", "")
+            return real_run(cmd, cwd=cwd, check=check, input_text=input_text)
+
+        with mock.patch.object(release, "_run", side_effect=fake_run):
+            applied = release.apply_release(self.repo, release_date="2026-11-17", push=True)
+
+        self.assertTrue(applied["published"])
+        create_cmds = [cmd for cmd, _ in gh_calls if cmd[:3] == ["gh", "release", "create"]]
+        self.assertEqual(len(create_cmds), 1)
+        self.assertIn("--target", create_cmds[0])
+
 
 if __name__ == "__main__":
     unittest.main()

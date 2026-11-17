@@ -385,15 +385,26 @@ def apply_release(
     if push:
         if plan["needs_commit"]:
             _run(["git", "push", "origin", "HEAD:refs/heads/main"], cwd=repo)
-        _run(["git", "push", "origin", f"refs/tags/{tag}"], cwd=repo)
+        head_sha = _run(["git", "rev-parse", "HEAD"], cwd=repo).stdout.strip()
+        tag_push = _run(["git", "push", "origin", f"refs/tags/{tag}"], cwd=repo, check=False)
         view = _run(["gh", "release", "view", tag], cwd=repo, check=False)
         if view.returncode != 0:
             _run(
-                ["gh", "release", "create", tag, "--title", title, "--notes-file", "-"],
+                [
+                    "gh", "release", "create", tag,
+                    "--target", head_sha,
+                    "--title", title,
+                    "--notes-file", "-",
+                ],
                 cwd=repo,
                 input_text=body + "\n",
             )
             published = True
+        elif tag_push.returncode != 0:
+            remote_tag = _run(["git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}"], cwd=repo)
+            if not remote_tag.stdout.strip():
+                detail = (tag_push.stderr or tag_push.stdout or "").strip()
+                raise ReleaseError(f"Command failed (git push origin refs/tags/{tag}): {detail}")
 
     return {**plan, "committed": bool(plan["needs_commit"]), "published": published}
 
