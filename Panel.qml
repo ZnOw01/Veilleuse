@@ -888,10 +888,13 @@ Panel {
         }
     }
 
+    function isIpcLeader() {
+        return shortcutIpc.enabled;
+    }
+
     moduleName: "io.github.znow01.veilleuse"
     ipcTarget: "io.github.znow01.veilleuse"
     manageIpc: false
-    readonly property bool leadsIpc: IpcRegistry.leads(shortcutIpc, IpcRegistry.revision)
 
     ShellIpc {
         id: shortcutIpc
@@ -978,8 +981,10 @@ Panel {
 
         interval: 1000
         repeat: false
-        running: root.leadsIpc
+        running: true
         onTriggered: {
+            if (!root.opened && !root.isIpcLeader())
+                return;
             if (root.actionPending) {
                 initialReconcileTimer.restart();
                 return;
@@ -993,8 +998,8 @@ Panel {
 
         interval: 30000
         repeat: true
-        running: root.opened || root.leadsIpc
-        onTriggered: if (!root.actionPending) root.reconcile()
+        running: true
+        onTriggered: if ((root.opened || root.isIpcLeader()) && !root.actionPending) root.reconcile()
     }
 
     Process {

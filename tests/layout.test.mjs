@@ -279,8 +279,8 @@ test('bar tooltip reports natural color and uses night-light readiness independe
 test('closed panel reconciles periodically so snooze expiry and schedule boundaries physically apply', () => {
   assert.match(qml, /id:\s*backgroundStatusTimer[\s\S]*?interval:\s*30000[\s\S]*?repeat:\s*true/);
   const timer = qml.slice(qml.indexOf('id: backgroundStatusTimer'), qml.indexOf('Process {'));
-  assert.match(timer, /running:\s*root\.opened\s*\|\|\s*root\.leadsIpc/);
-  assert.match(qml, /onTriggered:\s*if\s*\(!root\.actionPending\)\s*root\.reconcile\(\)/);
+  assert.match(timer, /running:\s*true/);
+  assert.match(qml, /onTriggered:\s*if\s*\(\(root\.opened\s*\|\|\s*root\.isIpcLeader\(\)\)\s*&&\s*!root\.actionPending\)\s*root\.reconcile\(\)/);
   assert.match(qml, /function reconcile\(\)\s*\{[\s\S]*?"reconcile",\s*"--monitor",\s*root\.selectedMonitor[\s\S]*?"reconcile",\s*"--skip-brightness"/);
 });
 
@@ -314,7 +314,7 @@ test('route sections match the three compact views', () => {
 });
 
 test('keyboard activation opens the pickers, focuses editors and runs actions', () => {
-  const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('moduleName:'));
+  const activate = qml.slice(qml.indexOf('function activateCursor()'), qml.indexOf('function isIpcLeader()'));
   assert.match(activate, /section\s*===\s*"nightLight"[\s\S]*?request\(root\.nightlightToggleCommand\(\),\s*"toggle"\)/);
   assert.match(activate, /section\s*===\s*"monitor"\)\s*\{\s*monitorSelector\.open\(\);/);
   assert.match(activate, /section\s*===\s*"scheduleToggle"[\s\S]*?root\.toggleSchedule\(!root\.scheduleEnabled\)/);
@@ -688,7 +688,7 @@ test('periodic reconcile runs only on IPC leader when closed, runs when open, an
     for (const opened of [false, true]) {
       for (const actionPending of [false, true]) {
         let reconciles = 0;
-        const root = { leadsIpc, opened, actionPending, reconcile() { reconciles++; } };
+        const root = { isIpcLeader: () => leadsIpc, opened, actionPending, reconcile() { reconciles++; } };
         if (vm.runInNewContext(running, { root })) vm.runInNewContext(triggered, { root });
         const expected = (!opened && !leadsIpc) || actionPending ? 0 : 1;
         assert.equal(reconciles, expected);
