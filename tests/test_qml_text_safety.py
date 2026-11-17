@@ -11,11 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 QML_RUNNER = shutil.which("qmltestrunner6")
 if QML_RUNNER is None and Path("/usr/lib/qt6/bin/qmltestrunner").is_file():
     QML_RUNNER = "/usr/lib/qt6/bin/qmltestrunner"
+REQUIRE_QML_RUNNER = os.environ.get("VEILLEUSE_REQUIRE_QT_QML_TEST") == "1"
 
 
-@unittest.skipUnless(QML_RUNNER, "Qt 6 qmltestrunner is not installed")
+@unittest.skipUnless(QML_RUNNER or REQUIRE_QML_RUNNER, "Qt 6 qmltestrunner is not installed")
 class DiagnosticTextSafetyTests(unittest.TestCase):
     def test_diagnostics_render_markup_literally_in_qt(self):
+        if QML_RUNNER is None:
+            self.fail("VEILLEUSE_REQUIRE_QT_QML_TEST=1 is set, but Qt 6 qmltestrunner is missing")
         panel = (ROOT / "Panel.qml").read_text(encoding="utf-8")
         blocks = re.findall(r"(?m)^([ \t]*)Text\s*\{([\s\S]*?)^\1\}", panel)
         fields = ("errorText", "scheduleValidationError", "feedbackText")

@@ -63,7 +63,9 @@ const PRODUCTION_SOURCES = [
   'scripts/veilleuse-control',
   'scripts/automation_utils.py',
   'scripts/state_utils.py',
-  'scripts/schedule_toggle_utils.py'
+  'scripts/schedule_utils.py',
+  'scripts/schedule_toggle_utils.py',
+  'scripts/shortcut_utils.py'
 ];
 
 const CODE_PATTERNS = [

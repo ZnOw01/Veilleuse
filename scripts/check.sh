@@ -15,6 +15,7 @@ for path in (
     Path('scripts/shortcut_utils.py'),
     Path('scripts/automation_utils.py'),
     Path('scripts/state_utils.py'),
+    Path('scripts/release.py'),
 ):
     compile(path.read_text(encoding='utf-8'), str(path), 'exec')
 PY
@@ -23,6 +24,7 @@ PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_automa
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p test_state_utils.py
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_schedule_toggle_utils.py'
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_shortcut_utils.py'
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_release.py'
 PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s tests -p 'test_qml_text_safety.py'
 node --test tests/UiModel.test.js tests/layout.test.mjs tests/i18n.test.js tests/errorCodes.test.js tests/icons.test.mjs
 "$PYTHON" -m json.tool manifest.json >/dev/null

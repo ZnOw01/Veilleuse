@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Optional SemVer bump override (leave empty for automatic Conventional Commit detection)"
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install Qt 6 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            qt6-declarative-dev-tools qml6-module-qttest qml6-module-qtquick \
+            qml6-module-qtquick-window qml6-module-qtqml-workerscript
+          test -x /usr/lib/qt6/bin/qmltestrunner
+      - name: Run quality gates before release
+        env:
+          VEILLEUSE_REQUIRE_QT_QML_TEST: "1"
+        run: ./scripts/check.sh
+      - name: Cut SemVer release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONDONTWRITEBYTECODE: "1"
+          RELEASE_BUMP: ${{ inputs.bump }}
+        run: |
+          extra_args=()
+          if [[ -n "${RELEASE_BUMP}" ]]; then
+            extra_args+=(--bump "${RELEASE_BUMP}")
+          fi
+          python3 scripts/release.py --apply --push "${extra_args[@]}"
