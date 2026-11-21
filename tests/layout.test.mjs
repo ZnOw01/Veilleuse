@@ -126,7 +126,7 @@ test('the home summary box, presets, and history affordances are gone', () => {
 
 test('home route keeps the monitor picker as its only saved setting', () => {
   const home = qml.slice(qml.indexOf('id: homeRoute'), qml.indexOf('id: automationRoute'));
-  assert.match(home, /SearchableDropdown\s*\{\s*id:\s*monitorSelector/);
+  assert.match(home, /\bDropdown\s*\{\s*id:\s*monitorSelector/);
   assert.match(home, /label:\s*root\.text\("monitor"\)/);
   assert.match(qml, /onChanged:\s*function\(value\)\s*\{\s*root\.setInlineSetting\("monitor",\s*value\)\s*\}/);
 });
@@ -144,8 +144,8 @@ test('automation header carries the window only while the schedule runs', () => 
 
 test('the schedule editor is always visible and configures both periods', () => {
   const editor = qml.slice(qml.indexOf('id: scheduleEditorColumn'), qml.indexOf('id: snoozeSurface'));
-  assert.equal((editor.match(/\bTextField\s*\{/g) || []).length, 2);
-  assert.equal((editor.match(/\bNumberField\s*\{/g) || []).length, 2);
+  assert.equal((editor.match(/\bPlainField\s*\{/g) || []).length, 2);
+  assert.equal((editor.match(/\bStepField\s*\{/g) || []).length, 2);
   assert.equal((editor.match(/\bOptionalNumberField\s*\{/g) || []).length, 4);
   assert.match(editor, /text:\s*root\.text\("day_period"\)/);
   assert.match(editor, /text:\s*root\.text\("night_period"\)/);
@@ -344,8 +344,11 @@ test('the blocked gate covers every editor and popup that must own its keys', ()
 test('editors and popups return focus before Escape can close the panel', () => {
   assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!monitorSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
   assert.match(qml, /onPopupOpenChanged:\s*if\s*\(!localeSelector\.popupOpen\)\s*Qt\.callLater\(function\(\)\s*\{\s*keyCatcher\.forceActiveFocus\(\);\s*\}\)/);
-  assert.match(qml, /id:\s*shortcutField[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
-  assert.match(qml, /id:\s*startEditor[\s\S]*?Keys\.onEscapePressed:\s*keyCatcher\.forceActiveFocus\(\)/);
+  // Every editor is a PlainField, which hands Escape back to the key catcher.
+  const field = qml.slice(qml.indexOf('component PlainField:'), qml.indexOf('component StepField:'));
+  assert.match(field, /event\.key === Qt\.Key_Escape\)\s*root\.refocusKeyCatcher\(\);/);
+  assert.match(qml, /PlainField\s*\{\s*id:\s*shortcutField/);
+  assert.match(qml, /PlainField\s*\{\s*id:\s*startEditor/);
 });
 
 test('requests launch immediately when idle and only debounce bursts to preserve latest-wins', () => {
@@ -597,7 +600,7 @@ test('Tier 1 - F8 Settings Visuals: Shortcut badge chips row and enriched monito
   assert.match(settings, /Model\.parseShortcutTokens\(shortcutField\.text\)/);
 
   assert.match(qml, /function monitorChoices\(\)/);
-  assert.match(qml, /focusedName\s*\?\s*\("\("\s*\+\s*focusedName\s*\+\s*"\)"\)\s*:\s*""/);
+  assert.match(qml, /focusedName\s*\?\s*\(" \("\s*\+\s*focusedName\s*\+\s*"\)"\)\s*:\s*""/);
 });
 
 test('Tier 1 - F10 Error and Feedback Banners: Styled BorderSurface containers with icons and animations', () => {
@@ -863,5 +866,36 @@ test('keyCatcherBlocked covers every interactive editor and selector popup', () 
     'localeSelector.popupOpen'
   ]) {
     assert.ok(blockedDecl.includes(token), `keyCatcherBlocked missing ${token}`);
+  }
+});
+
+test('the panel has no Qt text input, so nothing in the plugin reads the clipboard', () => {
+  // A Qt text input fetches the Wayland clipboard on the shell thread. That
+  // covers the raw types and the Omarchy kit components built on them.
+  const inputs = ['TextField', 'TextInput', 'TextEdit', 'TextArea', 'SpinBox', 'ComboBox',
+    'NumberField', 'SearchableDropdown', 'MultiSelect', 'FilterInput'];
+  for (const file of [qml, barQml]) {
+    const source = file.replace(/\/\/.*$/gm, '');
+    for (const type of inputs)
+      assert.doesNotMatch(source, new RegExp(`(^|[^A-Za-z_.])${type}\\s*\\{`, 'm'), `${type} must not be instantiated`);
+    assert.doesNotMatch(source, /import\s+QtQuick\.Controls/);
+    assert.doesNotMatch(source, /\b(?:paste|canPaste|Clipboard|clipboard)\b/);
+  }
+  const field = qml.slice(qml.indexOf('component PlainField:'), qml.indexOf('component StepField:'));
+  assert.match(field, /component PlainField:\s*BorderSurface\s*\{/);
+  assert.match(field, /acceptedButtons:\s*Qt\.AllButtons/);
+  assert.match(field, /textFormat:\s*Text\.PlainText/);
+  assert.doesNotMatch(field, /StandardKey/);
+});
+
+test('every editor reports edits to its owner instead of holding the value', () => {
+  for (const id of ['startEditor', 'endEditor', 'dayTemperatureEditor', 'nightTemperatureEditor',
+    'dayBrightnessEditor', 'dayGammaEditor', 'nightBrightnessEditor', 'nightGammaEditor',
+    'snoozeEditor', 'shortcutField']) {
+    const start = qml.indexOf(`id: ${id}\n`);
+    assert.ok(start > 0, `${id} must exist`);
+    const body = qml.slice(start, qml.indexOf('\n\n', qml.indexOf('onEdited:', start)));
+    assert.match(body, /text:\s*root\.\w+/, `${id} must bind its text to a draft`);
+    assert.match(body, /onEdited:\s*function\(value\)\s*\{\s*root\.\w+ = value\s*\}/, `${id} must write its draft`);
   }
 });

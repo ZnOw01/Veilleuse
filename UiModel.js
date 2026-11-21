@@ -610,6 +610,60 @@ function shortcutCommandKeys(value) {
   return parts.join(' ') + ', ' + key;
 }
 
+// Editing for PlainField. The panel draws its own fields instead of using a
+// Qt text input, so nothing in the plugin ever reads the clipboard. `pattern`
+// is the source of a one-character ASCII class such as "[0-9]".
+function fieldFilter(raw, pattern, room) {
+  var allowed = new RegExp('^' + pattern + '$');
+  var source = String(raw === null || raw === undefined ? '' : raw);
+  var limit = Math.max(0, Math.floor(Number(room) || 0));
+  var clean = '';
+  for (var i = 0; i < source.length && clean.length < limit; i++) {
+    var code = source.charCodeAt(i);
+    if (code >= 0x20 && code <= 0x7e && allowed.test(source[i])) clean += source[i];
+  }
+  return clean;
+}
+
+function fieldCursor(text, cursor) {
+  var length = String(text || '').length;
+  var position = Math.floor(Number(cursor));
+  if (!isFinite(position)) position = length;
+  return Math.max(0, Math.min(length, position));
+}
+
+function fieldInsert(text, cursor, raw, pattern, maximumLength) {
+  var current = String(text || '');
+  var at = fieldCursor(current, cursor);
+  var clean = fieldFilter(raw, pattern, maximumLength - current.length);
+  return { text: current.substring(0, at) + clean + current.substring(at), cursor: at + clean.length };
+}
+
+function fieldDelete(text, cursor, backward) {
+  var current = String(text || '');
+  var at = fieldCursor(current, cursor);
+  if (backward) {
+    if (at === 0) return { text: current, cursor: 0 };
+    return { text: current.substring(0, at - 1) + current.substring(at), cursor: at - 1 };
+  }
+  return { text: current.substring(0, at) + current.substring(at + 1), cursor: at };
+}
+
+// A typed number counts only when it is a whole number inside the range.
+function fieldNumber(text, minimum, maximum) {
+  var source = String(text || '');
+  if (!/^[0-9]+$/.test(source)) return null;
+  var value = parseInt(source, 10);
+  return value >= minimum && value <= maximum ? value : null;
+}
+
+// Arrow and Up/Down stepping: an unreadable draft restarts at the minimum.
+function fieldStep(text, direction, minimum, maximum, step) {
+  var current = /^[0-9]+$/.test(String(text || '')) ? parseInt(text, 10) : NaN;
+  if (isNaN(current)) return String(minimum);
+  return String(clamp(current + (direction > 0 ? step : -step), minimum, maximum));
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     ERROR_CODE_KEYS: ERROR_CODE_KEYS,
@@ -642,6 +696,12 @@ if (typeof module !== 'undefined' && module.exports) {
     calculateScheduleDuration: calculateScheduleDuration,
     scheduleTrackSegments: scheduleTrackSegments,
     parseShortcutTokens: parseShortcutTokens,
-    shortcutCommandKeys: shortcutCommandKeys
+    shortcutCommandKeys: shortcutCommandKeys,
+    fieldFilter: fieldFilter,
+    fieldCursor: fieldCursor,
+    fieldInsert: fieldInsert,
+    fieldDelete: fieldDelete,
+    fieldNumber: fieldNumber,
+    fieldStep: fieldStep
   };
 }

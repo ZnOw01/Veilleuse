@@ -8,6 +8,8 @@ var ICONS = {
   snooze: '󰒲',            // nf-md-sleep (U+F04B2)
   chevronLeft: '󰅁',       // nf-md-chevron_left (U+F0141)
   chevronRight: '󰅂',      // nf-md-chevron_right (U+F0142)
+  chevronUp: '󰅃',         // nf-md-chevron_up (U+F0143)
+  chevronDown: '󰅀',       // nf-md-chevron_down (U+F0140)
   check: '󰄬',             // nf-md-check (U+F012C)
   unavailable: '󰌙',       // nf-md-link_variant_off (U+F0319)
   alert: '󰗖',             // nf-md-alert_circle_outline (U+F05D6)

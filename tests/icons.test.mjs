@@ -11,7 +11,7 @@ test('Icons.js exports only active Nerd Fonts glyphs with valid PUA codepoints',
   assert.ok(ICONS && typeof ICONS === 'object');
   const expectedKeys = [
     'weatherSunny', 'weatherNight', 'brightness', 'temperature', 'gamma',
-    'schedule', 'snooze', 'chevronLeft', 'chevronRight', 'check',
+    'schedule', 'snooze', 'chevronLeft', 'chevronRight', 'chevronUp', 'chevronDown', 'check',
     'unavailable', 'alert', 'palette'
   ];
   assert.deepEqual(Object.keys(ICONS).sort(), expectedKeys.slice().sort());

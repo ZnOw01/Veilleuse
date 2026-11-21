@@ -929,3 +929,38 @@ test('UI shortcut notation converts to the CLI format without sanitizing invalid
   for (const value of ['SUPER++N', 'SUPER+N\nevil()', 'SUPER+SHIFT, N'])
     assert.equal(Model.shortcutCommandKeys(value), value);
 });
+
+test('field editing keeps printable ASCII that matches the pattern and respects the length', () => {
+  assert.deepEqual(Model.fieldInsert('SUPER', 5, '+V', '[ -~]', 64), { text: 'SUPER+V', cursor: 7 });
+  assert.deepEqual(Model.fieldInsert('06', 2, ':3a0', '[0-9:]', 5), { text: '06:30', cursor: 5 });
+  assert.deepEqual(Model.fieldInsert('15', 1, '9', '[0-9]', 3), { text: '195', cursor: 2 });
+  assert.deepEqual(Model.fieldInsert('100', 3, '5', '[0-9]', 3), { text: '100', cursor: 3 });
+  assert.deepEqual(Model.fieldInsert('', 0, 'a\u0000\n\tb\u00e9\u{1F600}c', '[ -~]', 64), { text: 'abc', cursor: 3 });
+  assert.deepEqual(Model.fieldInsert('ab', 99, 'c', '[ -~]', 64), { text: 'abc', cursor: 3 });
+  assert.deepEqual(Model.fieldInsert(null, undefined, undefined, '[0-9]', 3), { text: '', cursor: 0 });
+});
+
+test('field deletion removes one character on the requested side of the cursor', () => {
+  assert.deepEqual(Model.fieldDelete('abc', 2, true), { text: 'ac', cursor: 1 });
+  assert.deepEqual(Model.fieldDelete('abc', 0, true), { text: 'abc', cursor: 0 });
+  assert.deepEqual(Model.fieldDelete('abc', 1, false), { text: 'ac', cursor: 1 });
+  assert.deepEqual(Model.fieldDelete('abc', 3, false), { text: 'abc', cursor: 3 });
+  assert.equal(Model.fieldCursor('abc', -4), 0);
+  assert.equal(Model.fieldCursor('abc', 9), 3);
+});
+
+test('typed numbers count only as whole numbers inside the range', () => {
+  assert.equal(Model.fieldNumber('5900', 5900, 6500), 5900);
+  assert.equal(Model.fieldNumber('59', 5900, 6500), null);
+  assert.equal(Model.fieldNumber('', 1, 86400), null);
+  assert.equal(Model.fieldNumber('1e3', 1, 86400), null);
+  assert.equal(Model.fieldNumber('86401', 1, 86400), null);
+});
+
+test('field stepping clamps to the range and recovers from an unreadable draft', () => {
+  assert.equal(Model.fieldStep('6000', 1, 5900, 6500, 50), '6050');
+  assert.equal(Model.fieldStep('6500', 1, 5900, 6500, 50), '6500');
+  assert.equal(Model.fieldStep('5900', -1, 5900, 6500, 50), '5900');
+  assert.equal(Model.fieldStep('12', 1, 5900, 6500, 50), '5900');
+  assert.equal(Model.fieldStep('', -1, 1, 86400, 1), '1');
+});
