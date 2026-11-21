@@ -25,12 +25,13 @@ Veilleuse is a native Omarchy Quattro shell plugin. Its bar widget opens a panel
 - Day/night schedule with optional brightness and gamma for each period, plus timed snooze. The Night values also drive the manual night-light switch.
 - Keyboard navigation, pointer hover focus, and English or Spanish interface text.
 - Optional Hyprland shortcut with collision checks and a one-time backup of `bindings.lua`.
-- Python standard library only. Private state uses atomic replacement and mode `0600`, and no extra daemon runs in the background.
+- Python standard library only. Private state uses atomic replacement and mode `0600`, and Veilleuse adds no daemon of its own.
+- No Qt text inputs. The panel draws its own fields and never reads the clipboard, so a clipboard owner cannot stall the shell through it.
 
 ## Requirements
 
 - Omarchy Quattro with its shell/plugin tooling and QML components (`qs.Commons`, `qs.Ui`).
-- Hyprland and a running `hyprsunset` backend.
+- Hyprland and `hyprsunset`, which Omarchy installs. Veilleuse starts `hyprsunset` when it is not running; see [Night light backend](#night-light-backend).
 - Python 3.12+ with `omarchy-monitor-state` and `omarchy-brightness-display` on `PATH`.
 
 There are no Python packages to install. Node.js is only needed for development tests. The QML files are a shell plugin, not a standalone application.
@@ -63,6 +64,17 @@ omarchy plugin remove io.github.znow01.veilleuse --yes
 ```
 
 Removal leaves Veilleuse state, `hyprsunset.conf`, and user configuration backups in place. If you disabled a schedule and want it restored, enable it before removing the plugin.
+
+## Night light backend
+
+Night light and gamma go through `hyprsunset`. Omarchy installs it but leaves it out of autostart, so Veilleuse starts it when no instance is running. That happens when the plugin loads and on any later night-light, schedule, snooze, or reconcile call.
+
+- Veilleuse starts the packaged `hyprsunset.service` user unit, and falls back to `uwsm-app -- hyprsunset` when the unit is missing. `omarchy-toggle-nightlight` uses the same fallback.
+- It only starts the backend. It never enables, restarts, or stops it, and it changes no autostart setting.
+- A backend that exits right after launch is not started again for 60 seconds.
+- `preflight` and `brightness` never start it. Brightness works without `hyprsunset`.
+
+Starting `hyprsunset` does not change the screen with Omarchy's default `hyprsunset.conf`, which applies natural color.
 
 ## Configuration
 
@@ -120,10 +132,11 @@ Selects the interface language and manages the optional global shortcut. Veilleu
 | `←` / `→` on a slider | Adjust brightness or gamma by 1 percentage point, temperature by 50 K |
 | `←` / `→` on other rows | Navigate views or grouped actions, depending on the row |
 | `Enter` / `Space` | Activate the focused control or open its editor/dropdown |
+| `↑` / `↓` in a temperature or snooze field | Step the value |
 | `Esc` | Leave an editor, close a dropdown, or dismiss the panel |
 | Pointer hover | Focus the hovered row for keyboard adjustment |
 
-Text editors and dropdowns handle their own keys while focused. See [CLI.md](CLI.md) for diagnostics, display commands, schedule examples, shortcut management, and shell IPC.
+Text editors and dropdowns handle their own keys while focused. Fields take typed keys only: paste is not supported, by keyboard or by mouse. See [CLI.md](CLI.md) for diagnostics, display commands, schedule examples, shortcut management, and shell IPC.
 
 ### Global shortcut
 
@@ -161,7 +174,7 @@ Run from the repository root or the installed plugin directory:
 
 | Symptom | Check or action |
 | --- | --- |
-| A slider shows `—` or a backend is unavailable | Run `status` and `preflight`; inspect the JSON availability and error fields. Check the running `hyprsunset` backend and detected monitor names. Independent controls can still work. |
+| A slider shows `—` or a backend is unavailable | Run `status` and `preflight`; inspect the JSON availability and error fields. Check that `hyprsunset` is installed and that `pgrep -x hyprsunset` finds it, then check the detected monitor names. Independent controls can still work. |
 | Arrow keys change views instead of a slider | Hover the slider row or select it with `↑` / `↓`. |
 | Updated UI is not visible | Run `omarchy restart shell` to reload the QML components. |
 | Shortcut does not trigger | Run `shortcut status`, check for collisions and reload errors, and confirm the plugin is loaded. |

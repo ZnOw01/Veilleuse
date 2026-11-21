@@ -19,6 +19,8 @@ Most read and write commands accept `--monitor`, which defaults to `focused` and
 ./scripts/veilleuse-control preflight
 ```
 
+`status`, `nightlight`, `reconcile`, `snooze`, and `schedule` start `hyprsunset` first when no instance is running. `preflight`, `brightness`, and `shortcut` never do. See [Night light backend](README.md#night-light-backend).
+
 ## Display brightness
 
 ```bash

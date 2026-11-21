@@ -4,9 +4,9 @@ The repository has deterministic Python unit tests plus Node.js tests for the Ja
 
 ## Coverage
 
-- Python tests cover the helper CLI, automation, schedule parsing/toggling, shortcut handling, state persistence, and release automation.
+- Python tests cover the helper CLI, starting `hyprsunset` against a simulated process table and systemd, automation, schedule parsing/toggling, shortcut handling, state persistence, and release automation.
 - `UiModel.test.js` exercises normalization, validation, navigation-model behavior, request commits, and modeled scenarios.
-- `layout.test.mjs` checks QML contracts by inspecting source text and executes panel JavaScript handlers in Node's VM for response, route navigation, drag deduplication, refresh, and timer regressions. It does not instantiate Qt objects.
+- `layout.test.mjs` checks QML contracts by inspecting source text and executes panel JavaScript handlers in Node's VM for response, route navigation, drag deduplication, refresh, and timer regressions. It does not instantiate Qt objects. It also fails if `Panel.qml` or `BarWidget.qml` instantiates a Qt text input or an Omarchy component built on one.
 - `test_qml_text_safety.py` extracts the diagnostic text bindings from `Panel.qml` and evaluates them in real Qt 6 `Text` items with offscreen rendering. It checks literal rendering for markup, entities, links, image tags, and Spanish diagnostics. It does not instantiate the complete panel or its Omarchy components.
 - `i18n.test.js`, `errorCodes.test.js`, and `icons.test.mjs` check translation, error-code parity across all six runtime Python modules, and glyph contracts.
 
@@ -38,6 +38,6 @@ The diagnostic text regression uses `qmltestrunner6` or `/usr/lib/qt6/bin/qmltes
 
 ## Manual verification
 
-For changes to the panel, verify opening/closing, all three views, pointer/keyboard focus, dropdowns, and both languages in a running Omarchy session. For display and automation changes, check readback on the intended monitor, schedule transitions, snooze expiration, and shortcut installation/removal as applicable. Record the conditions and results; source-level tests cannot establish physical display behavior.
+For changes to the panel, verify opening/closing, all three views, pointer/keyboard focus, typing and stepping in every field, dropdowns, and both languages in a running Omarchy session. For display and automation changes, check readback on the intended monitor, schedule transitions, snooze expiration, and shortcut installation/removal as applicable. Record the conditions and results; source-level tests cannot establish physical display behavior.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for environment setup and review expectations.

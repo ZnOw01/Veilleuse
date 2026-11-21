@@ -2,6 +2,13 @@
 
 Release versions correspond to `manifest.json`. See the [README](README.md) for current installation and usage.
 
+## v3.8.0 (2026-11-21)
+
+- Start `hyprsunset` when no instance is running, through the packaged `hyprsunset.service` user unit or `uwsm-app`. Omarchy installs the backend without autostart, so night light and gamma now work on a fresh install. Veilleuse never enables, restarts, or stops it.
+- Replace every Qt text input in the panel with a field the plugin draws itself. The panel no longer reads the Wayland clipboard, so a slow or oversized clipboard offer cannot stall the shell. Fields take typed keys only; paste is not supported.
+- Replace the monitor picker's searchable dropdown, which embedded a Qt text field, with the plain dropdown.
+- Step the temperature and snooze fields with `↑` / `↓` or their arrows, and add a test that fails if a Qt text input returns to the panel.
+
 ## v3.7.0 (2026-11-17)
 
 - Add `--skip-brightness` to `nightlight` and `reconcile`, reuse brightness from `omarchy-monitor-state`, and cache backend state within automation runs so background reconciliation and slider drags avoid redundant `hyprctl` and DDC spawns.

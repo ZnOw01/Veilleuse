@@ -33,6 +33,7 @@ The panel registers its IPC endpoint through Omarchy's `ShellIpc`, electing one 
 | :--- | :--- | :--- | :--- |
 | `~/.config/hypr/hyprsunset.conf` | Night light temperature and schedule | Preserves the existing mode; a newly generated file uses `0600` | Atomic write under a shared lock; `.bak` when updating an existing file |
 | `~/.config/hypr/.hyprsunset.conf.veilleuse-toggle.pending` | Recovery record for an interrupted schedule enable/disable | `0600` | Written before changing the schedule; resolved under the shared lock on the next schedule operation |
+| `$XDG_RUNTIME_DIR/io.github.znow01.veilleuse.hyprsunset-start` | Lock and 60-second cooldown for starting `hyprsunset` | `0600` | Exclusive `flock`; opened with `O_NOFOLLOW`; cleared at logout with the runtime directory |
 | `~/.config/hypr/bindings.lua` | Optional Hyprland shortcut | Preserves the existing mode; a newly created file uses `0644` | Collision checks and marker-block ownership; one-time `.bak` before install/update |
 | `~/.local/state/veilleuse/state.json` | Runtime state, snooze expiry, manual override, display values | `0600` | Atomic write under `LOCK_EX`, orphaned temp-file reaper, bounded validation |
 | `~/.local/state/veilleuse/history.jsonl` | Audit history of operations | `0600` | Ring buffer capped at the last 50 entries |
@@ -41,10 +42,12 @@ Paths follow absolute `XDG_CONFIG_HOME` and `XDG_STATE_HOME` values, with the de
 
 ### Core invariants
 
-1. **Non-destructive parsing.** Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` survive schedule updates.
-2. **Request ordering.** Request IDs increase monotonically. Only the current request ID is accepted as the current response. A stale successful readback may still be merged to reflect a write that completed. A running non-supersedable mutation finishes before the latest queued request launches.
-3. **Fail-closed normalization.** Unavailable readings are marked explicitly, and their controls are disabled. Independent controls remain usable. Errors map to English and Spanish messages. This does not guarantee that a failed physical write can restore the display.
-4. **Zero daemon policy.** The loaded panel starts reconciliation after initialization and every 30 seconds when no request is pending, even when closed. Each helper call exits after completion. Veilleuse automation does not run while its panel or shell is unloaded. `hyprsunset` remains a separate system component.
+1. **No Qt text input.** `Panel.qml` draws its fields with `PlainField` and uses no `TextField`, `TextInput`, `SpinBox`, or Omarchy component built on them. A Qt text input reads the Wayland clipboard on the shell thread, where a slow clipboard owner can stall the whole shell. Fields accept typed keys only, and `tests/layout.test.mjs` fails if a text input returns.
+
+2. **Non-destructive parsing.** Custom profiles, comments, and unmanaged blocks in `hyprsunset.conf` survive schedule updates.
+3. **Request ordering.** Request IDs increase monotonically. Only the current request ID is accepted as the current response. A stale successful readback may still be merged to reflect a write that completed. A running non-supersedable mutation finishes before the latest queued request launches.
+4. **Fail-closed normalization.** Unavailable readings are marked explicitly, and their controls are disabled. Independent controls remain usable. Errors map to English and Spanish messages. This does not guarantee that a failed physical write can restore the display.
+5. **Zero daemon policy.** The loaded panel starts reconciliation after initialization and every 30 seconds when no request is pending, even when closed. Each helper call exits after completion. Veilleuse automation does not run while its panel or shell is unloaded. `hyprsunset` remains a separate system component: the helper starts it when no instance is running and never enables, restarts, or stops it.
 
 ## Localization
 
