@@ -10,6 +10,8 @@ import multiprocessing
 import os
 import re
 import shutil
+import stat
+import time
 import subprocess
 import sys
 import tempfile
@@ -852,6 +854,146 @@ class FinalIntegrationCliTests(HelperModuleTests):
         text_written = schedule.read_text(encoding="utf-8")
         self.assertIn("temperature = 5950", text_written)
         self.assertFalse(json.loads(output)["schedule"]["day_identity"])
+
+
+class HyprsunsetStartTests(HelperModuleTests):
+    """The helper starts hyprsunset only when no instance is running."""
+
+    def setUp(self):
+        super().setUp()
+        self.runtime = self.xdg / "runtime"
+        self.runtime.mkdir()
+        runtime_patch = patch.dict(os.environ, {"XDG_RUNTIME_DIR": str(self.runtime)})
+        runtime_patch.start()
+        self.addCleanup(runtime_patch.stop)
+        self.running = False
+        self.spawned = []
+        self.unit = None
+        self.sim.hyprsunset_available = False
+
+        def runner(args, *, timeout=None):
+            tokens = list(args)
+            if tokens == ["pgrep", "-x", "hyprsunset"]:
+                self.sim.calls.append((tokens, timeout))
+                return cp(tokens, 0 if self.running else 1)
+            if tokens[:2] == ["systemctl", "--user"] and self.unit is not None:
+                self.sim.calls.append((tokens, timeout))
+                if tokens[2] == "start" and self.unit == "starts":
+                    self.running = True
+                    self.sim.hyprsunset_available = True
+                    return cp(tokens, 0)
+                return cp(tokens, 0 if tokens[2] == "cat" else 1)
+            return self.sim(tokens, timeout=timeout)
+
+        def spawn(command):
+            self.spawned.append(list(command))
+            self.running = True
+            self.sim.hyprsunset_available = True
+
+        for target, replacement in (
+            ("run_command", runner),
+            ("_spawn_detached", spawn),
+        ):
+            patcher = patch.object(vc, target, side_effect=replacement)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        which = patch.object(vc.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}")
+        which.start()
+        self.addCleanup(which.stop)
+        self.sleeps = []
+        self.on_sleep = None
+
+        def sleep(seconds):
+            self.sleeps.append(seconds)
+            if self.on_sleep is not None:
+                self.on_sleep()
+
+        sleeper = patch.object(vc.time, "sleep", side_effect=sleep)
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
+
+    def test_starts_a_missing_backend_through_uwsm_without_a_systemd_unit(self):
+        self.assertTrue(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [["/usr/bin/uwsm-app", "--", "hyprsunset"]])
+
+    def test_prefers_the_systemd_unit_so_no_second_instance_can_start(self):
+        self.unit = "starts"
+        self.assertTrue(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [])
+        commands = [tokens for tokens, _ in self.sim.calls if tokens[0] == "systemctl"]
+        self.assertEqual(commands, [
+            ["systemctl", "--user", "cat", "hyprsunset.service"],
+            ["systemctl", "--user", "start", "hyprsunset.service"],
+        ])
+
+    def test_falls_back_to_uwsm_when_the_unit_fails_to_start(self):
+        self.unit = "fails"
+        self.assertTrue(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [["/usr/bin/uwsm-app", "--", "hyprsunset"]])
+
+    def test_never_enables_restarts_or_stops_the_backend(self):
+        self.unit = "starts"
+        vc.ensure_hyprsunset()
+        for tokens, _ in self.sim.calls:
+            self.assertFalse({"enable", "restart", "stop", "kill", "disable"} & set(tokens), tokens)
+
+    def test_a_backend_the_session_starts_meanwhile_is_not_duplicated(self):
+        def session_starts_it():
+            self.running = True
+
+        self.on_sleep = session_starts_it
+        self.assertFalse(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [])
+        self.assertEqual(self.sleeps, [vc.HYPRSUNSET_SETTLE])
+
+    def test_leaves_a_running_backend_alone(self):
+        self.running = True
+        self.assertFalse(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [])
+
+    def test_does_not_start_when_the_process_check_is_inconclusive(self):
+        with patch.object(vc, "run_command", side_effect=lambda args, timeout=None: cp(args, 127, "", "missing")):
+            self.assertFalse(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [])
+
+    def test_does_not_start_when_hyprsunset_is_not_installed(self):
+        with patch.object(vc.shutil, "which", return_value=None):
+            self.assertFalse(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [])
+
+    def test_falls_back_to_a_direct_launch_without_uwsm(self):
+        with patch.object(
+            vc.shutil, "which", side_effect=lambda name: None if name == "uwsm-app" else f"/usr/bin/{name}"
+        ):
+            self.assertTrue(vc.ensure_hyprsunset())
+        self.assertEqual(self.spawned, [["hyprsunset"]])
+
+    def test_a_backend_that_dies_is_not_relaunched_within_the_cooldown(self):
+        self.assertTrue(vc.ensure_hyprsunset())
+        self.running = False
+        self.assertFalse(vc.ensure_hyprsunset())
+        self.assertEqual(len(self.spawned), 1)
+        stamp = self.runtime / f"{vc.PLUGIN_ID}.hyprsunset-start"
+        self.assertEqual(stat.S_IMODE(stamp.stat().st_mode), 0o600)
+        old = time.time() - vc.HYPRSUNSET_START_COOLDOWN - 1
+        os.utime(stamp, (old, old))
+        self.assertTrue(vc.ensure_hyprsunset())
+        self.assertEqual(len(self.spawned), 2)
+
+    def test_a_failed_launch_is_reported_as_not_started(self):
+        with patch.object(vc, "_spawn_detached", side_effect=OSError("exec failed")):
+            self.assertFalse(vc.ensure_hyprsunset())
+
+    def test_status_starts_the_backend_and_reads_it(self):
+        code, output = self.run_cli("status")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.spawned), 1)
+        self.assertTrue(json.loads(output)["nightlight"]["available"])
+
+    def test_commands_that_do_not_use_the_night_light_never_start_it(self):
+        for arguments in (("preflight",), ("brightness",), ("shortcut", "status")):
+            self.run_cli(*arguments)
+        self.assertEqual(self.spawned, [])
 
 
 class NightlightTests(HelperModuleTests):
@@ -1984,6 +2126,10 @@ class HelperArtifactTests(unittest.TestCase):
         environment = dict(os.environ)
         environment["XDG_CONFIG_HOME"] = str(self.runtime)
         environment["XDG_DATA_HOME"] = str(self.runtime / "data")
+        # The real helper runs here. An empty PATH keeps it from finding the
+        # host's backends, so the test cannot start hyprsunset on the machine.
+        environment["PATH"] = str(self.runtime / "bin")
+        environment["XDG_RUNTIME_DIR"] = str(self.runtime)
         if bytecode_gate:
             environment["PYTHONDONTWRITEBYTECODE"] = "1"
         else:
